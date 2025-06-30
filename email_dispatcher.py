@@ -2,7 +2,6 @@ import os
 import json
 import smtplib
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
 from dotenv import load_dotenv
 from datetime import date
 from email.message import EmailMessage
@@ -17,19 +16,19 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
-# ✅ PDF layout
+# ✅ PDF layout using fpdf2 (no enums)
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
-        self.cell(0, 10, "Sentinel AI - Daily Threat Briefing", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+        self.cell(0, 10, "Sentinel AI - Daily Threat Briefing", ln=True, align="C")
         self.set_font("Arial", "", 12)
-        self.cell(0, 10, date.today().isoformat(), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+        self.cell(0, 10, date.today().isoformat(), ln=True, align="C")
         self.ln(10)
 
     def add_toc(self, categorized_alerts):
         self.set_font("Arial", "B", 12)
         self.set_text_color(0, 0, 0)
-        self.cell(0, 10, "Summary by Threat Level", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        self.cell(0, 10, "Summary by Threat Level", ln=True)
         self.ln(2)
 
         for level in ["Critical", "High", "Moderate", "Low"]:
@@ -42,7 +41,7 @@ class PDF(FPDF):
                 }[level]
                 self.set_text_color(*color)
                 self.set_font("Arial", "B", 11)
-                self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", ln=True)
 
         self.set_text_color(0, 0, 0)
         self.set_font("Arial", "", 12)
@@ -81,7 +80,7 @@ class PDF(FPDF):
             self.ln(1)
 
             self.set_font("Arial", "B", 12)
-            self.cell(0, 10, f"Threat Level: {threat_level}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.cell(0, 10, f"Threat Level: {threat_level}", ln=True)
             self.ln(4)
 
             self.set_font("Arial", "", 12)
@@ -97,7 +96,6 @@ def send_pdf_report(email, plan):
     if not summary or summary.startswith("[Sentinel AI error]"):
         raise Exception("No summary generated.")
 
-    # 🔐 Generate PDF
     pdf = PDF()
     pdf.add_page()
     pdf.body(summary)
@@ -106,7 +104,6 @@ def send_pdf_report(email, plan):
     pdf_path = os.path.join("reports", pdf_filename)
     pdf.output(pdf_path)
 
-    # ✉️ Send Email
     msg = EmailMessage()
     msg["Subject"] = "Your Sentinel AI Daily Threat Brief"
     msg["From"] = SENDER_EMAIL
@@ -123,7 +120,5 @@ def send_pdf_report(email, plan):
 
     print(f"✅ Email sent to {email}")
 
-    # 📲 Also send via Telegram
     send_telegram_pdf(pdf_path)
     print(f"✅ Telegram sent for {email}")
-
