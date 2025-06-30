@@ -16,7 +16,7 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
-# ✅ PDF layout using fpdf2 (no enums)
+# ✅ PDF layout using fpdf2
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
@@ -86,7 +86,7 @@ class PDF(FPDF):
             self.set_font("Arial", "", 12)
             self.set_text_color(0, 0, 0)
 
-# ✅ Core function used in /request_report
+# ✅ Used by /request_report route
 def send_pdf_report(email, plan):
     os.makedirs("reports", exist_ok=True)
 
@@ -122,3 +122,17 @@ def send_pdf_report(email, plan):
 
     send_telegram_pdf(pdf_path)
     print(f"✅ Telegram sent for {email}")
+
+# ✅ Used by cron jobs or dev calls
+def send_daily_summaries():
+    with open("clients.json", "r") as f:
+        clients = json.load(f)
+
+    for client in clients:
+        try:
+            send_pdf_report(client["email"], client["plan"])
+        except Exception as e:
+            print(f"❌ Error sending to {client['email']}: {e}")
+
+# ✅ Export for main.py
+__all__ = ["send_pdf_report", "send_daily_summaries"]
