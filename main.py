@@ -3,6 +3,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from chat_handler import generate_threat_summary, get_plan_for_email
+from email_dispatcher import send_pdf_report  # ✅ REAL email + PDF logic
 
 # ✅ Load .env variables
 load_dotenv()
@@ -35,8 +36,11 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             if plan not in ["PRO", "VIP"]:
                 message = "🚫 PDF reports are available for PRO and VIP users only."
             else:
-                # 🔧 Replace with real PDF generator call later
-                message = f"📄 Report request received. Your {plan} report will be prepared shortly."
+                try:
+                    send_pdf_report(email=email, plan=plan)
+                    message = f"📄 Your {plan} report was sent to {email}."
+                except Exception as e:
+                    message = f"❌ Failed to send report. Reason: {str(e)}"
 
             self.send_response(200)
             self.send_header("Content-type", "application/json")
@@ -53,3 +57,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+
