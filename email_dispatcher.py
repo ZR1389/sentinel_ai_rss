@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from datetime import date
 from email.message import EmailMessage
 from chat_handler import generate_threat_summary
+from telegram_dispatcher import send_telegram_pdf
 
 # ✅ Load environment
 load_dotenv()
@@ -23,14 +24,75 @@ with open("clients.json") as f:
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
-        self.cell(0, 10, "Sentinel AI – Daily Threat Briefing", ln=True, align="C")
+        self.cell(0, 10, "Sentinel AI - Daily Threat Briefing", new_x=10, new_y="NEXT", align="C")
         self.set_font("Arial", "", 12)
-        self.cell(0, 10, date.today().isoformat(), ln=True, align="C")
+        self.cell(0, 10, date.today().isoformat(), new_x=10, new_y="NEXT", align="C")
         self.ln(10)
+
+    def add_toc(self, categorized_alerts):
+        self.set_font("Arial", "B", 12)
+        self.set_text_color(0, 0, 0)
+        self.cell(0, 10, "🔎 Summary by Threat Level", new_x=10, new_y="NEXT")
+        self.ln(2)
+
+        for level in ["Critical", "High", "Moderate", "Low"]:
+            if categorized_alerts[level]:
+                color = {
+                    "Critical": (255, 0, 0),
+                    "High": (255, 102, 0),
+                    "Moderate": (255, 165, 0),
+                    "Low": (0, 128, 0)
+                }[level]
+                self.set_text_color(*color)
+                self.set_font("Arial", "B", 11)
+                self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", new_x=10, new_y="NEXT")
+        self.set_text_color(0, 0, 0)
+        self.set_font("Arial", "", 12)
+        self.ln(5)
 
     def body(self, summary):
         self.set_font("Arial", "", 12)
-        self.multi_cell(0, 10, summary)
+        alerts = summary.strip().split("\n\n")
+        categorized = {"Critical": [], "High": [], "Moderate": [], "Low": [], "Unknown": []}
+
+        parsed_alerts = []
+
+        for alert in alerts:
+            lines = alert.strip().split("\n")
+            content_lines = []
+            threat_level = "Unknown"
+
+            for line in lines:
+                if line.startswith("Threat Level:"):
+                    threat_level = line.replace("Threat Level:", "").strip()
+                else:
+                    content_lines.append(line)
+
+            categorized.setdefault(threat_level, []).append(alert)
+            parsed_alerts.append((threat_level, "\n".join(content_lines).strip()))
+
+        # TOC at top
+        self.add_toc(categorized)
+
+        # Write each alert
+        for threat_level, content in parsed_alerts:
+            color = {
+                "Critical": (255, 0, 0),
+                "High": (255, 102, 0),
+                "Moderate": (255, 165, 0),
+                "Low": (0, 128, 0)
+            }.get(threat_level, (0, 0, 0))
+
+            self.set_text_color(*color)
+            self.multi_cell(0, 10, content)
+            self.ln(1)
+
+            self.set_font("Arial", "B", 12)
+            self.cell(0, 10, f"Threat Level: {threat_level}", new_x=10, new_y="NEXT")
+            self.ln(4)
+
+            self.set_font("Arial", "", 12)
+            self.set_text_color(0, 0, 0)
 
 # ✅ Main dispatcher
 def send_daily_summaries():
@@ -56,7 +118,7 @@ def send_daily_summaries():
         pdf_path = os.path.join("reports", pdf_filename)
         pdf.output(pdf_path)
 
-        # Compose email
+        # Compose and send email
         msg = EmailMessage()
         msg["Subject"] = "Your Sentinel AI Daily Threat Brief"
         msg["From"] = SENDER_EMAIL
@@ -80,8 +142,13 @@ def send_daily_summaries():
         except Exception as e:
             print(f"❌ Failed to send to {email} — {e}")
 
+        # ✅ Also send via Telegram
+        try:
+            send_telegram_pdf(pdf_path)
+        except Exception as e:
+            print(f"❌ Telegram send failed for {email} — {e}")
+
 if __name__ == "__main__":
     send_daily_summaries()
-
 
 
