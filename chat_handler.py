@@ -8,6 +8,7 @@ from rss_processor import get_clean_alerts
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# ✅ Get user plan from clients.json
 def get_plan_for_email(email):
     try:
         with open("clients.json", "r") as f:
@@ -30,14 +31,21 @@ def extract_region_from_prompt(prompt):
             return r
     return None
 
-# ✅ GPT summary generator
+# ✅ GPT summary generator with alert limits per plan
 def generate_threat_summary(user_prompt, user_plan="FREE"):
     region = extract_region_from_prompt(user_prompt)
 
+    # ✅ Alert limits by plan
     if user_plan == "FREE":
         alerts = get_clean_alerts(limit=3, region=region)
+    elif user_plan == "BASIC":
+        alerts = get_clean_alerts(limit=10, region=region)
+    elif user_plan == "PRO":
+        alerts = get_clean_alerts(limit=20, region=region)
+    elif user_plan == "VIP":
+        alerts = get_clean_alerts(limit=30, region=region)
     else:
-        alerts = get_clean_alerts(limit=15, region=region)
+        alerts = get_clean_alerts(limit=3, region=region)
 
     if not alerts:
         return f"No recent alerts found for '{region or 'your region'}'. Stay safe."
@@ -56,4 +64,5 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"[Sentinel AI error] Could not generate summary. Reason: {e}"
+
 
