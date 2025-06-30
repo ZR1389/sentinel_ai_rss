@@ -2,7 +2,7 @@ import os
 import json
 import smtplib
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos  # ✅ Import required enums
+from fpdf.enums import XPos, YPos
 from dotenv import load_dotenv
 from datetime import date
 from email.message import EmailMessage
@@ -16,10 +16,6 @@ SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT"))
-
-# ✅ Load client plans
-with open("clients.json") as f:
-    clients = json.load(f)
 
 # ✅ PDF layout
 class PDF(FPDF):
@@ -47,6 +43,7 @@ class PDF(FPDF):
                 self.set_text_color(*color)
                 self.set_font("Arial", "B", 11)
                 self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
         self.set_text_color(0, 0, 0)
         self.set_font("Arial", "", 12)
         self.ln(5)
@@ -69,10 +66,8 @@ class PDF(FPDF):
             categorized.setdefault(threat_level, []).append(alert)
             parsed_alerts.append((threat_level, "\n".join(content_lines).strip()))
 
-        # TOC at top
         self.add_toc(categorized)
 
-        # Write each alert
         for threat_level, content in parsed_alerts:
             color = {
                 "Critical": (255, 0, 0),
@@ -92,61 +87,43 @@ class PDF(FPDF):
             self.set_font("Arial", "", 12)
             self.set_text_color(0, 0, 0)
 
-# ✅ Main dispatcher
-def send_daily_summaries():
+# ✅ Core function used in /request_report
+def send_pdf_report(email, plan):
     os.makedirs("reports", exist_ok=True)
 
-    for client in clients:
-        email = client["email"]
-        plan = client["plan"]
+    print(f"⏳ Generating summary for {email} ({plan})...")
+    summary = generate_threat_summary("Show global threat alerts", user_plan=plan)
 
-        print(f"⏳ Generating summary for {email} ({plan})...")
-        summary = generate_threat_summary("Show global threat alerts", user_plan=plan)
+    if not summary or summary.startswith("[Sentinel AI error]"):
+        raise Exception("No summary generated.")
 
-        if not summary or summary.startswith("[Sentinel AI error]"):
-            print(f"⚠️ Skipping {email} — No summary generated.")
-            continue
+    # 🔐 Generate PDF
+    pdf = PDF()
+    pdf.add_page()
+    pdf.body(summary)
 
-        # Generate and save PDF
-        pdf = PDF()
-        pdf.add_page()
-        pdf.body(summary)
+    pdf_filename = f"{email.replace('@', '_')}_{date.today()}.pdf"
+    pdf_path = os.path.join("reports", pdf_filename)
+    pdf.output(pdf_path)
 
-        pdf_filename = f"{email.replace('@', '_')}_{date.today()}.pdf"
-        pdf_path = os.path.join("reports", pdf_filename)
-        pdf.output(pdf_path)
+    # ✉️ Send Email
+    msg = EmailMessage()
+    msg["Subject"] = "Your Sentinel AI Daily Threat Brief"
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = email
+    msg.set_content("Attached is your personalized Sentinel AI threat report.")
 
-        # Compose and send email
-        msg = EmailMessage()
-        msg["Subject"] = "Your Sentinel AI Daily Threat Brief"
-        msg["From"] = SENDER_EMAIL
-        msg["To"] = email
-        msg.set_content("Attached is your personalized Sentinel AI threat report.")
+    with open(pdf_path, "rb") as f:
+        msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=pdf_filename)
 
-        with open(pdf_path, "rb") as f:
-            msg.add_attachment(
-                f.read(),
-                maintype="application",
-                subtype="pdf",
-                filename=pdf_filename
-            )
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
+        smtp.starttls()
+        smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
+        smtp.send_message(msg)
 
-        try:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
-                smtp.starttls()
-                smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
-                smtp.send_message(msg)
-            print(f"✅ Email sent to {email}")
-        except Exception as e:
-            print(f"❌ Failed to send to {email} — {e}")
+    print(f"✅ Email sent to {email}")
 
-        # ✅ Also send via Telegram
-        try:
-            send_telegram_pdf(pdf_path)
-        except Exception as e:
-            print(f"❌ Telegram send failed for {email} — {e}")
-
-if __name__ == "__main__":
-    send_daily_summaries()
-
+    # 📲 Also send via Telegram
+    send_telegram_pdf(pdf_path)
+    print(f"✅ Telegram sent for {email}")
 
