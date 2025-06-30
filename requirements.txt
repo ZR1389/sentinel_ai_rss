@@ -18,3 +18,4 @@ tqdm==4.67.1
 typing-inspection==0.4.1
 typing_extensions==4.14.0
 wheel==0.45.1
+requests
