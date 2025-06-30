@@ -51,7 +51,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
 def run():
     port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(('', port), ChatRequestHandler)
+    server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
     print(f"🚀 Sentinel AI server running on port {port}")
     server.serve_forever()
 
