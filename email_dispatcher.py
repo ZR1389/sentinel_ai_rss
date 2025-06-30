@@ -2,6 +2,7 @@ import os
 import json
 import smtplib
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos  # ✅ Import required enums
 from dotenv import load_dotenv
 from datetime import date
 from email.message import EmailMessage
@@ -24,15 +25,15 @@ with open("clients.json") as f:
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
-        self.cell(0, 10, "Sentinel AI - Daily Threat Briefing", new_x=10, new_y="NEXT", align="C")
+        self.cell(0, 10, "Sentinel AI - Daily Threat Briefing", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
         self.set_font("Arial", "", 12)
-        self.cell(0, 10, date.today().isoformat(), new_x=10, new_y="NEXT", align="C")
+        self.cell(0, 10, date.today().isoformat(), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
         self.ln(10)
 
     def add_toc(self, categorized_alerts):
         self.set_font("Arial", "B", 12)
         self.set_text_color(0, 0, 0)
-        self.cell(0, 10, "🔎 Summary by Threat Level", new_x=10, new_y="NEXT")
+        self.cell(0, 10, "Summary by Threat Level", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(2)
 
         for level in ["Critical", "High", "Moderate", "Low"]:
@@ -45,7 +46,7 @@ class PDF(FPDF):
                 }[level]
                 self.set_text_color(*color)
                 self.set_font("Arial", "B", 11)
-                self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", new_x=10, new_y="NEXT")
+                self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.set_text_color(0, 0, 0)
         self.set_font("Arial", "", 12)
         self.ln(5)
@@ -54,20 +55,17 @@ class PDF(FPDF):
         self.set_font("Arial", "", 12)
         alerts = summary.strip().split("\n\n")
         categorized = {"Critical": [], "High": [], "Moderate": [], "Low": [], "Unknown": []}
-
         parsed_alerts = []
 
         for alert in alerts:
             lines = alert.strip().split("\n")
             content_lines = []
             threat_level = "Unknown"
-
             for line in lines:
                 if line.startswith("Threat Level:"):
                     threat_level = line.replace("Threat Level:", "").strip()
                 else:
                     content_lines.append(line)
-
             categorized.setdefault(threat_level, []).append(alert)
             parsed_alerts.append((threat_level, "\n".join(content_lines).strip()))
 
@@ -88,7 +86,7 @@ class PDF(FPDF):
             self.ln(1)
 
             self.set_font("Arial", "B", 12)
-            self.cell(0, 10, f"Threat Level: {threat_level}", new_x=10, new_y="NEXT")
+            self.cell(0, 10, f"Threat Level: {threat_level}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             self.ln(4)
 
             self.set_font("Arial", "", 12)

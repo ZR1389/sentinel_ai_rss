@@ -12,12 +12,25 @@ from openai import OpenAI
 # 🚨 THREAT KEYWORDS
 # -------------------------------
 THREAT_KEYWORDS = [
-    "assassination", "kidnapping", "extortion", "blackmail", "armed robbery", "abduction",
-    "violent attack", "missing person", "killing", "murder", "rape", "brutal attack",
-    "active shooter", "lone wolf terrorism", "terrorist attack", "terrorists", "terrorism",
-    "mass shooter incident", "natural disaster", "emergency", "crisis", "tornado",
-    "hurricane", "earthquake", "tsunami", "kidnap for ransom", "physical assault",
-    "assassination attempt"
+    "crime rate", "crime levels", "criminality", "violent crime", "organized crime", "brutal assaults",
+    "sexual harassment", "physical harassment", "digital harassment", "identity theft", "financial scams",
+    "frauds", "honey traps", "cybercrime", "cyberattack", "cyberattacks", "digital threats", "online threats",
+    "cyber kidnapping", "virtual kidnapping", "ransomware", "malware", "social engineering", "hackers", "hacking",
+    "espionage", "spying", "intrusion into privacy", "eavesdropping", "illegal surveillance", "illegal imprisonment",
+    "hostile surveillance", "terrorism", "terrorist", "terrorists", "terrorist group", "terrorist organization",
+    "terror attack", "terrorist attack", "domestic terrorism", "international terrorism", "lone wolf terrorism",
+    "right-wing terrorism", "left-wing terrorism", "suicide bomber", "jihadist", "terrorism financing",
+    "weapons of mass destruction", "chemical weapons", "biological weapons", "radiological weapons",
+    "nuclear weapons", "nuclear bomb", "atomic bomb", "vehicle borne improvised device", "improvised explosive devices",
+    "car bomb", "armed conflict", "political violence", "political turmoil", "geopolitical tensions", "coup d'etat",
+    "war", "protests", "demonstrations", "civil unrest", "abduction", "kidnapping", "child kidnapping",
+    "child trafficking", "human trafficking", "extortion", "kidnap for ransom", "missing person", "rape", "murder",
+    "killings", "mass killing", "mass shooter", "active shooter", "serial killer", "assassination", "theft",
+    "armed robbery", "robbery", "burglary", "burglaries", "pickpocketing", "car ambush", "illegal checkpoints",
+    "road rage", "religious attack", "tribal clashes", "canibals", "armed gangs", "bandits", "banditry",
+    "weapons smuggling", "information leaks", "information leakage", "natural disasters", "weather disasters",
+    "earthquakes", "tsunami", "tornado", "hurricane", "infectious diseases", "wild animals", "venomous animals",
+    "drug trafficking", "drug lords", "narco cartels", "airplane crash", "hijacking", "piracy", "somali pirates"
 ]
 
 KEYWORD_PATTERN = re.compile(
@@ -38,18 +51,28 @@ GOOGLE_NEWS_QUERY = (
 )
 
 FEEDS = [
-    "https://travel.state.gov/_res/rss/TW.xml",
-    GOOGLE_NEWS_QUERY,
-    "https://www.reutersagency.com/feed/?best-topics=conflict-crisis&post_type=best",
+    "https://www.cisa.gov/news.xml",
+    "https://feeds.bbci.co.uk/news/uk/rss.xml",
+    "https://www.darkreading.com/rss.xml",
+    "https://krebsonsecurity.com/feed/",
+    "https://www.bleepingcomputer.com/feed/",
+    "https://www.theguardian.com/world/rss",
+    "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
+    "https://www.crimemagazine.com/rss.xml",
+    "https://www.murdermap.co.uk/feed/",
+    "https://kidnappingmurderandmayhem.blogspot.com/feeds/posts/default",
+    "https://www.securitymagazine.com/rss/",
+    "https://feeds.feedburner.com/TheHackersNews",
+    "https://www.csoonline.com/feed/",
+    "https://www.arlingtoncardinal.com/category/crime/feed/",
+    "https://intel471.com/blog/feed",
+    "https://sample2.usembassy.gov/category/alert/feed/",
     "https://www.aljazeera.com/xml/rss/all.xml",
-    "https://travel.gc.ca/rss/travelalerts.xml",
-    "https://www.gov.uk/foreign-travel-advice.atom",
-    "https://www.smartraveller.gov.au/consular-services/advice-list/rss",
-    "https://www.safetravel.govt.nz/rss.xml",
     "https://www.france24.com/en/rss",
-    "https://thehackernews.com/feeds/posts/default",
+    "https://www.bleepingcomputer.com/feed/",
+    "https://www.gov.uk/foreign-travel-advice.atom",
     "https://www.gdacs.org/xml/rss.xml",
-    "https://www.who.int/feeds/entity/csr/don/en/rss.xml"
+    "https://news.google.com/rss/search?q=assassination+OR+kidnapping+OR+extortion+OR+blackmail+OR+armed%20robbery+OR+abduction+OR+violent%20attack+OR+missing%20person+OR+killing+OR+murder+OR+rape+OR+brutal%20attack+OR+active%20shooter+OR+lone%20wolf%20terrorism+OR+terrorist+attack+OR+terrorists+OR+terrorism+OR+mass%20shooter%20incident+OR+natural%20disaster+OR+emergency+OR+crisis+OR+tornado+OR+hurricane+OR+earthquake+OR+tsunami+OR+kidnap%20for%20ransom+OR+physical%20assault+OR+assassination%20attempt&hl=en-US&gl=US&ceid=US:en",
 ]
 
 # -------------------------------
