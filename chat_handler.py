@@ -1,13 +1,25 @@
-from openai import OpenAI
 import os
+import json
 from dotenv import load_dotenv
+from openai import OpenAI
 from rss_processor import get_clean_alerts
 
 # ✅ Load environment variables
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Region extractor from user input
+def get_plan_for_email(email):
+    try:
+        with open("clients.json", "r") as f:
+            clients = json.load(f)
+        for c in clients:
+            if c["email"].lower() == email.lower():
+                return c["plan"].upper()
+    except:
+        pass
+    return "FREE"
+
+# ✅ Region extractor
 def extract_region_from_prompt(prompt):
     regions = [
         "Mexico", "France", "Nigeria", "USA", "Serbia", "Germany",
@@ -18,11 +30,10 @@ def extract_region_from_prompt(prompt):
             return r
     return None
 
-# ✅ GPT summary handler
+# ✅ GPT summary generator
 def generate_threat_summary(user_prompt, user_plan="FREE"):
     region = extract_region_from_prompt(user_prompt)
 
-    # Pull filtered alerts
     if user_plan == "FREE":
         alerts = get_clean_alerts(limit=3, region=region)
     else:
@@ -31,7 +42,6 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
     if not alerts:
         return f"No recent alerts found for '{region or 'your region'}'. Stay safe."
 
-    # Convert alert dicts to readable text for GPT input
     alert_text = "\n\n".join(f"{a['title']}: {a['summary']}" for a in alerts)
 
     try:
