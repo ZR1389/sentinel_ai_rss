@@ -3,7 +3,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from chat_handler import generate_threat_summary, get_plan_for_email
-from email_dispatcher import send_daily_summaries  # ✅ current function
+from email_dispatcher import send_pdf_report  # ✅ correct import
 
 # ✅ Load .env variables
 load_dotenv()
@@ -57,4 +57,5 @@ def run():
 
 if __name__ == "__main__":
     run()
+
 
