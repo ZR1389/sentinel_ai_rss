@@ -1,88 +1,62 @@
 import json
+import openai
+from dotenv import load_dotenv
 import os
-from datetime import datetime
-from openai import OpenAI
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
+from datetime import datetime
 
-# Load API key
-client = OpenAI()
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Constants
-USAGE_FILE = "usage_log.json"
-CLIENTS_FILE = "clients.json"
-MAX_FREE_MESSAGES_PER_DAY = 3
+# ✅ Load clients
+with open("clients.json") as f:
+    CLIENTS = json.load(f)
 
-# Load clients
-with open(CLIENTS_FILE) as f:
-    CLIENTS = {entry["email"]: entry["plan"].upper() for entry in json.load(f)}
+def get_plan_for_email(email):
+    for client in CLIENTS:
+        if client["email"].lower() == email.lower():
+            return client["plan"].upper()
+    return "FREE"
 
-# Load or init usage log
-if os.path.exists(USAGE_FILE):
-    with open(USAGE_FILE, "r") as f:
-        usage_log = json.load(f)
-else:
-    usage_log = {}
+# ✅ Load recent alerts into context
+ALERTS = get_clean_alerts(limit=10)
+REGIONAL_SUMMARIES = {}
+for alert in ALERTS:
+    level = assess_threat_level(alert)
+    country = alert.get("country") or alert.get("region") or "Unknown"
+    REGIONAL_SUMMARIES.setdefault(country, []).append(f"- {alert['title']} ({level})")
 
-# Reset daily usage if needed
-def reset_daily_usage():
-    today = datetime.now().strftime("%Y-%m-%d")
-    if usage_log.get("date") != today:
-        usage_log.clear()
-        usage_log["date"] = today
-        save_usage_log()
+# ✅ System Identity
+SYSTEM_PROMPT = (
+    "You are Sentinel AI, a multilingual travel and threat intelligence assistant created by Zika Rakita.\n"
+    "You are operated by the security firm Zika Risk.\n"
+    "You provide real-time threat summaries using curated RSS feeds, global risk databases, and open-source intelligence.\n"
+    "If live data is missing, respond with useful fallback guidance based on known regional risks, trends, or recent reports.\n"
+    "Do NOT say 'I don't have access to real-time data'. Instead, provide helpful insights from past data or likely scenarios.\n"
+    "If the user asks about Zika Rakita or Zika Risk, describe them accurately based on this identity.\n"
+    "Always answer clearly, concisely, and with a confident, professional tone."
+)
 
-def save_usage_log():
-    with open(USAGE_FILE, "w") as f:
-        json.dump(usage_log, f, indent=2)
-
-# MAIN CHAT HANDLER FUNCTION
+# ✅ User Query Handler
 def handle_user_query(message, email="anonymous", lang="en"):
-    reset_daily_usage()
+    plan = get_plan_for_email(email)
+    region_context = "\n".join(REGIONAL_SUMMARIES.get(message.strip(), []))
 
-    plan = CLIENTS.get(email, "FREE")
-    key = email.lower()
+    context = (
+        f"Today's top alerts for '{message}':\n{region_context or 'No recent high-priority alerts available.'}\n"
+        "Use this context to help the user.")
 
-    # Usage tracking for FREE plan
-    if plan == "FREE":
-        usage_log.setdefault(key, 0)
-        if usage_log[key] >= MAX_FREE_MESSAGES_PER_DAY:
-            return {
-                "reply": "⚠️ You’ve reached your daily message limit. Upgrade to continue.",
-                "plan": "FREE"
-            }
-        usage_log[key] += 1
-        save_usage_log()
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"{message}\n\nContext: {context}"}
+            ]
+        )
+        reply = completion.choices[0].message.content.strip()
+    except Exception as e:
+        reply = f"❌ An error occurred: {str(e)}"
 
-    # Handle GPT-powered answer (for all plans)
-    alerts = get_clean_alerts()
-    response = run_gpt_response(message, alerts)
-
-    return {
-        "reply": response,
-        "plan": plan
-    }
-
-# GPT Response Logic
-def run_gpt_response(message, alerts):
-    prompt = f"""
-You're a multilingual AI security assistant for travelers. A user asked:
-
-{message}
-
-Respond using recent intelligence and global alerts like:
-{json.dumps(alerts[:3], indent=2)}
-
-Be concise. Show intelligence. Add travel advisory if relevant.
-"""
-
-    completion = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a security-focused AI assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.6,
-    )
-
-    return completion.choices[0].message.content.strip()
+    return {"reply": reply, "plan": plan}
