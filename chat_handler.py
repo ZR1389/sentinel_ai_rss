@@ -20,7 +20,8 @@ def translate_text(text, target_lang="en"):
                 {"role": "system", "content": f"Translate the following text into {target_lang}."},
                 {"role": "user", "content": text}
             ],
-            temperature=0.3
+            temperature=0.3,
+            timeout=30  # ✅ prevent hanging on translation
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -46,7 +47,7 @@ THREAT_FILTERS = {
 
 # ✅ Get alerts filtered by plan type
 def get_filtered_alerts(plan):
-    all_alerts = get_clean_alerts(limit=10)
+    all_alerts = get_clean_alerts(limit=10)  # 🔧 Limit alerts to avoid GPT overload
     allowed_types = THREAT_FILTERS.get(plan)
     filtered = []
 
@@ -70,7 +71,7 @@ SYSTEM_PROMPT = (
     "You are operated by the security firm Zika Risk.\n"
     "You provide real-time threat summaries using curated RSS feeds, global risk databases, and open-source intelligence.\n"
     "If live data is missing, respond with useful fallback guidance based on known regional risks, trends, or recent reports.\n"
-    "Do NOT say 'I don't have access to real-time data'. Instead, provide helpful insights from past data or likely scenarios.\n"
+    "Do NOT say 'I don’t have access to real-time data'. Instead, provide helpful insights from past data or likely scenarios.\n"
     "If the user asks about Zika Rakita or Zika Risk, describe them accurately based on this identity.\n"
     "Always answer clearly, concisely, and with a confident, professional tone."
 )
@@ -89,7 +90,7 @@ def handle_user_query(message, email="anonymous", lang="en"):
     if not filtered:
         filtered = threat_groups
 
-    # Build structured context for GPT
+    # Build structured context
     sections = []
     flat_alert_list = []
 
@@ -104,8 +105,6 @@ def handle_user_query(message, email="anonymous", lang="en"):
                 f"Link: {alert['link']}\n"
             )
             section_lines.append(entry)
-
-            # Build alert for frontend
             flat_alert_list.append({
                 "title": alert["title"],
                 "summary": alert["summary"],
@@ -121,21 +120,23 @@ def handle_user_query(message, email="anonymous", lang="en"):
     if not raw_context.strip():
         raw_context = "No recent high-priority alerts available."
 
-    # 🌐 Translate context for GPT if needed
-    translated_context = translate_text(raw_context, target_lang=lang)
+    # ✂️ Truncate context before translation
+    short_context = raw_context[:4000]
+    translated_context = translate_text(short_context, target_lang=lang)
 
-    # 🧠 GPT reply with threat context
+    # 🧠 GPT reply with threat context and timeout
     try:
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"{message}\n\nContext:\n{translated_context}"}
-            ]
+            ],
+            timeout=30  # ✅ prevent GPT reply timeout
         )
         gpt_reply = response.choices[0].message.content.strip()
     except Exception as e:
-        gpt_reply = f"❌ An error occurred: {str(e)}"
+        gpt_reply = f"❌ GPT failed to respond: {str(e)}"
 
     # 🌍 Translate GPT reply if needed
     translated_reply = translate_text(gpt_reply, target_lang=lang)
@@ -143,5 +144,5 @@ def handle_user_query(message, email="anonymous", lang="en"):
     return {
         "reply": translated_reply,
         "plan": plan,
-        "alerts": flat_alert_list  # ✅ New: used by frontend filters
+        "alerts": flat_alert_list  # ✅ Used by frontend filters
     }
