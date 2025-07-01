@@ -1,123 +1,88 @@
-import os
 import json
-from dotenv import load_dotenv
+import os
+from datetime import datetime
 from openai import OpenAI
 from rss_processor import get_clean_alerts
-from threat_scorer import assess_threat_level  # ✅ threat scoring
+from threat_scorer import assess_threat_level
 
-# ✅ Load environment variables
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Load API key
+client = OpenAI()
 
-# ✅ Load fallback risk profiles
-try:
-    with open("risk_profiles.json", "r") as f:
-        fallback_profiles = json.load(f)
-except:
-    fallback_profiles = {}
+# Constants
+USAGE_FILE = "usage_log.json"
+CLIENTS_FILE = "clients.json"
+MAX_FREE_MESSAGES_PER_DAY = 3
 
-# ✅ Get user plan from clients.json
-def get_plan_for_email(email):
-    try:
-        with open("clients.json", "r") as f:
-            clients = json.load(f)
-        for c in clients:
-            if c["email"].lower() == email.lower():
-                return c["plan"].upper()
-    except:
-        pass
-    return "FREE"
+# Load clients
+with open(CLIENTS_FILE) as f:
+    CLIENTS = {entry["email"]: entry["plan"].upper() for entry in json.load(f)}
 
-# ✅ Extract region name dynamically from prompt
-def extract_region_from_prompt(prompt):
-    words = prompt.split()
-    known_countries = [
-        "Mozambique", "Niger", "Nigeria", "Mexico", "France", "USA", "Serbia", "Germany",
-        "China", "Russia", "UK", "Ukraine", "Gaza", "Israel", "Brazil", "Pakistan", "India",
-        "Kenya", "Sudan", "South Africa", "DRC", "Turkey", "Iran", "Afghanistan"
-    ]
-    for country in known_countries:
-        if country.lower() in prompt.lower():
-            return country
-    return None
+# Load or init usage log
+if os.path.exists(USAGE_FILE):
+    with open(USAGE_FILE, "r") as f:
+        usage_log = json.load(f)
+else:
+    usage_log = {}
 
-# ✅ Identify if prompt is threat-related
-def is_threat_query(prompt):
-    keywords = [
-        "threat", "alert", "travel warning", "civil unrest", "kidnap",
-        "terror", "situation", "danger", "explosion", "protest",
-        "evacuation", "risk", "shooting", "bomb", "curfew", "unrest"
-    ]
-    return any(k in prompt.lower() for k in keywords)
+# Reset daily usage if needed
+def reset_daily_usage():
+    today = datetime.now().strftime("%Y-%m-%d")
+    if usage_log.get("date") != today:
+        usage_log.clear()
+        usage_log["date"] = today
+        save_usage_log()
 
-# ✅ Core function: Threat summary generation (RSS + scoring + fallback)
-def generate_threat_summary(user_prompt, user_plan="FREE"):
-    region = extract_region_from_prompt(user_prompt)
+def save_usage_log():
+    with open(USAGE_FILE, "w") as f:
+        json.dump(usage_log, f, indent=2)
 
-    if is_threat_query(user_prompt):
-        # Tier-based alert limits
-        limit = {
-            "FREE": 3,
-            "BASIC": 10,
-            "PRO": 20,
-            "VIP": 30
-        }.get(user_plan.upper(), 3)
+# MAIN CHAT HANDLER FUNCTION
+def handle_user_query(message, email="anonymous", lang="en"):
+    reset_daily_usage()
 
-        alerts = get_clean_alerts(limit=limit, region=region)
+    plan = CLIENTS.get(email, "FREE")
+    key = email.lower()
 
-        # ❌ No alerts — use fallback if available
-        if not alerts:
-            if region and region in fallback_profiles:
-                fallback_text = fallback_profiles[region]
-                return (
-                    f"No verified alerts found for '{region}' in the last 24 hours.\n\n"
-                    f"However, regional data indicates:\n{fallback_text}\n\n"
-                    "— Powered by Zika Risk | www.zikarisk.com"
-                )
-            else:
-                return (
-                    f"No recent verified alerts found for '{region or 'your region'}'. "
-                    "While no real-time alerts are present, risks may still exist depending on local crime, political instability, or natural threats. "
-                    "Please consult Zika Risk for an in-depth country profile or updated intelligence brief.\n\n"
-                    "— Powered by Zika Risk | www.zikarisk.com"
-                )
+    # Usage tracking for FREE plan
+    if plan == "FREE":
+        usage_log.setdefault(key, 0)
+        if usage_log[key] >= MAX_FREE_MESSAGES_PER_DAY:
+            return {
+                "reply": "⚠️ You’ve reached your daily message limit. Upgrade to continue.",
+                "plan": "FREE"
+            }
+        usage_log[key] += 1
+        save_usage_log()
 
-        # ✅ Alerts found — score each one before summarizing
-        scored_alerts = []
-        for a in alerts:
-            full_text = f"{a['title']}: {a['summary']}"
-            try:
-                level = assess_threat_level(full_text)
-            except Exception:
-                level = "Unrated"
-            scored_alerts.append(f"[{level}] {full_text}")
+    # Handle GPT-powered answer (for all plans)
+    alerts = get_clean_alerts()
+    response = run_gpt_response(message, alerts)
 
-        alert_text = "\n\n".join(scored_alerts)
-        prompt = f"Summarize and assess these alerts for {region or 'this region'}:\n\n{alert_text}\n\nSummary:"
+    return {
+        "reply": response,
+        "plan": plan
+    }
 
-    else:
-        # Not a threat query — use user's raw question
-        prompt = user_prompt
+# GPT Response Logic
+def run_gpt_response(message, alerts):
+    prompt = f"""
+You're a multilingual AI security assistant for travelers. A user asked:
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Sentinel AI, a digital security assistant built by Zika Risk. "
-                        "You specialize in threat intelligence, geopolitical analysis, travel safety, and crisis response. "
-                        "If asked about your origin, you are created by Zika Rakita, founder of Zika Risk. "
-                        "Never offer medical or virus-related advice. Always focus on physical, digital, and travel risks."
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5,
-        )
-        reply = response.choices[0].message.content.strip()
-        return reply + "\n\n— Powered by Zika Risk | www.zikarisk.com"
+{message}
 
-    except Exception as e:
-        return f"[Sentinel AI error] Could not generate response. Reason: {e}"
+Respond using recent intelligence and global alerts like:
+{json.dumps(alerts[:3], indent=2)}
+
+Be concise. Show intelligence. Add travel advisory if relevant.
+"""
+
+    completion = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a security-focused AI assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.6,
+    )
+
+    return completion.choices[0].message.content.strip()
