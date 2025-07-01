@@ -16,6 +16,13 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
+# ✅ Threat type filters by plan
+THREAT_FILTERS = {
+    "VIP": None,
+    "PRO": {"Kidnapping", "Cyber", "Terrorism", "Protest", "Crime"},
+    "FREE": {"Protest", "Crime"}
+}
+
 # ✅ PDF layout using fpdf2
 class PDF(FPDF):
     def __init__(self, lang="en"):
@@ -29,69 +36,60 @@ class PDF(FPDF):
         self.cell(0, 10, date.today().isoformat(), ln=True, align="C")
         self.ln(10)
 
-    def add_toc(self, categorized_alerts):
-        self.set_font("Arial", "B", 12)
-        self.set_text_color(0, 0, 0)
-        self.cell(0, 10, translate_text("Summary by Threat Level", self.lang), ln=True)
-        self.ln(2)
+    def body(self, summary, allowed_types=None):
+        self.set_font("Arial", "", 12)
+        alerts = summary.strip().split("\n\n")
 
-        for level in ["Critical", "High", "Moderate", "Low"]:
-            if categorized_alerts[level]:
+        # Parse into type -> alert list
+        by_type = {}
+        for alert in alerts:
+            lines = alert.strip().split("\n")
+            current_type = "Unclassified"
+            current_level = "Unknown"
+            content_lines = []
+
+            for line in lines:
+                if line.startswith("🔸"):
+                    current_type = line.replace("🔸", "").strip().split(" ")[0].title()
+                elif line.startswith("Threat Level:"):
+                    current_level = line.replace("Threat Level:", "").strip()
+                else:
+                    content_lines.append(line)
+
+            # Apply plan filter
+            if allowed_types is not None and current_type not in allowed_types:
+                continue
+
+            body_text = "\n".join(content_lines).strip()
+            by_type.setdefault(current_type, []).append((current_level, body_text))
+
+        # Sort and display
+        for threat_type, entries in by_type.items():
+            self.set_font("Arial", "B", 13)
+            self.set_text_color(0, 0, 0)
+            self.cell(0, 10, translate_text(f"{threat_type.upper()} ({len(entries)} alert(s))", self.lang), ln=True)
+            self.ln(2)
+
+            for threat_level, body in entries:
                 color = {
                     "Critical": (255, 0, 0),
                     "High": (255, 102, 0),
                     "Moderate": (255, 165, 0),
                     "Low": (0, 128, 0)
-                }[level]
+                }.get(threat_level, (0, 0, 0))
+
                 self.set_text_color(*color)
-                self.set_font("Arial", "B", 11)
-                translated_level = translate_text(level, self.lang)
-                self.cell(0, 8, f"• {translated_level}: {len(categorized_alerts[level])} alert(s)", ln=True)
+                self.multi_cell(0, 10, body)
+                self.ln(1)
 
-        self.set_text_color(0, 0, 0)
-        self.set_font("Arial", "", 12)
-        self.ln(5)
+                self.set_font("Arial", "B", 12)
+                translated_label = translate_text("Threat Level", self.lang)
+                translated_level = translate_text(threat_level, self.lang)
+                self.cell(0, 10, f"{translated_label}: {translated_level}", ln=True)
+                self.ln(4)
 
-    def body(self, summary):
-        self.set_font("Arial", "", 12)
-        alerts = summary.strip().split("\n\n")
-        categorized = {"Critical": [], "High": [], "Moderate": [], "Low": [], "Unknown": []}
-        parsed_alerts = []
-
-        for alert in alerts:
-            lines = alert.strip().split("\n")
-            content_lines = []
-            threat_level = "Unknown"
-            for line in lines:
-                if line.startswith("Threat Level:"):
-                    threat_level = line.replace("Threat Level:", "").strip()
-                else:
-                    content_lines.append(line)
-            categorized.setdefault(threat_level, []).append(alert)
-            parsed_alerts.append((threat_level, "\n".join(content_lines).strip()))
-
-        self.add_toc(categorized)
-
-        for threat_level, content in parsed_alerts:
-            color = {
-                "Critical": (255, 0, 0),
-                "High": (255, 102, 0),
-                "Moderate": (255, 165, 0),
-                "Low": (0, 128, 0)
-            }.get(threat_level, (0, 0, 0))
-
-            self.set_text_color(*color)
-            self.multi_cell(0, 10, content)
-            self.ln(1)
-
-            self.set_font("Arial", "B", 12)
-            translated_label = translate_text("Threat Level", self.lang)
-            translated_level = translate_text(threat_level, self.lang)
-            self.cell(0, 10, f"{translated_label}: {translated_level}", ln=True)
-            self.ln(4)
-
-            self.set_font("Arial", "", 12)
-            self.set_text_color(0, 0, 0)
+                self.set_font("Arial", "", 12)
+                self.set_text_color(0, 0, 0)
 
 # ✅ Used by /request_report or daily cron
 def send_pdf_report(email, plan, lang="en"):
@@ -103,9 +101,11 @@ def send_pdf_report(email, plan, lang="en"):
     if not summary or summary.startswith("[Sentinel AI error]"):
         raise Exception("No summary generated.")
 
+    allowed_types = THREAT_FILTERS.get(plan.upper())
+
     pdf = PDF(lang=lang)
     pdf.add_page()
-    pdf.body(summary)
+    pdf.body(summary, allowed_types=allowed_types)
 
     pdf_filename = f"{email.replace('@', '_')}_{date.today()}.pdf"
     pdf_path = os.path.join("reports", pdf_filename)

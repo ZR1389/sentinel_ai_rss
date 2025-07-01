@@ -3,12 +3,13 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from chat_handler import handle_user_query
-from email_dispatcher import send_pdf_report
-from telegram_dispatcher import send_alerts_to_telegram  # ✅ New import
+from email_dispatcher import send_pdf_report, send_daily_summaries
+from telegram_dispatcher import send_alerts_to_telegram  # ✅ Safe to import globally
 
-# ✅ Load .env variables
+# ✅ Load environment variables
 load_dotenv()
 
+# ✅ Server routes
 class ChatRequestHandler(BaseHTTPRequestHandler):
     def _set_headers(self):
         self.send_response(200)
@@ -61,10 +62,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         elif self.path == "/send_telegram_alerts":
             email = data.get("email", "anonymous")
             count = send_alerts_to_telegram(email=email)
-            if count > 0:
-                msg = f"✅ {count} alerts sent to Telegram."
-            else:
-                msg = "⚠️ No high-risk alerts to send right now."
+            msg = f"✅ {count} alerts sent to Telegram." if count > 0 else "⚠️ No high-risk alerts to send right now."
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
@@ -91,12 +89,17 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
-def run():
+# ✅ Run HTTP server
+def run_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
     print(f"🚀 Sentinel AI server running on port {port}")
     server.serve_forever()
 
+# ✅ Entry point: auto-detect cron vs server
 if __name__ == "__main__":
-    run()
-
+    if os.getenv("RUN_MODE") == "daily":
+        print("📬 Sending daily reports...")
+        send_daily_summaries()
+    else:
+        run_server()

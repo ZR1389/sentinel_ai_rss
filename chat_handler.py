@@ -1,9 +1,7 @@
 import json
 import os
-from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
-
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
 
@@ -39,21 +37,34 @@ def get_plan_for_email(email):
             return client["plan"].upper()
     return "FREE"
 
-# ✅ Prepare region-based alert summaries with threat levels
-ALERTS = get_clean_alerts(limit=10)
-REGIONAL_SUMMARIES = {}
-for alert in ALERTS:
-    level = assess_threat_level(alert)
-    country = alert.get("country") or alert.get("region") or "Unknown"
-    REGIONAL_SUMMARIES.setdefault(country, []).append({
-        "title": alert['title'],
-        "summary": alert['summary'],
-        "source": alert['source'],
-        "link": alert['link'],
-        "level": level
-    })
+# ✅ Threat type filters by plan
+THREAT_FILTERS = {
+    "VIP": None,
+    "PRO": {"Kidnapping", "Cyber", "Terrorism", "Protest", "Crime"},
+    "FREE": {"Protest", "Crime"}
+}
 
-# ✅ Identity and behavior prompt
+# ✅ Get alerts filtered by plan type
+def get_filtered_alerts(plan):
+    all_alerts = get_clean_alerts(limit=30)
+    allowed_types = THREAT_FILTERS.get(plan)
+    filtered = []
+
+    for alert in all_alerts:
+        alert["level"] = assess_threat_level(alert)
+        alert_type = alert.get("type", "Unclassified")
+        alert["type"] = alert_type
+        if allowed_types is None or alert_type in allowed_types:
+            filtered.append(alert)
+
+    # Group by threat type
+    grouped = {}
+    for alert in filtered:
+        grouped.setdefault(alert["type"], []).append(alert)
+
+    return grouped
+
+# ✅ Sentinel AI behavior prompt
 SYSTEM_PROMPT = (
     "You are Sentinel AI, a multilingual travel and threat intelligence assistant created by Zika Rakita.\n"
     "You are operated by the security firm Zika Risk.\n"
@@ -64,30 +75,43 @@ SYSTEM_PROMPT = (
     "Always answer clearly, concisely, and with a confident, professional tone."
 )
 
-# ✅ Handle user query
+# ✅ Handle user query (grouped by threat type + plan filter)
 def handle_user_query(message, email="anonymous", lang="en"):
     plan = get_plan_for_email(email)
-    region_alerts = REGIONAL_SUMMARIES.get(message.strip(), [])
+    threat_groups = get_filtered_alerts(plan)
 
-    # Build raw regional summary
-    alert_texts = []
-    for alert in region_alerts:
-        entry = (
-            f"🔹 {alert['title']}\n"
-            f"{alert['summary']}\n"
-            f"Threat Level: {alert['level']}\n"
-            f"Source: {alert['source']}\n"
-            f"Link: {alert['link']}\n"
-        )
-        alert_texts.append(entry)
+    # Match query to alerts (region/country/topic), fallback to all if nothing matches
+    filtered = {
+        k: [a for a in v if message.lower() in a['title'].lower() or message.lower() in a['summary'].lower()]
+        for k, v in threat_groups.items()
+    }
+    filtered = {k: v for k, v in filtered.items() if v}
+    if not filtered:
+        filtered = threat_groups
 
-    raw_alert_context = "\n\n".join(alert_texts)
-    raw_context = raw_alert_context or "No recent high-priority alerts available."
+    # Build structured context
+    sections = []
+    for threat_type, alerts in filtered.items():
+        section_lines = [f"🔸 {threat_type.upper()} ({len(alerts)} alert(s))"]
+        for alert in alerts:
+            entry = (
+                f"🔹 {alert['title']}\n"
+                f"{alert['summary']}\n"
+                f"Threat Level: {alert['level']}\n"
+                f"Source: {alert['source']}\n"
+                f"Link: {alert['link']}\n"
+            )
+            section_lines.append(entry)
+        sections.append("\n".join(section_lines))
 
-    # 🔁 Translate context if needed
+    raw_context = "\n\n".join(sections)
+    if not raw_context.strip():
+        raw_context = "No recent high-priority alerts available."
+
+    # 🌐 Translate context if needed
     translated_context = translate_text(raw_context, target_lang=lang)
 
-    # GPT reply based on translated alert summaries
+    # 🧠 GPT reply with threat type context
     try:
         response = client.chat.completions.create(
             model="gpt-4",
@@ -100,7 +124,7 @@ def handle_user_query(message, email="anonymous", lang="en"):
     except Exception as e:
         gpt_reply = f"❌ An error occurred: {str(e)}"
 
-    # ✅ Translate GPT reply if needed
+    # 🌍 Translate GPT reply if needed
     translated_reply = translate_text(gpt_reply, target_lang=lang)
 
     return {

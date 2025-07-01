@@ -17,7 +17,7 @@ THREAT_KEYWORDS = [
 ]
 
 KEYWORD_PATTERN = re.compile(
-    r'\\b(' + '|'.join(re.escape(k) for k in THREAT_KEYWORDS) + r')\\b',
+    r'\b(' + '|'.join(re.escape(k) for k in THREAT_KEYWORDS) + r')\b',
     re.IGNORECASE
 )
 
@@ -47,7 +47,7 @@ FEEDS = [
 ]
 
 # -------------------------------
-# 📦 GPT SETUP (optional summary)
+# 🧠 GPT SETUP
 # -------------------------------
 load_dotenv()
 client = OpenAI()
@@ -73,6 +73,54 @@ def summarize_with_gpt(text):
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"[GPT error] {str(e)}"
+
+# -------------------------------
+# 🧠 Threat Type Classification
+# -------------------------------
+TYPE_PROMPT = """
+Classify the threat type based on the following news headline and summary. Choose only ONE of the following categories:
+
+- Terrorism
+- Protest
+- Crime
+- Kidnapping
+- Cyber
+- Natural Disaster
+- Political
+- Infrastructure
+- Health
+- Unclassified
+
+Respond with only the category name.
+
+Example:
+Input: "Hacking group hits hospital IT system"
+Output: Cyber
+
+Now classify this:
+"""
+
+def classify_threat_type(text):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
+                {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
+            ],
+            temperature=0,
+            max_tokens=10
+        )
+        label = response.choices[0].message.content.strip()
+        if label not in [
+            "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
+            "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
+        ]:
+            return "Unclassified"
+        return label
+    except Exception as e:
+        print(f"❌ Threat type classification error: {e}")
+        return "Unclassified"
 
 # -------------------------------
 # 🔁 FETCH SINGLE FEED
@@ -124,13 +172,17 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
                 continue
             seen.add(key)
 
+            # GPT calls
             gpt_summary = summarize_with_gpt(full_text) if summarize else None
+            threat_type = classify_threat_type(full_text)
+
             alerts.append({
                 "title": title,
                 "summary": summary,
                 "link": link,
                 "source": source_domain,
-                "gpt_summary": gpt_summary
+                "gpt_summary": gpt_summary,
+                "type": threat_type
             })
 
             if len(alerts) >= limit:
