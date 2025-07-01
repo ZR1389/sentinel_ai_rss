@@ -6,6 +6,7 @@ python-dotenv==1.1.1
 requests==2.31.0
 tqdm==4.67.1
 sgmllib3k==1.0.0
+schedule
 
 # Data modeling & type checking
 pydantic==2.11.7
