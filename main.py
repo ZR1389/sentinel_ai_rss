@@ -9,6 +9,14 @@ from email_dispatcher import send_pdf_report  # ✅ correct import
 load_dotenv()
 
 class ChatRequestHandler(BaseHTTPRequestHandler):
+    # ✅ Handle CORS preflight request
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length))
@@ -23,6 +31,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")  # ✅ CORS
             self.end_headers()
             self.wfile.write(json.dumps({
                 "reply": summary,
@@ -44,6 +53,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")  # ✅ CORS
             self.end_headers()
             self.wfile.write(json.dumps({
                 "message": message
