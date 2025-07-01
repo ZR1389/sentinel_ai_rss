@@ -33,7 +33,10 @@ def extract_region_from_prompt(prompt):
 
 # ✅ Trigger keywords to decide if prompt is about threats
 def is_threat_query(prompt):
-    keywords = ["threat", "alert", "travel warning", "civil unrest", "kidnap", "terror", "situation", "danger", "explosion", "protest", "evacuation"]
+    keywords = [
+        "threat", "alert", "travel warning", "civil unrest", "kidnap",
+        "terror", "situation", "danger", "explosion", "protest", "evacuation"
+    ]
     return any(k in prompt.lower() for k in keywords)
 
 # ✅ GPT-powered response (smart hybrid)
@@ -54,7 +57,12 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
             alerts = get_clean_alerts(limit=3, region=region)
 
         if not alerts:
-            return f"No recent alerts found for '{region or 'your region'}'. Stay safe."
+            return (
+                f"No recent verified threat alerts found for '{region or 'your region'}'. "
+                "Our system continuously monitors global intelligence feeds. "
+                "Please check back later or rephrase your query."
+                "\n\n— Powered by Zika Risk | www.zikarisk.com"
+            )
 
         alert_text = "\n\n".join(f"{a['title']}: {a['summary']}" for a in alerts)
         prompt = f"Summarize these threat alerts:\n\n{alert_text}\n\nSummary:"
@@ -71,7 +79,8 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
                     "content": (
                         "You are Sentinel AI, a digital security assistant developed by Zika Risk. "
                         "You specialize in threat intelligence, travel security, risk mitigation, and emergency response. "
-                        "If the user asks about Zika Risk or your identity, explain you're part of Zika Rakita's security firm, offering services like executive protection, crisis management, secure transport, and travel threat briefings. "
+                        "If the user asks about Zika Risk or your identity, explain you're part of Zika Rakita's security firm, "
+                        "offering services like executive protection, crisis management, secure transport, and travel threat briefings. "
                         "You are not a health assistant. You do not give virus or medical advice."
                     )
                 },
@@ -83,3 +92,4 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
         return reply + "\n\n— Powered by Zika Risk | www.zikarisk.com"
     except Exception as e:
         return f"[Sentinel AI error] Could not generate response. Reason: {e}"
+
