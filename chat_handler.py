@@ -46,7 +46,7 @@ THREAT_FILTERS = {
 
 # ✅ Get alerts filtered by plan type
 def get_filtered_alerts(plan):
-    all_alerts = get_clean_alerts(limit=30)
+    all_alerts = get_clean_alerts(limit=10)
     allowed_types = THREAT_FILTERS.get(plan)
     filtered = []
 
