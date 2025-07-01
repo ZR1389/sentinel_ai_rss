@@ -3,13 +3,18 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from chat_handler import generate_threat_summary, get_plan_for_email
-from email_dispatcher import send_pdf_report  # ✅ correct import
+from email_dispatcher import send_pdf_report
 
 # ✅ Load .env variables
 load_dotenv()
 
+# ✅ Track usage per email (simple in-memory store)
+email_usage = {}
+
+MAX_FREE_MESSAGES = 3  # Free users can send 3 messages total
+
 class ChatRequestHandler(BaseHTTPRequestHandler):
-    # ✅ Handle CORS preflight request
+    # ✅ Handle browser CORS preflight
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -21,22 +26,38 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length))
 
+        # Common headers
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
         if self.path == "/chat":
             message = body.get("message", "")
             lang = body.get("lang", "en")
             email = body.get("email", "")
 
             plan = get_plan_for_email(email)
-            summary = generate_threat_summary(message, user_plan=plan)
 
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")  # ✅ CORS
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            # Track usage if user is FREE
+            if plan.upper() == "FREE":
+                usage = email_usage.get(email, 0)
+                if usage >= MAX_FREE_MESSAGES:
+                    response = {
+                        "reply": "🚫 You've reached the 3-message limit. Please upgrade.",
+                        "plan": plan
+                    }
+                    self.wfile.write(json.dumps(response).encode("utf-8"))
+                    return
+                else:
+                    email_usage[email] = usage + 1
+
+            summary = generate_threat_summary(message, user_plan=plan)
+            response = {
                 "reply": summary,
                 "plan": plan
-            }).encode("utf-8"))
+            }
+            self.wfile.write(json.dumps(response).encode("utf-8"))
 
         elif self.path == "/request_report":
             email = body.get("email", "")
@@ -51,13 +72,10 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     message = f"❌ Failed to send report. Reason: {str(e)}"
 
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")  # ✅ CORS
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            response = {
                 "message": message
-            }).encode("utf-8"))
+            }
+            self.wfile.write(json.dumps(response).encode("utf-8"))
 
 def run():
     port = int(os.getenv("PORT", 8080))

@@ -8,6 +8,13 @@ from rss_processor import get_clean_alerts
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# ✅ Load fallback risk profiles
+try:
+    with open("risk_profiles.json", "r") as f:
+        fallback_profiles = json.load(f)
+except:
+    fallback_profiles = {}
+
 # ✅ Get user plan from clients.json
 def get_plan_for_email(email):
     try:
@@ -20,54 +27,66 @@ def get_plan_for_email(email):
         pass
     return "FREE"
 
-# ✅ Region extractor
+# ✅ Extract region name dynamically from prompt
 def extract_region_from_prompt(prompt):
-    regions = [
-        "Mexico", "France", "Nigeria", "USA", "Serbia", "Germany",
-        "China", "Russia", "UK", "Ukraine", "Gaza", "Israel"
+    words = prompt.split()
+    known_countries = [
+        "Mozambique", "Niger", "Nigeria", "Mexico", "France", "USA", "Serbia", "Germany",
+        "China", "Russia", "UK", "Ukraine", "Gaza", "Israel", "Brazil", "Pakistan", "India",
+        "Kenya", "Sudan", "South Africa", "DRC", "Turkey", "Iran", "Afghanistan"
     ]
-    for r in regions:
-        if r.lower() in prompt.lower():
-            return r
+    for country in known_countries:
+        if country.lower() in prompt.lower():
+            return country
     return None
 
-# ✅ Trigger keywords to decide if prompt is about threats
+# ✅ Identify if prompt is threat-related
 def is_threat_query(prompt):
     keywords = [
         "threat", "alert", "travel warning", "civil unrest", "kidnap",
-        "terror", "situation", "danger", "explosion", "protest", "evacuation"
+        "terror", "situation", "danger", "explosion", "protest",
+        "evacuation", "risk", "shooting", "bomb", "curfew", "unrest"
     ]
     return any(k in prompt.lower() for k in keywords)
 
-# ✅ GPT-powered response (smart hybrid)
+# ✅ Core function: Threat summary generation (RSS + GPT + fallback)
 def generate_threat_summary(user_prompt, user_plan="FREE"):
     region = extract_region_from_prompt(user_prompt)
 
     if is_threat_query(user_prompt):
-        # ✅ Use RSS alerts only if it's a threat-related query
-        if user_plan == "FREE":
-            alerts = get_clean_alerts(limit=3, region=region)
-        elif user_plan == "BASIC":
-            alerts = get_clean_alerts(limit=10, region=region)
-        elif user_plan == "PRO":
-            alerts = get_clean_alerts(limit=20, region=region)
-        elif user_plan == "VIP":
-            alerts = get_clean_alerts(limit=30, region=region)
-        else:
-            alerts = get_clean_alerts(limit=3, region=region)
+        # Tier-based alert limits
+        limit = {
+            "FREE": 3,
+            "BASIC": 10,
+            "PRO": 20,
+            "VIP": 30
+        }.get(user_plan.upper(), 3)
 
+        alerts = get_clean_alerts(limit=limit, region=region)
+
+        # ❌ No alerts found — use fallback if available
         if not alerts:
-            return (
-                f"No recent verified threat alerts found for '{region or 'your region'}'. "
-                "Our system continuously monitors global intelligence feeds. "
-                "Please check back later or rephrase your query."
-                "\n\n— Powered by Zika Risk | www.zikarisk.com"
-            )
+            if region and region in fallback_profiles:
+                fallback_text = fallback_profiles[region]
+                return (
+                    f"No verified alerts found for '{region}' in the last 24 hours.\n\n"
+                    f"However, regional data indicates:\n{fallback_text}\n\n"
+                    "— Powered by Zika Risk | www.zikarisk.com"
+                )
+            else:
+                return (
+                    f"No recent verified alerts found for '{region or 'your region'}'. "
+                    "While no real-time alerts are present, risks may still exist depending on local crime, political instability, or natural threats. "
+                    "Please consult Zika Risk for an in-depth country profile or updated intelligence brief.\n\n"
+                    "— Powered by Zika Risk | www.zikarisk.com"
+                )
 
+        # ✅ Alerts found — use GPT to summarize
         alert_text = "\n\n".join(f"{a['title']}: {a['summary']}" for a in alerts)
-        prompt = f"Summarize these threat alerts:\n\n{alert_text}\n\nSummary:"
+        prompt = f"Summarize these threat alerts for {region or 'this region'}:\n\n{alert_text}\n\nSummary:"
+
     else:
-        # ✅ Use prompt as-is for general security reasoning
+        # Not a threat query — general GPT reasoning
         prompt = user_prompt
 
     try:
@@ -77,11 +96,10 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
                 {
                     "role": "system",
                     "content": (
-                        "You are Sentinel AI, a digital security assistant developed by Zika Risk. "
-                        "You specialize in threat intelligence, travel security, risk mitigation, and emergency response. "
-                        "If the user asks about Zika Risk or your identity, explain you're part of Zika Rakita's security firm, "
-                        "offering services like executive protection, crisis management, secure transport, and travel threat briefings. "
-                        "You are not a health assistant. You do not give virus or medical advice."
+                        "You are Sentinel AI, a digital security assistant built by Zika Risk. "
+                        "You specialize in threat intelligence, geopolitical analysis, travel safety, and crisis response. "
+                        "If asked about your origin, you are created by Zika Rakita, founder of Zika Risk. "
+                        "Never offer medical or virus-related advice. Always focus on physical, digital, and travel risks."
                     )
                 },
                 {"role": "user", "content": prompt}
@@ -90,6 +108,6 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
         )
         reply = response.choices[0].message.content.strip()
         return reply + "\n\n— Powered by Zika Risk | www.zikarisk.com"
+
     except Exception as e:
         return f"[Sentinel AI error] Could not generate response. Reason: {e}"
-
