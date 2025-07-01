@@ -89,8 +89,10 @@ def handle_user_query(message, email="anonymous", lang="en"):
     if not filtered:
         filtered = threat_groups
 
-    # Build structured context
+    # Build structured context for GPT
     sections = []
+    flat_alert_list = []
+
     for threat_type, alerts in filtered.items():
         section_lines = [f"🔸 {threat_type.upper()} ({len(alerts)} alert(s))"]
         for alert in alerts:
@@ -102,16 +104,27 @@ def handle_user_query(message, email="anonymous", lang="en"):
                 f"Link: {alert['link']}\n"
             )
             section_lines.append(entry)
+
+            # Build alert for frontend
+            flat_alert_list.append({
+                "title": alert["title"],
+                "summary": alert["summary"],
+                "type": alert["type"],
+                "level": alert["level"],
+                "link": alert["link"],
+                "source": alert["source"]
+            })
+
         sections.append("\n".join(section_lines))
 
     raw_context = "\n\n".join(sections)
     if not raw_context.strip():
         raw_context = "No recent high-priority alerts available."
 
-    # 🌐 Translate context if needed
+    # 🌐 Translate context for GPT if needed
     translated_context = translate_text(raw_context, target_lang=lang)
 
-    # 🧠 GPT reply with threat type context
+    # 🧠 GPT reply with threat context
     try:
         response = client.chat.completions.create(
             model="gpt-4",
@@ -129,5 +142,6 @@ def handle_user_query(message, email="anonymous", lang="en"):
 
     return {
         "reply": translated_reply,
-        "plan": plan
+        "plan": plan,
+        "alerts": flat_alert_list  # ✅ New: used by frontend filters
     }
