@@ -68,6 +68,29 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
+        elif self.path == "/subscribe_push":
+            subscription = data.get("subscription")
+            if subscription:
+                try:
+                    with open("subscribers.json", "r+") as f:
+                        try:
+                            subscribers = json.load(f)
+                        except json.JSONDecodeError:
+                            subscribers = []
+                        if subscription not in subscribers:
+                            subscribers.append(subscription)
+                            f.seek(0)
+                            json.dump(subscribers, f, indent=2)
+                            f.truncate()
+                    msg = "✅ Push subscription saved."
+                except Exception as e:
+                    msg = f"❌ Failed to save subscription: {str(e)}"
+            else:
+                msg = "❌ No subscription received."
+
+            self._set_headers()
+            self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
+
 def run():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
@@ -76,3 +99,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+
