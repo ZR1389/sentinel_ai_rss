@@ -5,7 +5,7 @@ from fpdf import FPDF
 from dotenv import load_dotenv
 from datetime import date
 from email.message import EmailMessage
-from chat_handler import handle_user_query
+from chat_handler import handle_user_query, translate_text
 from telegram_dispatcher import send_telegram_pdf
 
 # ✅ Load environment
@@ -18,9 +18,13 @@ SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
 # ✅ PDF layout using fpdf2
 class PDF(FPDF):
+    def __init__(self, lang="en"):
+        super().__init__()
+        self.lang = lang
+
     def header(self):
         self.set_font("Arial", "B", 14)
-        self.cell(0, 10, "Sentinel AI - Daily Threat Briefing", ln=True, align="C")
+        self.cell(0, 10, translate_text("Sentinel AI - Daily Threat Briefing", self.lang), ln=True, align="C")
         self.set_font("Arial", "", 12)
         self.cell(0, 10, date.today().isoformat(), ln=True, align="C")
         self.ln(10)
@@ -28,7 +32,7 @@ class PDF(FPDF):
     def add_toc(self, categorized_alerts):
         self.set_font("Arial", "B", 12)
         self.set_text_color(0, 0, 0)
-        self.cell(0, 10, "Summary by Threat Level", ln=True)
+        self.cell(0, 10, translate_text("Summary by Threat Level", self.lang), ln=True)
         self.ln(2)
 
         for level in ["Critical", "High", "Moderate", "Low"]:
@@ -41,7 +45,8 @@ class PDF(FPDF):
                 }[level]
                 self.set_text_color(*color)
                 self.set_font("Arial", "B", 11)
-                self.cell(0, 8, f"• {level}: {len(categorized_alerts[level])} alert(s)", ln=True)
+                translated_level = translate_text(level, self.lang)
+                self.cell(0, 8, f"• {translated_level}: {len(categorized_alerts[level])} alert(s)", ln=True)
 
         self.set_text_color(0, 0, 0)
         self.set_font("Arial", "", 12)
@@ -80,24 +85,25 @@ class PDF(FPDF):
             self.ln(1)
 
             self.set_font("Arial", "B", 12)
-            self.cell(0, 10, f"Threat Level: {threat_level}", ln=True)
+            translated_label = translate_text("Threat Level", self.lang)
+            translated_level = translate_text(threat_level, self.lang)
+            self.cell(0, 10, f"{translated_label}: {translated_level}", ln=True)
             self.ln(4)
 
             self.set_font("Arial", "", 12)
             self.set_text_color(0, 0, 0)
 
-# ✅ Used by /request_report route
-def send_pdf_report(email, plan):
+# ✅ Used by /request_report or daily cron
+def send_pdf_report(email, plan, lang="en"):
     os.makedirs("reports", exist_ok=True)
 
     print(f"⏳ Generating summary for {email} ({plan})...")
-    summary = handle_user_query("status", email=email).get("reply", "")
-
+    summary = handle_user_query("status", email=email, lang=lang).get("reply", "")
 
     if not summary or summary.startswith("[Sentinel AI error]"):
         raise Exception("No summary generated.")
 
-    pdf = PDF()
+    pdf = PDF(lang=lang)
     pdf.add_page()
     pdf.body(summary)
 
@@ -106,10 +112,10 @@ def send_pdf_report(email, plan):
     pdf.output(pdf_path)
 
     msg = EmailMessage()
-    msg["Subject"] = "Your Sentinel AI Daily Threat Brief"
+    msg["Subject"] = translate_text("Your Sentinel AI Daily Threat Brief", lang)
     msg["From"] = SENDER_EMAIL
     msg["To"] = email
-    msg.set_content("Attached is your personalized Sentinel AI threat report.")
+    msg.set_content(translate_text("Attached is your personalized Sentinel AI threat report.", lang))
 
     with open(pdf_path, "rb") as f:
         msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=pdf_filename)
@@ -120,7 +126,6 @@ def send_pdf_report(email, plan):
         smtp.send_message(msg)
 
     print(f"✅ Email sent to {email}")
-
     send_telegram_pdf(pdf_path)
     print(f"✅ Telegram sent for {email}")
 
@@ -131,7 +136,8 @@ def send_daily_summaries():
 
     for client in clients:
         try:
-            send_pdf_report(client["email"], client["plan"])
+            lang = client.get("lang", "en")
+            send_pdf_report(client["email"], client["plan"], lang=lang)
         except Exception as e:
             print(f"❌ Error sending to {client['email']}: {e}")
 
