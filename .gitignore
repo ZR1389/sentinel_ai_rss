@@ -3,3 +3,25 @@
 __pycache__/
 *.pyc
 reports/
+# Sentinel AI local/temporary files
+generate_vapid.py
+subscribers.json
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.env
+*.log
+
+# MacOS cruft
+.DS_Store
+
+# Output folders
+/reports/
+/venv/
+/*.pdf
+
+# Editor backups
+*.swp
+*.bak
+
