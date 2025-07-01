@@ -1,15 +1,17 @@
 import json
-import openai
-from dotenv import load_dotenv
 import os
+from datetime import datetime
+from dotenv import load_dotenv
+from openai import OpenAI
+
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
-from datetime import datetime
 
+# ✅ Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ✅ Load clients
+# ✅ Load client plans
 with open("clients.json") as f:
     CLIENTS = json.load(f)
 
@@ -19,7 +21,7 @@ def get_plan_for_email(email):
             return client["plan"].upper()
     return "FREE"
 
-# ✅ Load recent alerts into context
+# ✅ Prepare region-based alert summaries
 ALERTS = get_clean_alerts(limit=10)
 REGIONAL_SUMMARIES = {}
 for alert in ALERTS:
@@ -27,7 +29,7 @@ for alert in ALERTS:
     country = alert.get("country") or alert.get("region") or "Unknown"
     REGIONAL_SUMMARIES.setdefault(country, []).append(f"- {alert['title']} ({level})")
 
-# ✅ System Identity
+# ✅ Identity and behavior prompt for Sentinel AI
 SYSTEM_PROMPT = (
     "You are Sentinel AI, a multilingual travel and threat intelligence assistant created by Zika Rakita.\n"
     "You are operated by the security firm Zika Risk.\n"
@@ -38,24 +40,25 @@ SYSTEM_PROMPT = (
     "Always answer clearly, concisely, and with a confident, professional tone."
 )
 
-# ✅ User Query Handler
+# ✅ Handle user queries with regional and plan-based context
 def handle_user_query(message, email="anonymous", lang="en"):
     plan = get_plan_for_email(email)
     region_context = "\n".join(REGIONAL_SUMMARIES.get(message.strip(), []))
 
     context = (
         f"Today's top alerts for '{message}':\n{region_context or 'No recent high-priority alerts available.'}\n"
-        "Use this context to help the user.")
+        "Use this context to help the user."
+    )
 
     try:
-        completion = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"{message}\n\nContext: {context}"}
             ]
         )
-        reply = completion.choices[0].message.content.strip()
+        reply = response.choices[0].message.content.strip()
     except Exception as e:
         reply = f"❌ An error occurred: {str(e)}"
 
