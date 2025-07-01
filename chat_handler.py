@@ -1,11 +1,10 @@
-
 import os
 import json
 from dotenv import load_dotenv
 from openai import OpenAI
 from rss_processor import get_clean_alerts
 
-# ✅ Load environment
+# ✅ Load environment variables
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -21,32 +20,28 @@ def get_plan_for_email(email):
         pass
     return "FREE"
 
-# ✅ Region extractor for location-specific summaries
+# ✅ Region extractor
 def extract_region_from_prompt(prompt):
     regions = [
         "Mexico", "France", "Nigeria", "USA", "Serbia", "Germany",
-        "China", "Russia", "UK", "Ukraine", "Gaza", "Israel", "Iran", "India"
+        "China", "Russia", "UK", "Ukraine", "Gaza", "Israel"
     ]
     for r in regions:
         if r.lower() in prompt.lower():
             return r
     return None
 
-# ✅ Simple intent classifier: summary or general advice?
-def is_summary_request(prompt):
-    keywords = [
-        "what happened", "threats in", "incidents in", "situation in",
-        "alerts", "news from", "summarize", "report", "crisis in"
-    ]
+# ✅ Trigger keywords to decide if prompt is about threats
+def is_threat_query(prompt):
+    keywords = ["threat", "alert", "travel warning", "civil unrest", "kidnap", "terror", "situation", "danger", "explosion", "protest", "evacuation"]
     return any(k in prompt.lower() for k in keywords)
 
-# ✅ Core smart handler
-def handle_user_prompt(user_prompt, user_email):
-    user_plan = get_plan_for_email(user_email)
+# ✅ GPT-powered response (smart hybrid)
+def generate_threat_summary(user_prompt, user_plan="FREE"):
     region = extract_region_from_prompt(user_prompt)
 
-    # ✅ If it's a news-style query, summarize alerts
-    if is_summary_request(user_prompt):
+    if is_threat_query(user_prompt):
+        # ✅ Use RSS alerts only if it's a threat-related query
         if user_plan == "FREE":
             alerts = get_clean_alerts(limit=3, region=region)
         elif user_plan == "BASIC":
@@ -62,32 +57,29 @@ def handle_user_prompt(user_prompt, user_email):
             return f"No recent alerts found for '{region or 'your region'}'. Stay safe."
 
         alert_text = "\n\n".join(f"{a['title']}: {a['summary']}" for a in alerts)
-        system_msg = (
-            "You are Sentinel AI, a digital security assistant created by Zika Risk. "
-            "You specialize in global threat intelligence, risk monitoring, and travel safety. "
-            "Summarize verified alerts clearly and quickly, focusing on danger level and affected region."
-        )
-        user_msg = f"Summarize these threat alerts:\n\n{alert_text}\n\nSummary:"
+        prompt = f"Summarize these threat alerts:\n\n{alert_text}\n\nSummary:"
     else:
-        system_msg = (
-            "You are Sentinel AI, a security-focused AI developed by Zika Rakita and his company, Zika Risk. "
-            "You answer security-related questions, provide personal and travel safety tips, and explain Zika Risk’s services: "
-            "travel security management, executive protection, cyber safety, crisis response, secure transportation, and intelligence analysis. "
-            "You may also provide context about Zika Rakita, a global security advisor and founder of Zika Risk and Sentinel AI."
-        )
-        user_msg = user_prompt
+        # ✅ Use prompt as-is for general security reasoning
+        prompt = user_prompt
 
     try:
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Sentinel AI, a digital security assistant developed by Zika Risk. "
+                        "You specialize in threat intelligence, travel security, risk mitigation, and emergency response. "
+                        "If the user asks about Zika Risk or your identity, explain you're part of Zika Rakita's security firm, offering services like executive protection, crisis management, secure transport, and travel threat briefings. "
+                        "You are not a health assistant. You do not give virus or medical advice."
+                    )
+                },
+                {"role": "user", "content": prompt}
             ],
             temperature=0.5,
         )
-        base_response = response.choices[0].message.content.strip()
-        signature = "\n\n— Powered by Zika Risk | Travel Security • Threat Intelligence • Emergency Response\nVisit: zikarisk.com"
-        return base_response + signature
+        reply = response.choices[0].message.content.strip()
+        return reply + "\n\n— Powered by Zika Risk | www.zikarisk.com"
     except Exception as e:
         return f"[Sentinel AI error] Could not generate response. Reason: {e}"
