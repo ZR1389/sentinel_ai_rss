@@ -20,7 +20,7 @@ def get_plan_for_email(email):
         pass
     return "FREE"
 
-# ✅ Region extractor
+# ✅ Region extractor from prompt
 def extract_region_from_prompt(prompt):
     regions = [
         "Mexico", "France", "Nigeria", "USA", "Serbia", "Germany",
@@ -31,7 +31,7 @@ def extract_region_from_prompt(prompt):
             return r
     return None
 
-# ✅ GPT summary generator with alert limits per plan
+# ✅ GPT-powered summary with branded voice + plan enforcement
 def generate_threat_summary(user_prompt, user_plan="FREE"):
     region = extract_region_from_prompt(user_prompt)
 
@@ -56,13 +56,23 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a security analyst specializing in threat intelligence."},
-                {"role": "user", "content": f"Summarize these threat alerts:\n\n{alert_text}\n\nSummary:"}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Sentinel AI, a multilingual risk intelligence assistant created by Zika Risk. "
+                        "You provide real-time, professional threat summaries and global safety insights. "
+                        "You are trusted, discreet, and precise."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Summarize these threat alerts:\n\n{alert_text}\n\nSummary:"
+                }
             ],
             temperature=0.5,
         )
-        return response.choices[0].message.content.strip()
+        base_summary = response.choices[0].message.content.strip()
+        signature = "\n\n— Powered by Zika Risk | Travel Security • Threat Intelligence • Emergency Response\nVisit: zikarisk.com"
+        return base_summary + signature
     except Exception as e:
         return f"[Sentinel AI error] Could not generate summary. Reason: {e}"
-
-
