@@ -5,7 +5,7 @@ from fpdf import FPDF
 from dotenv import load_dotenv
 from datetime import date
 from email.message import EmailMessage
-from chat_handler import generate_threat_summary
+from chat_handler import handle_user_query
 from telegram_dispatcher import send_telegram_pdf
 
 # ✅ Load environment
@@ -91,7 +91,8 @@ def send_pdf_report(email, plan):
     os.makedirs("reports", exist_ok=True)
 
     print(f"⏳ Generating summary for {email} ({plan})...")
-    summary = generate_threat_summary("Show global threat alerts", user_plan=plan)
+    summary = handle_user_query("status", email=email).get("reply", "")
+
 
     if not summary or summary.startswith("[Sentinel AI error]"):
         raise Exception("No summary generated.")
