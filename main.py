@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from chat_handler import handle_user_query
 from email_dispatcher import send_pdf_report
+from telegram_dispatcher import send_alerts_to_telegram  # ✅ New import
 
 # ✅ Load .env variables
 load_dotenv()
@@ -57,6 +58,16 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
+        elif self.path == "/send_telegram_alerts":
+            email = data.get("email", "anonymous")
+            count = send_alerts_to_telegram(email=email)
+            if count > 0:
+                msg = f"✅ {count} alerts sent to Telegram."
+            else:
+                msg = "⚠️ No high-risk alerts to send right now."
+            self._set_headers()
+            self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
+
 def run():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
@@ -65,5 +76,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
-
