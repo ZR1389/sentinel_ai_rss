@@ -3,6 +3,7 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 from rss_processor import get_clean_alerts
+from threat_scorer import assess_threat_level  # ✅ threat scoring
 
 # ✅ Load environment variables
 load_dotenv()
@@ -49,7 +50,7 @@ def is_threat_query(prompt):
     ]
     return any(k in prompt.lower() for k in keywords)
 
-# ✅ Core function: Threat summary generation (RSS + GPT + fallback)
+# ✅ Core function: Threat summary generation (RSS + scoring + fallback)
 def generate_threat_summary(user_prompt, user_plan="FREE"):
     region = extract_region_from_prompt(user_prompt)
 
@@ -64,7 +65,7 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
 
         alerts = get_clean_alerts(limit=limit, region=region)
 
-        # ❌ No alerts found — use fallback if available
+        # ❌ No alerts — use fallback if available
         if not alerts:
             if region and region in fallback_profiles:
                 fallback_text = fallback_profiles[region]
@@ -81,12 +82,21 @@ def generate_threat_summary(user_prompt, user_plan="FREE"):
                     "— Powered by Zika Risk | www.zikarisk.com"
                 )
 
-        # ✅ Alerts found — use GPT to summarize
-        alert_text = "\n\n".join(f"{a['title']}: {a['summary']}" for a in alerts)
-        prompt = f"Summarize these threat alerts for {region or 'this region'}:\n\n{alert_text}\n\nSummary:"
+        # ✅ Alerts found — score each one before summarizing
+        scored_alerts = []
+        for a in alerts:
+            full_text = f"{a['title']}: {a['summary']}"
+            try:
+                level = assess_threat_level(full_text)
+            except Exception:
+                level = "Unrated"
+            scored_alerts.append(f"[{level}] {full_text}")
+
+        alert_text = "\n\n".join(scored_alerts)
+        prompt = f"Summarize and assess these alerts for {region or 'this region'}:\n\n{alert_text}\n\nSummary:"
 
     else:
-        # Not a threat query — general GPT reasoning
+        # Not a threat query — use user's raw question
         prompt = user_prompt
 
     try:
