@@ -2,7 +2,7 @@ import os
 from openai import OpenAI
 from dotenv import load_dotenv
 from plan_rules import PLAN_RULES
-from chat_handler import get_plan  # ✅ Reuse existing helper
+from plan_utils import get_plan, PLAN_RULES
 
 load_dotenv()
 client = OpenAI()

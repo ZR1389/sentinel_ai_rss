@@ -4,6 +4,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from rss_processor import get_clean_alerts
 from advisor import generate_advice
+from plan_utils import get_plan, PLAN_RULES
 from plan_rules import PLAN_RULES
 
 load_dotenv()
