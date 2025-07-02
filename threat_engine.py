@@ -1,35 +1,46 @@
-from rss_processor import get_clean_alerts
+import os
+from openai import OpenAI
+from dotenv import load_dotenv
+from threat_scorer import assess_threat_level
 
-# ✅ Allowed types per subscription tier
-THREAT_FILTERS = {
-    "VIP": None,  # Full access
-    "PRO": {"Kidnapping", "Cyber", "Terrorism", "Protest", "Crime"},
-    "FREE": {"Protest", "Crime"}
-}
+load_dotenv()
+client = OpenAI()
 
-# ✅ Return alerts (grouped by type + flat list), filtered by plan and optional search query
-def get_structured_alerts(plan="FREE", query=None):
-    alerts = get_clean_alerts(limit=10)
+# ✅ Translate using OpenAI
+def translate_text(text, target_lang="en"):
+    if not text or target_lang.lower() == "en":
+        return text
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": f"Translate the following summary to {target_lang}."},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return text  # Fail-safe: return original if translation fails
 
-    allowed_types = THREAT_FILTERS.get(plan.upper())
-    filtered_alerts = []
-
+# ✅ GPT summary for alert + optional translation
+def summarize_alerts(alerts, lang="en"):
+    summarized = []
     for alert in alerts:
-        alert_type = alert.get("type", "Unclassified")
-        alert["type"] = alert_type
-        alert["level"] = "Moderate"  # 🛑 TEMP: Disable GPT scoring for speed
-
-        # 🧠 Filter by access level and optional search query
-        if allowed_types is None or alert_type in allowed_types:
-            if query:
-                if query.lower() in alert["title"].lower() or query.lower() in alert["summary"].lower():
-                    filtered_alerts.append(alert)
-            else:
-                filtered_alerts.append(alert)
-
-    # 📦 Group alerts by type
-    grouped = {}
-    for alert in filtered_alerts:
-        grouped.setdefault(alert["type"], []).append(alert)
-
-    return grouped, filtered_alerts
+        try:
+            full_text = f"{alert['title']}\n{alert['summary']}"
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Summarize this security alert in one concise sentence."},
+                    {"role": "user", "content": full_text}
+                ],
+                temperature=0.5
+            )
+            summary = response.choices[0].message.content.strip()
+            translated = translate_text(summary, target_lang=lang)
+            alert["gpt_summary"] = translated
+        except Exception:
+            alert["gpt_summary"] = None
+        summarized.append(alert)
+    return summarized
