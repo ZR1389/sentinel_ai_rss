@@ -7,10 +7,11 @@ from threat_engine import get_structured_alerts
 # ✅ Load environment variables
 load_dotenv()
 
-# ✅ Translate GPT output if needed
+# ✅ GPT client setup
 from openai import OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# ✅ Translate GPT output if needed
 def translate_text(text, target_lang="en"):
     if target_lang.lower() == "en":
         return text
@@ -29,7 +30,7 @@ def translate_text(text, target_lang="en"):
         print(f"❌ Translation failed: {e}")
         return text
 
-# ✅ Load client plans
+# ✅ Load client plans from JSON
 with open("clients.json") as f:
     CLIENTS = json.load(f)
 
@@ -39,15 +40,17 @@ def get_plan_for_email(email):
             return client["plan"].upper()
     return "FREE"
 
-# ✅ Main query handler
+# ✅ Main user query handler
 def handle_user_query(message, email="anonymous", lang="en"):
     plan = get_plan_for_email(email)
     
-    # 🛰️ Get alert context
+    # 🛰️ Fetch alerts (grouped + flat)
     threat_groups, flat_list = get_structured_alerts(plan=plan, query=message)
 
-    # 🧠 Get GPT advisory
+    # 🧠 Get GPT-based advisory message
     advisory = get_advisory(message, lang=lang)
+
+    # 🌐 Translate if needed
     translated_reply = translate_text(advisory, lang)
 
     return {
