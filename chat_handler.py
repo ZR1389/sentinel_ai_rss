@@ -78,7 +78,6 @@ def handle_user_query(message, email, lang="en"):
     if message.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
-    # You can configure actual chat limits per plan here
     plan_limits = {
         "Free": {"chat_limit": 3},
         "Pro": {"chat_limit": 15},
@@ -97,6 +96,13 @@ def handle_user_query(message, email, lang="en"):
 
     raw_alerts = get_clean_alerts()
     print(f"✅ Alerts fetched: {len(raw_alerts)}")
+
+    if not raw_alerts:
+        return {
+            "reply": "⚠️ No threat intelligence is currently available. Please check back later.",
+            "plan": plan,
+            "alerts": []
+        }
 
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
@@ -117,7 +123,7 @@ def handle_user_query(message, email, lang="en"):
             "gpt_summary": translated_summaries[i]
         })
 
-    fallback = generate_advice(message)
+    fallback = generate_advice(message, raw_alerts)
     print("✅ Fallback advice generated")
 
     return {
