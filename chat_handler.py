@@ -3,7 +3,6 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 from rss_processor import get_clean_alerts
-from threat_scorer import assess_threat_level
 
 # ✅ Load environment variables
 load_dotenv()
@@ -52,9 +51,9 @@ def get_filtered_alerts(plan):
     filtered = []
 
     for alert in all_alerts:
-        alert["level"] = assess_threat_level(alert)
         alert_type = alert.get("type", "Unclassified")
         alert["type"] = alert_type
+        alert["level"] = "Moderate"  # 🛑 TEMP: Bypass GPT scoring
         if allowed_types is None or alert_type in allowed_types:
             filtered.append(alert)
 
