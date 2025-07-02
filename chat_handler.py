@@ -12,6 +12,10 @@ from clients import get_plan
 
 USAGE_FILE = "usage_log.json"
 
+load_dotenv()
+client = OpenAI()
+
+
 def load_usage_data():
     if not os.path.exists(USAGE_FILE):
         return {}
@@ -21,9 +25,11 @@ def load_usage_data():
         except json.JSONDecodeError:
             return {}
 
+
 def save_usage_data(data):
     with open(USAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
 
 def check_usage_allowed(email, plan_rules):
     usage_data = load_usage_data()
@@ -32,8 +38,9 @@ def check_usage_allowed(email, plan_rules):
 
     plan_limit = plan_rules.get("chat_limit")
     if plan_limit is None:
-        return True  # Unlimited
+        return True
     return usage_today < plan_limit
+
 
 def increment_usage(email):
     usage_data = load_usage_data()
@@ -45,8 +52,6 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
-load_dotenv()
-client = OpenAI()
 
 def translate_text(text, target_lang="en"):
     if target_lang == "en" or not text:
@@ -64,13 +69,23 @@ def translate_text(text, target_lang="en"):
     except Exception as e:
         return f"[Translation error: {str(e)}]"
 
+
 def handle_user_query(message, email, lang="en"):
+    print(f"📩 Received query: {message} | Email: {email} | Lang: {lang}")
     plan = get_plan(email)
+    print(f"✅ Plan: {plan}")
 
     if message.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
-    if not check_usage_allowed(email, plan):
+    # You can configure actual chat limits per plan here
+    plan_limits = {
+        "Free": {"chat_limit": 3},
+        "Pro": {"chat_limit": 15},
+        "VIP": {"chat_limit": None}
+    }
+    if not check_usage_allowed(email, plan_limits.get(plan, {})):
+        print("⛔ Usage limit reached")
         return {
             "reply": "⛔ You have reached your daily message limit. Upgrade for unlimited access.",
             "plan": plan,
@@ -78,11 +93,17 @@ def handle_user_query(message, email, lang="en"):
         }
 
     increment_usage(email)
+    print("✅ Usage incremented")
 
     raw_alerts = get_clean_alerts()
+    print(f"✅ Alerts fetched: {len(raw_alerts)}")
+
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
+    print("✅ Summaries generated")
+
     translated_summaries = [translate_text(summary, lang) for summary in summaries]
+    print(f"🌍 Summaries translated to {lang}")
 
     results = []
     for i, alert in enumerate(raw_alerts):
@@ -97,6 +118,7 @@ def handle_user_query(message, email, lang="en"):
         })
 
     fallback = generate_advice(message)
+    print("✅ Fallback advice generated")
 
     return {
         "reply": fallback,
