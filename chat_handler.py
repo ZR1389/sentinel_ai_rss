@@ -54,11 +54,14 @@ def increment_usage(email):
 
 
 def translate_text(text, target_lang="en"):
-    if not isinstance(text, str):
-        text = str(text)
-    if target_lang == "en" or not text.strip():
-        return text
     try:
+        # Ensure the input is a string
+        if not isinstance(text, str):
+            text = str(text)
+        text = text.strip()
+        if target_lang == "en" or not text:
+            return text
+
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -69,6 +72,7 @@ def translate_text(text, target_lang="en"):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
+        print(f"❌ Translation error: {e}")
         return f"[Translation error: {str(e)}]"
 
 
@@ -80,12 +84,12 @@ def handle_user_query(message, email, lang="en"):
     if message.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
+    # You can configure actual chat limits per plan here
     plan_limits = {
         "Free": {"chat_limit": 3},
         "Pro": {"chat_limit": 15},
         "VIP": {"chat_limit": None}
     }
-
     if not check_usage_allowed(email, plan_limits.get(plan, {})):
         print("⛔ Usage limit reached")
         return {
