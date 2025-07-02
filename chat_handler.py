@@ -52,7 +52,7 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
-# ✅ Translate summaries
+# ✅ Translate summaries or fallback text
 def translate_text(text, target_lang="en"):
     try:
         if not isinstance(text, str):
@@ -103,6 +103,16 @@ def handle_user_query(message, email, lang="en"):
     raw_alerts = get_clean_alerts()
     print(f"✅ Alerts fetched: {len(raw_alerts)}")
 
+    if not raw_alerts:
+        fallback = generate_advice(message, [])
+        translated_fallback = translate_text(fallback, lang)
+        print("⚠️ No alerts — returning multilingual fallback")
+        return {
+            "reply": translated_fallback,
+            "plan": plan,
+            "alerts": []
+        }
+
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
     print("✅ Summaries generated")
@@ -123,10 +133,11 @@ def handle_user_query(message, email, lang="en"):
         })
 
     fallback = generate_advice(message, raw_alerts)
-    print("✅ Fallback advice generated")
+    translated_fallback = translate_text(fallback, lang)
+    print("✅ Fallback advice generated and translated")
 
     return {
-        "reply": fallback,
+        "reply": translated_fallback,
         "plan": plan,
         "alerts": results
     }
