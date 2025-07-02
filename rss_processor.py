@@ -9,11 +9,38 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 # -------------------------------
-# 🚨 THREAT KEYWORDS
+# 🚨 THREAT KEYWORDS (intelligence-grade)
 # -------------------------------
 THREAT_KEYWORDS = [
-    "crime", "violence", "terrorism", "attack", "kidnapping", "abduction", "natural disaster",
-    "earthquake", "tsunami", "hurricane", "extortion", "shooting", "mass killing", "murder", "cyberattack"
+    # High-Intensity Threats
+    "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
+    "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
+    "suicide bombing", "military raid", "abduction", "hostage situation",
+
+    # Political & Civil Unrest
+    "civil unrest", "riot", "protest", "coup d'etat", "regime change",
+    "political unrest", "uprising", "insurrection", "state of emergency", "martial law",
+
+    # Travel & Movement Disruption
+    "evacuation", "roadblock", "border closure", "curfew", "flight cancellation",
+    "airport closure", "port closure", "embassy alert", "travel advisory", "travel ban",
+
+    # Health Crises
+    "pandemic", "viral outbreak", "disease spread", "contamination", "quarantine",
+    "public health emergency", "infectious disease", "epidemic", "biological threat", "health alert",
+
+    # Cyber Threats
+    "data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing",
+    "malware", "cyber espionage", "identity theft", "network security",
+
+    # Border, Extremism, Organized Crime
+    "extremist activity", "radicalization", "border security", "smuggling", "human trafficking",
+
+    # Natural Disasters
+    "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire",
+
+    # General Threats
+    "lockdown", "security alert", "critical infrastructure"
 ]
 
 KEYWORD_PATTERN = re.compile(
