@@ -1,5 +1,6 @@
 import requests
 import os
+import json
 from datetime import date
 from dotenv import load_dotenv
 from rss_processor import get_clean_alerts
@@ -9,40 +10,77 @@ load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# ✅ You can later map email to chat_ids if needed
-VIP_CLIENTS = [
-    CHAT_ID,  # Zika default
-    # "123456789",  # Add more client chat_ids here
-]
+UNSUBSCRIBED_FILE = "unsubscribed.json"
 
 SEVERITY_FILTER = {"High", "Critical"}
 
+# Load unsubscribed chat IDs
+def load_unsubscribed():
+    if not os.path.exists(UNSUBSCRIBED_FILE):
+        return set()
+    with open(UNSUBSCRIBED_FILE, "r") as f:
+        return set(json.load(f))
+
+# Save unsubscribed chat IDs
+def save_unsubscribed(chat_ids):
+    with open(UNSUBSCRIBED_FILE, "w") as f:
+        json.dump(list(chat_ids), f)
+
+# Handle incoming /stop commands
+def handle_unsubscribe():
+    url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+    try:
+        response = requests.get(url, timeout=10)
+        updates = response.json().get("result", [])
+    except Exception as e:
+        print("❌ Failed to get updates:", e)
+        return set()
+
+    unsubscribed = load_unsubscribed()
+    for update in updates:
+        msg = update.get("message", {})
+        text = msg.get("text", "")
+        chat_id = msg.get("chat", {}).get("id")
+
+        if text.strip().lower() == "/stop" and chat_id:
+            unsubscribed.add(chat_id)
+            print(f"🚫 User {chat_id} unsubscribed")
+
+    save_unsubscribed(unsubscribed)
+    return unsubscribed
+
 
 def send_telegram_pdf(pdf_path):
+    unsubscribed = load_unsubscribed()
     if not os.path.exists(pdf_path):
         print(f"❌ PDF not found: {pdf_path}")
         return
 
-    url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
     with open(pdf_path, 'rb') as pdf_file:
         files = {'document': pdf_file}
-        data = {
-            'chat_id': CHAT_ID,
-            'caption': f"📄 Sentinel AI Daily Brief — {date.today().isoformat()}"
-        }
+        for chat_id in [CHAT_ID]:  # You can loop multiple here
+            if chat_id in unsubscribed:
+                print(f"⛔ Skipping unsubscribed chat_id {chat_id}")
+                continue
 
-        try:
-            response = requests.post(url, data=data, files=files, timeout=10)
-            if response.ok:
-                print("✅ PDF sent to Telegram")
-            else:
-                print("❌ Failed to send PDF:", response.status_code, response.text)
-        except requests.exceptions.RequestException as e:
-            print("❌ Telegram request failed:", e)
+            url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
+            data = {
+                'chat_id': chat_id,
+                'caption': f"📄 Sentinel AI Daily Brief — {date.today().isoformat()}"
+            }
+
+            try:
+                response = requests.post(url, data=data, files=files, timeout=10)
+                if response.ok:
+                    print("✅ PDF sent to Telegram")
+                else:
+                    print("❌ Failed to send PDF:", response.status_code, response.text)
+            except requests.exceptions.RequestException as e:
+                print("❌ Telegram request failed:", e)
 
 
 def send_alerts_to_telegram(email="anonymous"):
+    unsubscribed = handle_unsubscribe()
     alerts = get_clean_alerts(limit=10)
     if not alerts:
         print("❌ No alerts to send.")
@@ -71,7 +109,11 @@ def send_alerts_to_telegram(email="anonymous"):
             f"[🔗 Read more]({alert['link']})"
         )
 
-        for chat_id in VIP_CLIENTS:
+        for chat_id in [CHAT_ID]:  # You can loop multiple here
+            if chat_id in unsubscribed:
+                print(f"⛔ Skipping unsubscribed chat_id {chat_id}")
+                continue
+
             url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
             payload = {
                 "chat_id": chat_id,
@@ -89,5 +131,3 @@ def send_alerts_to_telegram(email="anonymous"):
                 print(f"❌ Telegram error for {chat_id}:", e)
 
     return count
-
-
