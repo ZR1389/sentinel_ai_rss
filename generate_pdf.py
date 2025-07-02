@@ -2,90 +2,87 @@ from fpdf import FPDF
 from datetime import date
 from threat_scorer import assess_threat_level
 from rss_processor import get_clean_alerts
+from translator import translate_text  # Make sure this is available
 import os
 
-# ✅ Fetch alerts (already cleaned and parsed)
-raw_alerts = get_clean_alerts()
-
-# ✅ Assess threat level per alert
-scored_alerts = []
-for alert in raw_alerts:
-    text = f"{alert['title']}: {alert['summary']}"
-    try:
-        level = assess_threat_level(text)
-    except Exception:
-        level = "Unrated"
-    scored_alerts.append({
-        "title": alert["title"],
-        "summary": alert["summary"],
-        "link": alert["link"],
-        "source": alert["source"],
-        "level": level
-    })
-
-# ✅ Color map by threat level
 def get_threat_color(level):
     if level == "Low":
-        return (0, 150, 0)        # Green
+        return (0, 150, 0)
     elif level == "Moderate":
-        return (255, 165, 0)      # Orange
+        return (255, 165, 0)
     elif level == "High":
-        return (255, 0, 0)        # Red
+        return (255, 0, 0)
     elif level == "Critical":
-        return (139, 0, 0)        # Dark Red
+        return (139, 0, 0)
     else:
-        return (100, 100, 100)    # Gray for "Unrated" or unknown
+        return (100, 100, 100)
 
-# ✅ Custom PDF class
-class PDF(FPDF):
-    def header(self):
-        self.set_font("Arial", "B", 16)
-        self.set_text_color(237, 0, 0)
-        self.cell(0, 10, f"Sentinel AI Daily Brief — {date.today().isoformat()}", ln=True, align='C')
-        self.ln(10)
+def generate_translated_pdf(language="en"):
+    raw_alerts = get_clean_alerts()
+    scored_alerts = []
 
-    def chapter_body(self, alerts):
-        for alert in alerts:
-            # 🔹 Title
-            self.set_text_color(0)
-            self.set_font("Arial", "B", 12)
-            self.multi_cell(0, 10, f"📰 {alert['title']}", align='L')
+    for alert in raw_alerts:
+        text = f"{alert['title']}: {alert['summary']}"
+        try:
+            level = assess_threat_level(text)
+        except Exception:
+            level = "Unrated"
 
-            # 🔹 Source + Threat Level
-            level_color = get_threat_color(alert["level"])
-            self.set_text_color(100, 100, 100)
-            self.set_font("Arial", "I", 11)
-            self.cell(0, 8, f"Source: {alert['source']}", ln=True)
-            self.set_text_color(*level_color)
-            self.cell(0, 8, f"Threat Level: {alert['level']}", ln=True)
+        # Translate content
+        translated_title = translate_text(alert["title"], target_lang=language)
+        translated_summary = translate_text(alert["summary"], target_lang=language)
 
-            # 🔹 Summary
-            self.set_text_color(0)
-            self.set_font("Arial", "", 12)
-            self.multi_cell(0, 10, f"{alert['summary']}", align='L')
+        scored_alerts.append({
+            "title": translated_title,
+            "summary": translated_summary,
+            "link": alert["link"],
+            "source": alert["source"],
+            "level": level
+        })
 
-            # 🔹 Link
-            if alert["link"]:
-                self.set_text_color(0, 0, 255)
-                self.set_font("Arial", "U", 11)
-                self.cell(0, 10, alert["link"], ln=True, link=alert["link"])
+    # Custom PDF
+    class PDF(FPDF):
+        def header(self):
+            self.set_font("Arial", "B", 16)
+            self.set_text_color(237, 0, 0)
+            heading = translate_text("Sentinel AI Daily Brief", target_lang=language)
+            self.cell(0, 10, f"{heading} — {date.today().isoformat()}", ln=True, align='C')
+            self.ln(10)
 
-            # 🔹 Spacing
-            self.set_font("Arial", "", 12)
-            self.set_text_color(0)
-            self.ln(6)
+        def chapter_body(self, alerts):
+            for alert in alerts:
+                self.set_text_color(0)
+                self.set_font("Arial", "B", 12)
+                self.multi_cell(0, 10, f"📰 {alert['title']}", align='L')
 
-# ✅ Generate and save PDF
-pdf = PDF()
-pdf.add_page()
-pdf.chapter_body(scored_alerts)
+                level_color = get_threat_color(alert["level"])
+                self.set_text_color(100, 100, 100)
+                self.set_font("Arial", "I", 11)
+                src_label = translate_text("Source", target_lang=language)
+                self.cell(0, 8, f"{src_label}: {alert['source']}", ln=True)
 
-# ✅ Output path
-pdf_path = os.path.expanduser(f"~/Desktop/daily-brief-{date.today().isoformat()}.pdf")
-pdf.output(pdf_path)
+                self.set_text_color(*level_color)
+                level_label = translate_text("Threat Level", target_lang=language)
+                self.cell(0, 8, f"{level_label}: {alert['level']}", ln=True)
 
-print(f"✅ PDF created: {pdf_path}")
+                self.set_text_color(0)
+                self.set_font("Arial", "", 12)
+                self.multi_cell(0, 10, f"{alert['summary']}", align='L')
 
+                if alert["link"]:
+                    self.set_text_color(0, 0, 255)
+                    self.set_font("Arial", "U", 11)
+                    self.cell(0, 10, alert["link"], ln=True, link=alert["link"])
 
+                self.set_font("Arial", "", 12)
+                self.set_text_color(0)
+                self.ln(6)
 
+    pdf = PDF()
+    pdf.add_page()
+    pdf.chapter_body(scored_alerts)
 
+    output_path = os.path.expanduser(f"~/Desktop/daily-brief-{language}-{date.today().isoformat()}.pdf")
+    pdf.output(output_path)
+    print(f"✅ PDF created: {output_path}")
+    return output_path

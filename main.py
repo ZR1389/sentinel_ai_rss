@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from chat_handler import handle_user_query
 from email_dispatcher import send_pdf_report, send_daily_summaries
 from telegram_dispatcher import send_alerts_to_telegram
-from plan_rules import PLAN_RULES  # ✅ Import the centralized plan permissions
+from plan_rules import PLAN_RULES  # ✅ Centralized plan permissions
 
 # ✅ Load environment variables
 load_dotenv()
@@ -41,6 +41,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/request_report":
             email = data.get("email", "")
+            lang = data.get("lang", "en")
             plan = result = None
             try:
                 result = handle_user_query("status", email=email)
@@ -50,9 +51,9 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
             allowed_pdf = PLAN_RULES.get(plan, {}).get("pdf", False)
 
-            if allowed_pdf in ["Monthly", "On-request"]:
+            if allowed_pdf in ["Monthly", "On-request", True]:
                 try:
-                    send_pdf_report(email=email, plan=plan)
+                    send_pdf_report(email=email, plan=plan, language=lang)
                     msg = f"📄 Your {plan} report was sent to {email}."
                 except Exception as e:
                     msg = f"❌ Failed to send report. Reason: {str(e)}"
@@ -101,7 +102,7 @@ def run_server():
     print(f"🚀 Sentinel AI server running on port {port}")
     server.serve_forever()
 
-# ✅ Entry point: auto-detect cron vs server
+# ✅ Entry point: detect daily run vs server mode
 if __name__ == "__main__":
     if os.getenv("RUN_MODE") == "daily":
         print("📬 Sending daily reports...")
