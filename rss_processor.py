@@ -50,7 +50,11 @@ FEEDS = [
 # 🧠 GPT SETUP
 # -------------------------------
 load_dotenv()
-client = OpenAI()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
+GPT_CLASSIFY_MODEL = os.getenv("GPT_CLASSIFY_MODEL", "gpt-4o")
+
 system_prompt = """
 You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
 You deliver concise, professional threat summaries and actionable advice. Speak with clarity and authority.
@@ -62,7 +66,7 @@ If the user is not a subscriber, end with:
 def summarize_with_gpt(text):
     try:
         response = client.chat.completions.create(
-            model="gpt-4-turbo",
+            model=GPT_SUMMARY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Summarize this for a traveler:\n\n{text}"}
@@ -74,9 +78,6 @@ def summarize_with_gpt(text):
     except Exception as e:
         return f"[GPT error] {str(e)}"
 
-# -------------------------------
-# 🧠 Threat Type Classification
-# -------------------------------
 TYPE_PROMPT = """
 Classify the threat type based on the following news headline and summary. Choose only ONE of the following categories:
 
@@ -103,7 +104,7 @@ Now classify this:
 def classify_threat_type(text):
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=GPT_CLASSIFY_MODEL,
             messages=[
                 {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
                 {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
@@ -122,9 +123,6 @@ def classify_threat_type(text):
         print(f"❌ Threat type classification error: {e}")
         return "Unclassified"
 
-# -------------------------------
-# 🔁 FETCH SINGLE FEED
-# -------------------------------
 def fetch_feed(url, timeout=7):
     try:
         response = httpx.get(url, timeout=timeout)
@@ -137,9 +135,6 @@ def fetch_feed(url, timeout=7):
         print(f"❌ Feed failed: {url}\n   Reason: {e}")
         return None, url
 
-# -------------------------------
-# 🧠 MAIN FUNCTION
-# -------------------------------
 def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
@@ -159,7 +154,6 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             link = entry.get("link", "").strip()
             full_text = f"{title}: {summary}"
 
-            # Region/topic filters
             if region and region.lower() not in full_text.lower():
                 continue
             if topic and topic.lower() not in full_text.lower():
@@ -172,7 +166,6 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
                 continue
             seen.add(key)
 
-            # GPT calls
             gpt_summary = summarize_with_gpt(full_text) if summarize else None
             threat_type = classify_threat_type(full_text)
 
@@ -186,6 +179,8 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
+                print(f"✅ Parsed {len(alerts)} alerts.")
                 return alerts
 
+    print(f"✅ Parsed {len(alerts)} alerts.")
     return alerts
