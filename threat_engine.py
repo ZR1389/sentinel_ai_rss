@@ -1,49 +1,34 @@
-# ✅ threat_engine.py — handles raw alerts, scoring, grouping (no GPT)
-
-import json
 from rss_processor import get_clean_alerts
-from threat_scorer import assess_threat_level
 
-# ✅ Load client plans
-def load_clients():
-    with open("clients.json") as f:
-        return json.load(f)
-
-CLIENTS = load_clients()
-
-# ✅ Plan lookup
-def get_plan(email):
-    for c in CLIENTS:
-        if c["email"].lower() == email.lower():
-            return c["plan"].upper()
-    return "FREE"
-
-# ✅ Filters
+# Allowed types per plan
 THREAT_FILTERS = {
     "VIP": None,
     "PRO": {"Kidnapping", "Cyber", "Terrorism", "Protest", "Crime"},
     "FREE": {"Protest", "Crime"}
 }
 
-# ✅ Alert filter/score/group
+# Returns grouped and flat alerts based on plan and optional query
+def get_structured_alerts(plan="FREE", query=None):
+    alerts = get_clean_alerts(limit=10)
 
-def get_structured_alerts(plan, keyword=None):
-    raw_alerts = get_clean_alerts(limit=10)
     allowed_types = THREAT_FILTERS.get(plan)
-    grouped = {}
-    flat_list = []
+    filtered_alerts = []
 
-    for alert in raw_alerts:
-        alert["level"] = assess_threat_level(alert)
+    for alert in alerts:
         alert_type = alert.get("type", "Unclassified")
         alert["type"] = alert_type
+        alert["level"] = "Moderate"  # 🛑 TEMP: Disable GPT scoring for speed
 
         if allowed_types is None or alert_type in allowed_types:
-            if keyword:
-                if keyword.lower() not in alert["title"].lower() and keyword.lower() not in alert["summary"].lower():
-                    continue
+            if query:
+                if query.lower() in alert["title"].lower() or query.lower() in alert["summary"].lower():
+                    filtered_alerts.append(alert)
+            else:
+                filtered_alerts.append(alert)
 
-            grouped.setdefault(alert_type, []).append(alert)
-            flat_list.append(alert)
+    # Group by type
+    grouped = {}
+    for alert in filtered_alerts:
+        grouped.setdefault(alert["type"], []).append(alert)
 
-    return grouped, flat_list
+    return grouped, filtered_alerts
