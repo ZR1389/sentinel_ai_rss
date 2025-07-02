@@ -4,7 +4,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
 from chat_handler import handle_user_query
 from email_dispatcher import send_pdf_report, send_daily_summaries
-from telegram_dispatcher import send_alerts_to_telegram  # ✅ Safe to import globally
+from telegram_dispatcher import send_alerts_to_telegram
+from plan_rules import PLAN_RULES  # ✅ Import the centralized plan permissions
 
 # ✅ Load environment variables
 load_dotenv()
@@ -47,14 +48,18 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             except:
                 plan = "FREE"
 
-            if plan not in ["PRO", "VIP"]:
-                msg = "🚫 PDF reports are available for PRO and VIP users only."
-            else:
+            allowed_pdf = PLAN_RULES.get(plan, {}).get("pdf", False)
+
+            if allowed_pdf in ["Monthly", "On-request"]:
                 try:
                     send_pdf_report(email=email, plan=plan)
                     msg = f"📄 Your {plan} report was sent to {email}."
                 except Exception as e:
                     msg = f"❌ Failed to send report. Reason: {str(e)}"
+            elif plan == "BASIC":
+                msg = "📝 BASIC users can view alerts and summaries, but PDF reports are only available in PRO and VIP plans."
+            else:
+                msg = "🚫 PDF reports are available for PRO and VIP users only. Upgrade to access full features."
 
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
