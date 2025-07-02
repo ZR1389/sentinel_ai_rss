@@ -54,7 +54,9 @@ def increment_usage(email):
 
 
 def translate_text(text, target_lang="en"):
-    if target_lang == "en" or not text:
+    if not isinstance(text, str):
+        text = str(text)
+    if target_lang == "en" or not text.strip():
         return text
     try:
         response = client.chat.completions.create(
@@ -83,6 +85,7 @@ def handle_user_query(message, email, lang="en"):
         "Pro": {"chat_limit": 15},
         "VIP": {"chat_limit": None}
     }
+
     if not check_usage_allowed(email, plan_limits.get(plan, {})):
         print("⛔ Usage limit reached")
         return {
@@ -96,13 +99,6 @@ def handle_user_query(message, email, lang="en"):
 
     raw_alerts = get_clean_alerts()
     print(f"✅ Alerts fetched: {len(raw_alerts)}")
-
-    if not raw_alerts:
-        return {
-            "reply": "⚠️ No threat intelligence is currently available. Please check back later.",
-            "plan": plan,
-            "alerts": []
-        }
 
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
