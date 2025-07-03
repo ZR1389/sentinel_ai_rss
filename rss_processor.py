@@ -42,8 +42,60 @@ KEYWORD_PATTERN = re.compile(
 # -------------------------------
 # 🌐 RSS FEEDS
 # -------------------------------
-# (omitted here for brevity – same FEEDS + GOOGLE + RELIEF as yours)
-# Make sure FEEDS is populated correctly
+# -------------------------------
+# 🌐 GOOGLE NEWS FEEDS
+# -------------------------------
+GOOGLE_NEWS_FEEDS = [
+    "https://news.google.com/rss/search?q=assassination+OR+bombing+OR+kidnapping+OR+terrorist+attack+OR+suicide+bombing+OR+active+shooter+OR+military+raid",
+    "https://news.google.com/rss/search?q=mass+shooting+OR+gunfire+OR+hijacking+OR+IED+OR+hostage+situation",
+    "https://news.google.com/rss/search?q=civil+unrest+OR+riot+OR+protest+OR+coup+OR+uprising+OR+regime+change+OR+insurrection+OR+martial+law",
+    "https://news.google.com/rss/search?q=evacuation+OR+roadblock+OR+curfew+OR+border+closure+OR+airport+closure+OR+travel+ban+OR+embassy+alert",
+    "https://news.google.com/rss/search?q=pandemic+OR+epidemic+OR+viral+outbreak+OR+quarantine+OR+infectious+disease+OR+biological+threat",
+    "https://news.google.com/rss/search?q=earthquake+OR+tsunami+OR+tornado+OR+hurricane+OR+flood+OR+wildfire+OR+natural+disaster",
+    "https://news.google.com/rss/search?q=data+breach+OR+cyberattack+OR+ransomware+OR+malware+OR+phishing+OR+deepfake+OR+identity+theft+OR+network+security",
+    "https://news.google.com/rss/search?q=extremist+activity+OR+radicalization+OR+smuggling+OR+human+trafficking+OR+abduction+OR+organized+crime",
+    "https://news.google.com/rss/search?q=lockdown+OR+critical+infrastructure+OR+security+alert+OR+power+grid+attack+OR+transport+disruption",
+    "https://news.google.com/rss/search?q=health+alert+OR+contamination+OR+public+health+emergency+OR+disease+spread"
+]
+# -------------------------------
+# 🌐 RELIEFWEB & OCHA REGION FEEDS
+# -------------------------------
+RELIEF_OCHA_FEEDS = [
+    "https://reliefweb.int/headlines/rss?region=45", "https://www.unocha.org/rss/west-africa.xml",
+    "https://reliefweb.int/headlines/rss?region=93", "https://www.unocha.org/rss/middle-east.xml",
+    "https://reliefweb.int/headlines/rss?region=54", "https://www.unocha.org/rss/latin-america.xml",
+    "https://reliefweb.int/headlines/rss?region=72", "https://www.unocha.org/rss/eastern-europe.xml",
+    "https://reliefweb.int/headlines/rss?region=67", "https://www.unocha.org/rss/asia-pacific.xml",
+    "https://reliefweb.int/headlines/rss?region=104", "https://www.unocha.org/rss/central-asia.xml",
+    "https://reliefweb.int/headlines/rss?region=73", "https://www.unocha.org/rss/eastern-africa.xml",
+    "https://reliefweb.int/headlines/rss?region=156", "https://www.unocha.org/rss/sahel.xml",
+    "https://reliefweb.int/headlines/rss?region=50", "https://www.unocha.org/rss/north-africa.xml",
+    "https://reliefweb.int/headlines/rss?region=74", "https://www.unocha.org/rss/southern-africa.xml"
+]
+# -------------------------------
+# 🌐 ALL RSS FEEDS
+# -------------------------------
+FEEDS = [
+    "https://www.cisa.gov/news.xml",
+    "https://feeds.bbci.co.uk/news/uk/rss.xml",
+    "https://www.darkreading.com/rss.xml",
+    "https://krebsonsecurity.com/feed/",
+    "https://www.bleepingcomputer.com/feed/",
+    "https://www.theguardian.com/world/rss",
+    "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
+    "https://www.crimemagazine.com/rss.xml",
+    "https://www.murdermap.co.uk/feed/",
+    "https://kidnappingmurderandmayhem.blogspot.com/feeds/posts/default",
+    "https://www.securitymagazine.com/rss/",
+    "https://feeds.feedburner.com/TheHackersNews",
+    "https://www.csoonline.com/feed/",
+    "https://www.arlingtoncardinal.com/category/crime/feed/",
+    "https://intel471.com/blog/feed",
+    "https://www.aljazeera.com/xml/rss/all.xml",
+    "https://www.france24.com/en/rss",
+    "https://www.gov.uk/foreign-travel-advice.atom",
+    "https://www.gdacs.org/xml/rss.xml",
+] + GOOGLE_NEWS_FEEDS + RELIEF_OCHA_FEEDS
 
 # -------------------------------
 # 🧠 GPT SETUP
