@@ -1,7 +1,7 @@
 from fpdf import FPDF
 from datetime import date
 from threat_scorer import assess_threat_level
-from rss_processor import get_clean_alerts
+from rss_processor import get_clean_alerts, FEEDS
 from translator import translate_text  # Make sure this is available
 import os
 
