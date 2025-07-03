@@ -1,3 +1,5 @@
+# main.py ✅ FULL VERSION WITH /chat AUTH
+
 import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -9,6 +11,14 @@ from plan_rules import PLAN_RULES  # ✅ Centralized plan permissions
 
 # ✅ Load environment variables
 load_dotenv()
+
+# ✅ Token-to-plan mapping
+TOKEN_TO_PLAN = {
+    os.getenv("FREE_TOKEN"): "FREE",
+    os.getenv("BASIC_TOKEN"): "BASIC",
+    os.getenv("PRO_TOKEN"): "PRO",
+    os.getenv("VIP_TOKEN"): "VIP"
+}
 
 # ✅ Server routes
 class ChatRequestHandler(BaseHTTPRequestHandler):
@@ -22,7 +32,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_POST(self):
@@ -31,11 +41,28 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         data = json.loads(body)
 
         if self.path == "/chat":
+            # ✅ Step 1: Validate Authorization header
+            auth_token = self.headers.get("Authorization")
+            if not auth_token:
+                self.send_response(401)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Missing Authorization token"}')
+                return
+
+            # ✅ Step 2: Match token to plan
+            user_plan = TOKEN_TO_PLAN.get(auth_token)
+            if not user_plan:
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Invalid or unauthorized token"}')
+                return
+
+            # ✅ Step 3: Extract and process chat
             message = data.get("message", "")
             email = data.get("email", "anonymous")
             lang = data.get("lang", "en")
 
-            result = handle_user_query(message, email=email, lang=lang)
+            result = handle_user_query(message, email=email, lang=lang, plan=user_plan)
             self._set_headers()
             self.wfile.write(json.dumps(result).encode("utf-8"))
 
