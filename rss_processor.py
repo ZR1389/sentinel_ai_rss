@@ -14,7 +14,6 @@ from telegram_scraper import scrape_telegram_messages  # ✅ NEW
 # 🚨 THREAT KEYWORDS (intelligence-grade)
 # -------------------------------
 THREAT_KEYWORDS = [
-    # High-Intensity Threats
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
     "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
     "suicide bombing", "military raid", "abduction", "hostage situation",
@@ -37,7 +36,23 @@ KEYWORD_PATTERN = re.compile(
 )
 
 # -------------------------------
-# 🌐 RSS FEEDS
+# 🌐 GOOGLE NEWS FEEDS
+# -------------------------------
+GOOGLE_NEWS_FEEDS = [
+    "https://news.google.com/rss/search?q=assassination+OR+bombing+OR+kidnapping+OR+terrorist+attack+OR+suicide+bombing+OR+active+shooter+OR+military+raid",
+    "https://news.google.com/rss/search?q=mass+shooting+OR+gunfire+OR+hijacking+OR+IED+OR+hostage+situation",
+    "https://news.google.com/rss/search?q=civil+unrest+OR+riot+OR+protest+OR+coup+OR+uprising+OR+regime+change+OR+insurrection+OR+martial+law",
+    "https://news.google.com/rss/search?q=evacuation+OR+roadblock+OR+curfew+OR+border+closure+OR+airport+closure+OR+travel+ban+OR+embassy+alert",
+    "https://news.google.com/rss/search?q=pandemic+OR+epidemic+OR+viral+outbreak+OR+quarantine+OR+infectious+disease+OR+biological+threat",
+    "https://news.google.com/rss/search?q=earthquake+OR+tsunami+OR+tornado+OR+hurricane+OR+flood+OR+wildfire+OR+natural+disaster",
+    "https://news.google.com/rss/search?q=data+breach+OR+cyberattack+OR+ransomware+OR+malware+OR+phishing+OR+deepfake+OR+identity+theft+OR+network+security",
+    "https://news.google.com/rss/search?q=extremist+activity+OR+radicalization+OR+smuggling+OR+human+trafficking+OR+abduction+OR+organized+crime",
+    "https://news.google.com/rss/search?q=lockdown+OR+critical+infrastructure+OR+security+alert+OR+power+grid+attack+OR+transport+disruption",
+    "https://news.google.com/rss/search?q=health+alert+OR+contamination+OR+public+health+emergency+OR+disease+spread"
+]
+
+# -------------------------------
+# 🌐 RSS FEEDS (including Google News)
 # -------------------------------
 FEEDS = [
     "https://www.cisa.gov/news.xml",
@@ -59,7 +74,7 @@ FEEDS = [
     "https://www.france24.com/en/rss",
     "https://www.gov.uk/foreign-travel-advice.atom",
     "https://www.gdacs.org/xml/rss.xml",
-]
+] + GOOGLE_NEWS_FEEDS
 
 # -------------------------------
 # 🧠 GPT SETUP
@@ -154,7 +169,7 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
 
-    # ✅ Fetch Telegram alerts
+    # ✅ Telegram Alerts
     try:
         telegram_alerts = scrape_telegram_messages()
         for tg in telegram_alerts:
@@ -181,7 +196,7 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     except Exception as e:
         print(f"❌ Telegram scrape failed: {e}")
 
-    # ✅ Fetch RSS alerts
+    # ✅ RSS Alerts
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(fetch_feed, FEEDS))
 
