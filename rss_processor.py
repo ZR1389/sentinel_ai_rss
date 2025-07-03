@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from telegram_scraper import scrape_telegram_messages  # ✅ NEW
+
 # -------------------------------
 # 🚨 THREAT KEYWORDS (intelligence-grade)
 # -------------------------------
@@ -16,30 +18,16 @@ THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
     "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
     "suicide bombing", "military raid", "abduction", "hostage situation",
-
-    # Political & Civil Unrest
     "civil unrest", "riot", "protest", "coup d'etat", "regime change",
     "political unrest", "uprising", "insurrection", "state of emergency", "martial law",
-
-    # Travel & Movement Disruption
     "evacuation", "roadblock", "border closure", "curfew", "flight cancellation",
     "airport closure", "port closure", "embassy alert", "travel advisory", "travel ban",
-
-    # Health Crises
     "pandemic", "viral outbreak", "disease spread", "contamination", "quarantine",
     "public health emergency", "infectious disease", "epidemic", "biological threat", "health alert",
-
-    # Cyber Threats
     "data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing",
     "malware", "cyber espionage", "identity theft", "network security",
-
-    # Border, Extremism, Organized Crime
     "extremist activity", "radicalization", "border security", "smuggling", "human trafficking",
-
-    # Natural Disasters
     "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire",
-
-    # General Threats
     "lockdown", "security alert", "critical infrastructure"
 ]
 
@@ -166,6 +154,34 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
 
+    # ✅ Fetch Telegram alerts
+    try:
+        telegram_alerts = scrape_telegram_messages()
+        for tg in telegram_alerts:
+            if region and region.lower() not in tg["summary"].lower():
+                continue
+            if topic and topic.lower() not in tg["summary"].lower():
+                continue
+
+            gpt_summary = summarize_with_gpt(tg["summary"]) if summarize else None
+            threat_type = classify_threat_type(tg["summary"])
+
+            alerts.append({
+                "title": tg["title"],
+                "summary": tg["summary"],
+                "link": tg["link"],
+                "source": tg["source"],
+                "gpt_summary": gpt_summary,
+                "type": threat_type
+            })
+
+            if len(alerts) >= limit:
+                print(f"✅ Parsed {len(alerts)} alerts.")
+                return alerts
+    except Exception as e:
+        print(f"❌ Telegram scrape failed: {e}")
+
+    # ✅ Fetch RSS alerts
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(fetch_feed, FEEDS))
 
