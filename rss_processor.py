@@ -52,7 +52,23 @@ GOOGLE_NEWS_FEEDS = [
 ]
 
 # -------------------------------
-# 🌐 RSS FEEDS (including Google News)
+# 🌐 RELIEFWEB & OCHA REGION FEEDS
+# -------------------------------
+RELIEF_OCHA_FEEDS = [
+    "https://reliefweb.int/headlines/rss?region=45", "https://www.unocha.org/rss/west-africa.xml",
+    "https://reliefweb.int/headlines/rss?region=93", "https://www.unocha.org/rss/middle-east.xml",
+    "https://reliefweb.int/headlines/rss?region=54", "https://www.unocha.org/rss/latin-america.xml",
+    "https://reliefweb.int/headlines/rss?region=72", "https://www.unocha.org/rss/eastern-europe.xml",
+    "https://reliefweb.int/headlines/rss?region=67", "https://www.unocha.org/rss/asia-pacific.xml",
+    "https://reliefweb.int/headlines/rss?region=104", "https://www.unocha.org/rss/central-asia.xml",
+    "https://reliefweb.int/headlines/rss?region=73", "https://www.unocha.org/rss/eastern-africa.xml",
+    "https://reliefweb.int/headlines/rss?region=156", "https://www.unocha.org/rss/sahel.xml",
+    "https://reliefweb.int/headlines/rss?region=50", "https://www.unocha.org/rss/north-africa.xml",
+    "https://reliefweb.int/headlines/rss?region=74", "https://www.unocha.org/rss/southern-africa.xml"
+]
+
+# -------------------------------
+# 🌐 ALL RSS FEEDS
 # -------------------------------
 FEEDS = [
     "https://www.cisa.gov/news.xml",
@@ -74,21 +90,19 @@ FEEDS = [
     "https://www.france24.com/en/rss",
     "https://www.gov.uk/foreign-travel-advice.atom",
     "https://www.gdacs.org/xml/rss.xml",
-] + GOOGLE_NEWS_FEEDS
+] + GOOGLE_NEWS_FEEDS + RELIEF_OCHA_FEEDS
 
 # -------------------------------
-# 🧠 GPT SETUP
+# 🧐 GPT SETUP
 # -------------------------------
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
 GPT_CLASSIFY_MODEL = os.getenv("GPT_CLASSIFY_MODEL", "gpt-4o")
 
 system_prompt = """
 You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
 You deliver concise, professional threat summaries and actionable advice. Speak with clarity and authority.
-
 If the user is not a subscriber, end with:
 “To receive personalized alerts, intelligence briefings, and emergency support, upgrade your access at zikarisk.com.”
 """
@@ -110,7 +124,6 @@ def summarize_with_gpt(text):
 
 TYPE_PROMPT = """
 Classify the threat type based on the following news headline and summary. Choose only ONE of the following categories:
-
 - Terrorism
 - Protest
 - Crime
@@ -121,13 +134,10 @@ Classify the threat type based on the following news headline and summary. Choos
 - Infrastructure
 - Health
 - Unclassified
-
 Respond with only the category name.
-
 Example:
 Input: "Hacking group hits hospital IT system"
 Output: Cyber
-
 Now classify this:
 """
 
@@ -143,10 +153,8 @@ def classify_threat_type(text):
             max_tokens=10
         )
         label = response.choices[0].message.content.strip()
-        if label not in [
-            "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
-            "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
-        ]:
+        if label not in ["Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
+                         "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"]:
             return "Unclassified"
         return label
     except Exception as e:
