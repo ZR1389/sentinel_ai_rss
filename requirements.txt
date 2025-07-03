@@ -28,3 +28,5 @@ jiter==0.10.0
 
 # Packaging
 wheel==0.45.1
+
+telethon==1.30.3
