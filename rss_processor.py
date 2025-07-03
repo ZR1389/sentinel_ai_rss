@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import json
 import httpx
 import feedparser
 from datetime import datetime
@@ -7,6 +9,8 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
+from hashlib import sha256
+from pathlib import Path
 
 from telegram_scraper import scrape_telegram_messages  # ✅ NEW
 
@@ -36,64 +40,13 @@ KEYWORD_PATTERN = re.compile(
 )
 
 # -------------------------------
-# 🌐 GOOGLE NEWS FEEDS
+# 🌐 RSS FEEDS
 # -------------------------------
-GOOGLE_NEWS_FEEDS = [
-    "https://news.google.com/rss/search?q=assassination+OR+bombing+OR+kidnapping+OR+terrorist+attack+OR+suicide+bombing+OR+active+shooter+OR+military+raid",
-    "https://news.google.com/rss/search?q=mass+shooting+OR+gunfire+OR+hijacking+OR+IED+OR+hostage+situation",
-    "https://news.google.com/rss/search?q=civil+unrest+OR+riot+OR+protest+OR+coup+OR+uprising+OR+regime+change+OR+insurrection+OR+martial+law",
-    "https://news.google.com/rss/search?q=evacuation+OR+roadblock+OR+curfew+OR+border+closure+OR+airport+closure+OR+travel+ban+OR+embassy+alert",
-    "https://news.google.com/rss/search?q=pandemic+OR+epidemic+OR+viral+outbreak+OR+quarantine+OR+infectious+disease+OR+biological+threat",
-    "https://news.google.com/rss/search?q=earthquake+OR+tsunami+OR+tornado+OR+hurricane+OR+flood+OR+wildfire+OR+natural+disaster",
-    "https://news.google.com/rss/search?q=data+breach+OR+cyberattack+OR+ransomware+OR+malware+OR+phishing+OR+deepfake+OR+identity+theft+OR+network+security",
-    "https://news.google.com/rss/search?q=extremist+activity+OR+radicalization+OR+smuggling+OR+human+trafficking+OR+abduction+OR+organized+crime",
-    "https://news.google.com/rss/search?q=lockdown+OR+critical+infrastructure+OR+security+alert+OR+power+grid+attack+OR+transport+disruption",
-    "https://news.google.com/rss/search?q=health+alert+OR+contamination+OR+public+health+emergency+OR+disease+spread"
-]
+# (omitted here for brevity – same FEEDS + GOOGLE + RELIEF as yours)
+# Make sure FEEDS is populated correctly
 
 # -------------------------------
-# 🌐 RELIEFWEB & OCHA REGION FEEDS
-# -------------------------------
-RELIEF_OCHA_FEEDS = [
-    "https://reliefweb.int/headlines/rss?region=45", "https://www.unocha.org/rss/west-africa.xml",
-    "https://reliefweb.int/headlines/rss?region=93", "https://www.unocha.org/rss/middle-east.xml",
-    "https://reliefweb.int/headlines/rss?region=54", "https://www.unocha.org/rss/latin-america.xml",
-    "https://reliefweb.int/headlines/rss?region=72", "https://www.unocha.org/rss/eastern-europe.xml",
-    "https://reliefweb.int/headlines/rss?region=67", "https://www.unocha.org/rss/asia-pacific.xml",
-    "https://reliefweb.int/headlines/rss?region=104", "https://www.unocha.org/rss/central-asia.xml",
-    "https://reliefweb.int/headlines/rss?region=73", "https://www.unocha.org/rss/eastern-africa.xml",
-    "https://reliefweb.int/headlines/rss?region=156", "https://www.unocha.org/rss/sahel.xml",
-    "https://reliefweb.int/headlines/rss?region=50", "https://www.unocha.org/rss/north-africa.xml",
-    "https://reliefweb.int/headlines/rss?region=74", "https://www.unocha.org/rss/southern-africa.xml"
-]
-
-# -------------------------------
-# 🌐 ALL RSS FEEDS
-# -------------------------------
-FEEDS = [
-    "https://www.cisa.gov/news.xml",
-    "https://feeds.bbci.co.uk/news/uk/rss.xml",
-    "https://www.darkreading.com/rss.xml",
-    "https://krebsonsecurity.com/feed/",
-    "https://www.bleepingcomputer.com/feed/",
-    "https://www.theguardian.com/world/rss",
-    "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
-    "https://www.crimemagazine.com/rss.xml",
-    "https://www.murdermap.co.uk/feed/",
-    "https://kidnappingmurderandmayhem.blogspot.com/feeds/posts/default",
-    "https://www.securitymagazine.com/rss/",
-    "https://feeds.feedburner.com/TheHackersNews",
-    "https://www.csoonline.com/feed/",
-    "https://www.arlingtoncardinal.com/category/crime/feed/",
-    "https://intel471.com/blog/feed",
-    "https://www.aljazeera.com/xml/rss/all.xml",
-    "https://www.france24.com/en/rss",
-    "https://www.gov.uk/foreign-travel-advice.atom",
-    "https://www.gdacs.org/xml/rss.xml",
-] + GOOGLE_NEWS_FEEDS + RELIEF_OCHA_FEEDS
-
-# -------------------------------
-# 🧐 GPT SETUP
+# 🧠 GPT SETUP
 # -------------------------------
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -121,6 +74,27 @@ def summarize_with_gpt(text):
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"[GPT error] {str(e)}"
+
+def summarize_with_gpt_cached(summarize_fn):
+    cache_file = "summary_cache.json"
+    Path(cache_file).touch(exist_ok=True)
+    try:
+        with open(cache_file, "r") as f:
+            cache = json.load(f)
+    except json.JSONDecodeError:
+        cache = {}
+
+    def wrapper(text):
+        key = sha256(text.encode("utf-8")).hexdigest()
+        if key in cache:
+            return cache[key]
+        summary = summarize_fn(text)
+        cache[key] = summary
+        with open(cache_file, "w") as f:
+            json.dump(cache, f, indent=2)
+        return summary
+
+    return wrapper
 
 TYPE_PROMPT = """
 Classify the threat type based on the following news headline and summary. Choose only ONE of the following categories:
@@ -158,26 +132,30 @@ def classify_threat_type(text):
             return "Unclassified"
         return label
     except Exception as e:
-        print(f"❌ Threat type classification error: {e}")
+        print(f"\u274c Threat type classification error: {e}")
         return "Unclassified"
 
-def fetch_feed(url, timeout=7):
-    try:
-        response = httpx.get(url, timeout=timeout)
-        if response.status_code != 200:
-            print(f"❌ Feed error {response.status_code}: {url}")
-            return None, url
-        print(f"✅ Fetched: {url}")
-        return feedparser.parse(response.content.decode('utf-8', errors='ignore')), url
-    except Exception as e:
-        print(f"❌ Feed failed: {url}\n   Reason: {e}")
-        return None, url
+def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
+    attempt = 0
+    while attempt < retries:
+        try:
+            response = httpx.get(url, timeout=timeout)
+            if response.status_code == 200:
+                print(f"\u2705 Fetched: {url}")
+                return feedparser.parse(response.content.decode('utf-8', errors='ignore')), url
+            else:
+                print(f"\u26a0\ufe0f Feed returned {response.status_code}: {url}")
+        except Exception as e:
+            print(f"\u274c Attempt {attempt + 1} failed for {url} — {e}")
+        attempt += 1
+        time.sleep(backoff ** attempt)
+    print(f"\u274c Failed to fetch after {retries} retries: {url}")
+    return None, url
 
 def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
 
-    # ✅ Telegram Alerts
     try:
         telegram_alerts = scrape_telegram_messages()
         for tg in telegram_alerts:
@@ -199,12 +177,11 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
-                print(f"✅ Parsed {len(alerts)} alerts.")
+                print(f"\u2705 Parsed {len(alerts)} alerts.")
                 return alerts
     except Exception as e:
-        print(f"❌ Telegram scrape failed: {e}")
+        print(f"\u274c Telegram scrape failed: {e}")
 
-    # ✅ RSS Alerts
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(fetch_feed, FEEDS))
 
@@ -245,8 +222,39 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
-                print(f"✅ Parsed {len(alerts)} alerts.")
+                print(f"\u2705 Parsed {len(alerts)} alerts.")
                 return alerts
 
-    print(f"✅ Parsed {len(alerts)} alerts.")
+    print(f"\u2705 Parsed {len(alerts)} alerts.")
     return alerts
+
+def get_clean_alerts_cached(get_clean_alerts_fn):
+    def wrapper(*args, **kwargs):
+        summarize = kwargs.get("summarize", False)
+        region = kwargs.get("region", None)
+        topic = kwargs.get("topic", None)
+
+        if summarize or region or topic:
+            return get_clean_alerts_fn(*args, **kwargs)
+
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        cache_dir = "cache"
+        Path(cache_dir).mkdir(exist_ok=True)
+        cache_path = os.path.join(cache_dir, f"alerts-{today_str}.json")
+
+        if os.path.exists(cache_path):
+            with open(cache_path, "r") as f:
+                print(f"\ud83d\udce6 Loaded alerts from cache: {cache_path}")
+                return json.load(f)
+
+        alerts = get_clean_alerts_fn(*args, **kwargs)
+        with open(cache_path, "w") as f:
+            json.dump(alerts, f, indent=2)
+        print(f"\u2705 Saved {len(alerts)} alerts to cache: {cache_path}")
+        return alerts
+
+    return wrapper
+
+# ✅ Apply wrappers
+summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
+get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
