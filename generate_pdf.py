@@ -71,8 +71,10 @@ def generate_translated_pdf(language="en"):
 
                 if alert["link"]:
                     self.set_text_color(0, 0, 255)
-                    self.set_font("Arial", "U", 11)
+                    self.set_font("Arial", "", 11)
+                    self.set_underline(True)
                     self.cell(0, 10, alert["link"], ln=True, link=alert["link"])
+                    self.set_underline(False)
 
                 self.set_font("Arial", "", 12)
                 self.set_text_color(0)
