@@ -1,21 +1,23 @@
-# Core AI & PDF functionality
+# === Core Functionality ===
 openai==1.93.0
-fpdf2==2.7.8
 feedparser==6.0.11
+fpdf2==2.7.8
 python-dotenv==1.1.1
 requests==2.31.0
+httpx==0.28.1
+schedule==1.2.1
 tqdm==4.67.1
-sgmllib3k==1.0.0
-schedule
 
-# Data modeling & type checking
+# === Telegram Integration ===
+telethon==1.30.3
+
+# === Data Modeling ===
 pydantic==2.11.7
 pydantic_core==2.33.2
 typing-inspection==0.4.1
 typing_extensions==4.14.0
 
-# HTTP networking (required by OpenAI + Telegram logic)
-httpx==0.28.1
+# === HTTP/Core Dependencies ===
 httpcore==1.0.9
 h11==0.16.0
 sniffio==1.3.1
@@ -23,10 +25,7 @@ idna==3.10
 anyio==4.9.0
 certifi==2025.6.15
 
-# Optional – used only if `jiter` is explicitly imported
+# === Optional / Advanced ===
 jiter==0.10.0
-
-# Packaging
+sgmllib3k==1.0.0
 wheel==0.45.1
-
-telethon==1.30.3
