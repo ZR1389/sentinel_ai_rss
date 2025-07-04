@@ -1,4 +1,5 @@
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 from datetime import date
 from threat_scorer import assess_threat_level
 from rss_processor import get_clean_alerts, FEEDS
@@ -51,7 +52,7 @@ def generate_translated_pdf(language="en"):
             self.set_y(-15)
             self.set_font("NotoSans", "", 8)
             self.set_text_color(100)
-            self.cell(0, 10, "Sentinel AI – Powered by Zika Risk | www.zikarisk.com", align='C')
+            self.cell(0, 10, "Sentinel AI Powered by Zika Risk | www.zikarisk.com", align='C')
 
         def chapter_body(self, alerts):
             for alert in alerts:
@@ -65,13 +66,13 @@ def generate_translated_pdf(language="en"):
                 self.set_text_color(100, 100, 100)
                 self.set_font("NotoSans", "", 10)
                 src_label = translate_text("Source", target_lang=language)
-                self.cell(0, 6, f"{src_label}: {alert['source']}", ln=True)
+                self.cell(0, 6, f"{src_label}: {alert['source']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
                 # Threat level
                 self.set_text_color(*get_threat_color(alert["level"]))
                 level_label = translate_text("Threat Level", target_lang=language)
                 self.set_font("NotoSans", "", 10)
-                self.cell(0, 6, f"{level_label}: {alert['level']}", ln=True)
+                self.cell(0, 6, f"{level_label}: {alert['level']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
                 # Summary
                 self.set_text_color(0)
@@ -91,3 +92,23 @@ def generate_translated_pdf(language="en"):
     pdf.output(output_path)
     print(f"PDF created: {output_path}")
     return output_path
+
+if __name__ == "__main__":
+    languages = {
+        "en": "English",
+        "es": "Spanish",
+        "fr": "French",
+        "de": "German",
+        "ru": "Russian",
+        "zh": "Chinese",
+        "ar": "Arabic",
+        "pt": "Portuguese",
+        "sr": "Serbian"
+    }
+
+    for lang_code, lang_name in languages.items():
+        print(f"Generating PDF in {lang_name} ({lang_code})...")
+        try:
+            generate_translated_pdf(language=lang_code)
+        except Exception as e:
+            print(f"Failed for {lang_name}: {e}")
