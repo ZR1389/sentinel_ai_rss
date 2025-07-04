@@ -296,7 +296,7 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
 
         if os.path.exists(cache_path):
             with open(cache_path, "r") as f:
-                print(f"\ud83d\udce6 Loaded alerts from cache: {cache_path}")
+                print(f"[CACHE] Loaded alerts from cache: {cache_path}")
                 return json.load(f)
 
         alerts = get_clean_alerts_fn(*args, **kwargs)
