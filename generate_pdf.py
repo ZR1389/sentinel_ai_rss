@@ -53,7 +53,7 @@ def generate_translated_pdf(language="en"):
             for alert in alerts:
                 self.set_text_color(0)
                 self.set_font("Arial", "B", 12)
-                self.multi_cell(0, 10, f"📰 {alert['title']}", align='L')
+                self.multi_cell(0, 10, f"{alert['title']}", align='L')
 
                 level_color = get_threat_color(alert["level"])
                 self.set_text_color(100, 100, 100)
