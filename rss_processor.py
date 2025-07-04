@@ -286,6 +286,24 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
         region = kwargs.get("region", None)
         topic = kwargs.get("topic", None)
 
+# Normalize category display names for frontend compatibility
+    CATEGORY_DISPLAY_MAP = {
+        "Terrorism": "Terrorism",
+        "Protest": "Political Unrest",
+        "Crime": "Crime",
+        "Kidnapping": "Kidnapping",
+        "Cyber": "Cyberattack",
+        "Natural Disaster": "Natural Disaster",
+        "Political": "Political Unrest",
+        "Infrastructure": "Infrastructure Attack",
+        "Health": "Health Emergency",
+        "Unclassified": "Other"
+    }
+
+    for alert in alerts:
+        raw_type = alert.get("type", "Unclassified")
+        alert["type"] = CATEGORY_DISPLAY_MAP.get(raw_type, "Other")
+
         if summarize or region or topic:
             return get_clean_alerts_fn(*args, **kwargs)
 
