@@ -34,21 +34,18 @@ def generate_translated_pdf(language="en"):
         scored_alerts.append({
             "title": translated_title,
             "summary": translated_summary,
-            "link": None,  # Removed display of URLs
+            "link": None,
             "source": alert["source"],
             "level": level
         })
 
     class PDF(FPDF):
         def header(self):
-            logo_path = "zika_risk_logo.png"  # Update path if needed
-            if os.path.exists(logo_path):
-                self.image(logo_path, x=10, y=8, w=14)
             self.set_font("NotoSans", "", 16)
-            self.set_text_color(237, 0, 0)
+            self.set_text_color(0)
             heading = translate_text("Sentinel AI Daily Brief", target_lang=language)
             self.cell(0, 10, f"{heading} — {date.today().isoformat()}", ln=True, align='C')
-            self.ln(10)
+            self.ln(8)
 
         def footer(self):
             self.set_y(-15)
@@ -58,31 +55,36 @@ def generate_translated_pdf(language="en"):
 
         def chapter_body(self, alerts):
             for alert in alerts:
+                # Title
                 self.set_text_color(0)
                 self.set_font("NotoSans", "", 13)
-                self.multi_cell(0, 10, f"{alert['title']}", align='L')
+                self.multi_cell(0, 8, alert["title"], align='L')
+                self.ln(1)
 
-                level_color = get_threat_color(alert["level"])
+                # Source
                 self.set_text_color(100, 100, 100)
-                self.set_font("NotoSans", "", 11)
+                self.set_font("NotoSans", "", 10)
                 src_label = translate_text("Source", target_lang=language)
-                self.cell(0, 8, f"{src_label}: {alert['source']}", ln=True)
+                self.cell(0, 6, f"{src_label}: {alert['source']}", ln=True)
 
-                self.set_text_color(*level_color)
+                # Threat level
+                self.set_text_color(*get_threat_color(alert["level"]))
                 level_label = translate_text("Threat Level", target_lang=language)
-                self.cell(0, 8, f"{level_label}: {alert['level']}", ln=True)
+                self.set_font("NotoSans", "", 10)
+                self.cell(0, 6, f"{level_label}: {alert['level']}", ln=True)
 
+                # Summary
                 self.set_text_color(0)
-                self.set_font("NotoSans", "", 12)
-                self.multi_cell(0, 10, f"{alert['summary']}", align='L')
+                self.set_font("NotoSans", "", 11)
+                self.multi_cell(0, 7, alert["summary"], align='L')
 
+                # Spacing between alerts
                 self.ln(6)
 
     pdf = PDF()
     pdf.add_font("NotoSans", "", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.set_font("NotoSans", "", 12)
     pdf.add_page()
-
     pdf.chapter_body(scored_alerts)
 
     output_path = os.path.expanduser(f"~/Desktop/daily-brief-{language}-{date.today().isoformat()}.pdf")
