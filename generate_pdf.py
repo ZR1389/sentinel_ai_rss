@@ -50,7 +50,7 @@ def generate_translated_pdf(language="en"):
         def chapter_body(self, alerts):
             for alert in alerts:
                 self.set_text_color(0)
-                self.set_font("NotoSans", "", 12)
+                self.set_font("NotoSans", "", 13)
                 self.multi_cell(0, 10, f"{alert['title']}", align='L')
 
                 level_color = get_threat_color(alert["level"])
@@ -79,9 +79,12 @@ def generate_translated_pdf(language="en"):
                 self.ln(6)
 
     pdf = PDF()
+    pdf.add_page()
+
+    # ✅ Register NotoSans font before use
     pdf.add_font("NotoSans", "", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.set_font("NotoSans", "", 12)
-    pdf.add_page()
+
     pdf.chapter_body(scored_alerts)
 
     output_path = os.path.expanduser(f"~/Desktop/daily-brief-{language}-{date.today().isoformat()}.pdf")
