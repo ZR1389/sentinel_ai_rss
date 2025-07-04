@@ -2,7 +2,7 @@ from fpdf import FPDF
 from datetime import date
 from threat_scorer import assess_threat_level
 from rss_processor import get_clean_alerts, FEEDS
-from translator import translate_text  # Make sure this is available
+from translator import translate_text
 import os
 
 def get_threat_color(level):
@@ -79,15 +79,12 @@ def generate_translated_pdf(language="en"):
                 self.ln(6)
 
     pdf = PDF()
-    pdf.add_page()
-
-    # ✅ Register and use multilingual font
     pdf.add_font("NotoSans", "", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.set_font("NotoSans", "", 12)
-
+    pdf.add_page()
     pdf.chapter_body(scored_alerts)
 
     output_path = os.path.expanduser(f"~/Desktop/daily-brief-{language}-{date.today().isoformat()}.pdf")
     pdf.output(output_path)
-    print(f"PDF created: {output_path}")
+    print(f"✅ PDF created: {output_path}")
     return output_path
