@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from chat_handler import handle_user_query
 from email_dispatcher import send_pdf_report, send_daily_summaries
 from telegram_dispatcher import send_alerts_to_telegram
-from plan_rules import PLAN_RULES  #Centralized plan permissions
+from plan_rules import PLAN_RULES  # Centralized plan permissions
+from plan_checker import get_client_plan  # ✅ Used for Telegram plan validation
 
 # Load environment variables
 load_dotenv()
@@ -22,8 +23,8 @@ TOKEN_TO_PLAN = {
 
 # Server routes
 class ChatRequestHandler(BaseHTTPRequestHandler):
-    def _set_headers(self):
-        self.send_response(200)
+    def _set_headers(self, code=200):
+        self.send_response(code)
         self.send_header("Content-type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
@@ -94,6 +95,16 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/send_telegram_alerts":
             email = data.get("email", "anonymous")
+
+            # ✅ Plan check
+            plan = get_client_plan(email).upper()
+            if plan not in ["BASIC", "PRO", "VIP"]:
+                self._set_headers(403)
+                self.wfile.write(json.dumps({
+                    "message": "❌ Telegram alerts are only available for Basic, Pro, and VIP users."
+                }).encode("utf-8"))
+                return
+
             count = send_alerts_to_telegram(email=email)
             msg = f"{count} alerts sent to Telegram." if count > 0 else "No high-risk alerts to send right now."
             self._set_headers()
