@@ -34,18 +34,27 @@ def generate_translated_pdf(language="en"):
         scored_alerts.append({
             "title": translated_title,
             "summary": translated_summary,
-            "link": alert["link"],
+            "link": None,  # Removed display of URLs
             "source": alert["source"],
             "level": level
         })
 
     class PDF(FPDF):
         def header(self):
+            logo_path = "zika_risk_logo.png"  # Update path if needed
+            if os.path.exists(logo_path):
+                self.image(logo_path, x=10, y=8, w=14)
             self.set_font("NotoSans", "", 16)
             self.set_text_color(237, 0, 0)
             heading = translate_text("Sentinel AI Daily Brief", target_lang=language)
             self.cell(0, 10, f"{heading} — {date.today().isoformat()}", ln=True, align='C')
             self.ln(10)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font("NotoSans", "", 8)
+            self.set_text_color(100)
+            self.cell(0, 10, "Sentinel AI – Powered by Zika Risk | www.zikarisk.com", align='C')
 
         def chapter_body(self, alerts):
             for alert in alerts:
@@ -67,23 +76,12 @@ def generate_translated_pdf(language="en"):
                 self.set_font("NotoSans", "", 12)
                 self.multi_cell(0, 10, f"{alert['summary']}", align='L')
 
-                if alert["link"]:
-                    self.set_text_color(0, 0, 255)
-                    self.set_font("NotoSans", "", 11)
-                    self.set_underline(True)
-                    self.cell(0, 10, alert["link"], ln=True, link=alert["link"])
-                    self.set_underline(False)
-
-                self.set_font("NotoSans", "", 12)
-                self.set_text_color(0)
                 self.ln(6)
 
     pdf = PDF()
-    pdf.add_page()
-
-    # Register NotoSans font before use
     pdf.add_font("NotoSans", "", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.set_font("NotoSans", "", 12)
+    pdf.add_page()
 
     pdf.chapter_body(scored_alerts)
 
