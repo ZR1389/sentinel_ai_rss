@@ -1,4 +1,4 @@
-# main.py ✅ FULL VERSION WITH /chat AUTH
+# main.py ✅ WORKING TELEGRAM PLAN CHECK VIA GPT
 
 import os
 import json
@@ -7,13 +7,10 @@ from dotenv import load_dotenv
 from chat_handler import handle_user_query
 from email_dispatcher import send_pdf_report, send_daily_summaries
 from telegram_dispatcher import send_alerts_to_telegram
-from plan_rules import PLAN_RULES  # Centralized plan permissions
-from plan_checker import get_client_plan  # ✅ Used for Telegram plan validation
+from plan_rules import PLAN_RULES
 
-# Load environment variables
 load_dotenv()
 
-# Token-to-plan mapping
 TOKEN_TO_PLAN = {
     os.getenv("FREE_TOKEN"): "FREE",
     os.getenv("BASIC_TOKEN"): "BASIC",
@@ -21,7 +18,6 @@ TOKEN_TO_PLAN = {
     os.getenv("VIP_TOKEN"): "VIP"
 }
 
-# Server routes
 class ChatRequestHandler(BaseHTTPRequestHandler):
     def _set_headers(self, code=200):
         self.send_response(code)
@@ -42,7 +38,6 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         data = json.loads(body)
 
         if self.path == "/chat":
-            # Step 1: Validate Authorization header
             auth_token = self.headers.get("Authorization")
             if not auth_token:
                 self.send_response(401)
@@ -50,7 +45,6 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Missing Authorization token"}')
                 return
 
-            # Step 2: Match token to plan
             user_plan = TOKEN_TO_PLAN.get(auth_token)
             if not user_plan:
                 self.send_response(403)
@@ -58,7 +52,6 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Invalid or unauthorized token"}')
                 return
 
-            # Step 3: Extract and process chat
             message = data.get("message", "")
             email = data.get("email", "anonymous")
             lang = data.get("lang", "en")
@@ -95,9 +88,14 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/send_telegram_alerts":
             email = data.get("email", "anonymous")
+            plan = "FREE"
 
-            # ✅ Plan check
-            plan = get_client_plan(email).upper()
+            try:
+                result = handle_user_query("status", email=email)
+                plan = result.get("plan", "FREE").upper()
+            except:
+                plan = "FREE"
+
             if plan not in ["BASIC", "PRO", "VIP"]:
                 self._set_headers(403)
                 self.wfile.write(json.dumps({
@@ -133,14 +131,12 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
-# Run HTTP server
 def run_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
     print(f"Sentinel AI server running on port {port}")
     server.serve_forever()
 
-# Entry point: detect daily run vs server mode
 if __name__ == "__main__":
     if os.getenv("RUN_MODE") == "daily":
         print("Sending daily reports...")
