@@ -12,7 +12,7 @@ from openai import OpenAI
 from hashlib import sha256
 from pathlib import Path
 
-from telegram_scraper import scrape_telegram_messages  # NEW
+from telegram_scraper import scrape_telegram_messages
 
 # -------------------------------
 # 🚨 THREAT KEYWORDS (intelligence-grade)
@@ -42,9 +42,6 @@ KEYWORD_PATTERN = re.compile(
 # -------------------------------
 # RSS FEEDS
 # -------------------------------
-# -------------------------------
-# GOOGLE NEWS FEEDS
-# -------------------------------
 GOOGLE_NEWS_FEEDS = [
     "https://news.google.com/rss/search?q=assassination+OR+bombing+OR+kidnapping+OR+terrorist+attack+OR+suicide+bombing+OR+active+shooter+OR+military+raid",
     "https://news.google.com/rss/search?q=mass+shooting+OR+gunfire+OR+hijacking+OR+IED+OR+hostage+situation",
@@ -57,9 +54,7 @@ GOOGLE_NEWS_FEEDS = [
     "https://news.google.com/rss/search?q=lockdown+OR+critical+infrastructure+OR+security+alert+OR+power+grid+attack+OR+transport+disruption",
     "https://news.google.com/rss/search?q=health+alert+OR+contamination+OR+public+health+emergency+OR+disease+spread"
 ]
-# -------------------------------
-# RELIEFWEB & OCHA REGION FEEDS
-# -------------------------------
+
 RELIEF_OCHA_FEEDS = [
     "https://reliefweb.int/headlines/rss?region=45", "https://www.unocha.org/rss/west-africa.xml",
     "https://reliefweb.int/headlines/rss?region=93", "https://www.unocha.org/rss/middle-east.xml",
@@ -72,9 +67,7 @@ RELIEF_OCHA_FEEDS = [
     "https://reliefweb.int/headlines/rss?region=50", "https://www.unocha.org/rss/north-africa.xml",
     "https://reliefweb.int/headlines/rss?region=74", "https://www.unocha.org/rss/southern-africa.xml"
 ]
-# -------------------------------
-# ALL RSS FEEDS
-# -------------------------------
+
 FEEDS = [
     "https://www.cisa.gov/news.xml",
     "https://feeds.bbci.co.uk/news/uk/rss.xml",
@@ -97,14 +90,14 @@ FEEDS = [
     "https://www.gdacs.org/xml/rss.xml",
 ] + GOOGLE_NEWS_FEEDS + RELIEF_OCHA_FEEDS
 
-# -------------------------------
 # GPT SETUP
-# -------------------------------
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
 GPT_CLASSIFY_MODEL = os.getenv("GPT_CLASSIFY_MODEL", "gpt-4o")
-
+# -------------------------------
+# SYSTEM PROMPT FOR SUMMARIES
+# -------------------------------
 system_prompt = """
 You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
 You deliver concise, professional threat summaries and actionable advice. Speak with clarity and authority.
@@ -179,12 +172,14 @@ def classify_threat_type(text):
             max_tokens=10
         )
         label = response.choices[0].message.content.strip()
-        if label not in ["Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
-                         "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"]:
+        if label not in [
+            "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
+            "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
+        ]:
             return "Unclassified"
         return label
     except Exception as e:
-        print(f"\u274c Threat type classification error: {e}")
+        print(f"❌ Threat type classification error: {e}")
         return "Unclassified"
 
 def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
@@ -193,17 +188,16 @@ def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
         try:
             response = httpx.get(url, timeout=timeout)
             if response.status_code == 200:
-                print(f"\u2705 Fetched: {url}")
+                print(f"✅ Fetched: {url}")
                 return feedparser.parse(response.content.decode('utf-8', errors='ignore')), url
             else:
-                print(f"\u26a0\ufe0f Feed returned {response.status_code}: {url}")
+                print(f"⚠️ Feed returned {response.status_code}: {url}")
         except Exception as e:
-            print(f"\u274c Attempt {attempt + 1} failed for {url} — {e}")
+            print(f"❌ Attempt {attempt + 1} failed for {url} — {e}")
         attempt += 1
         time.sleep(backoff ** attempt)
-    print(f"\u274c Failed to fetch after {retries} retries: {url}")
+    print(f"❌ Failed to fetch after {retries} retries: {url}")
     return None, url
-
 def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
@@ -229,10 +223,10 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
-                print(f"\u2705 Parsed {len(alerts)} alerts.")
+                print(f"✅ Parsed {len(alerts)} alerts.")
                 return alerts
     except Exception as e:
-        print(f"\u274c Telegram scrape failed: {e}")
+        print(f"❌ Telegram scrape failed: {e}")
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(fetch_feed, FEEDS))
@@ -274,11 +268,12 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
-                print(f"\u2705 Parsed {len(alerts)} alerts.")
+                print(f"✅ Parsed {len(alerts)} alerts.")
                 return alerts
 
-    print(f"\u2705 Parsed {len(alerts)} alerts.")
+    print(f"✅ Parsed {len(alerts)} alerts.")
     return alerts
+
 
 def get_clean_alerts_cached(get_clean_alerts_fn):
     def wrapper(*args, **kwargs):
@@ -286,45 +281,49 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
         region = kwargs.get("region", None)
         topic = kwargs.get("topic", None)
 
-# Normalize category display names for frontend compatibility
-    CATEGORY_DISPLAY_MAP = {
-        "Terrorism": "Terrorism",
-        "Protest": "Political Unrest",
-        "Crime": "Crime",
-        "Kidnapping": "Kidnapping",
-        "Cyber": "Cyberattack",
-        "Natural Disaster": "Natural Disaster",
-        "Political": "Political Unrest",
-        "Infrastructure": "Infrastructure Attack",
-        "Health": "Health Emergency",
-        "Unclassified": "Other"
-    }
+        # ✅ Normalize type labels for frontend
+        CATEGORY_DISPLAY_MAP = {
+            "Terrorism": "Terrorism",
+            "Protest": "Political Unrest",
+            "Crime": "Crime",
+            "Kidnapping": "Kidnapping",
+            "Cyber": "Cyberattack",
+            "Natural Disaster": "Natural Disaster",
+            "Political": "Political Unrest",
+            "Infrastructure": "Infrastructure Attack",
+            "Health": "Health Emergency",
+            "Unclassified": "Other"
+        }
 
-    for alert in alerts:
-        raw_type = alert.get("type", "Unclassified")
-        alert["type"] = CATEGORY_DISPLAY_MAP.get(raw_type, "Other")
+        # Load from cache if not filtered
+        if not summarize and not region and not topic:
+            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            cache_dir = "cache"
+            Path(cache_dir).mkdir(exist_ok=True)
+            cache_path = os.path.join(cache_dir, f"alerts-{today_str}.json")
 
-        if summarize or region or topic:
-            return get_clean_alerts_fn(*args, **kwargs)
+            if os.path.exists(cache_path):
+                with open(cache_path, "r") as f:
+                    print(f"[CACHE] Loaded alerts from cache: {cache_path}")
+                    alerts = json.load(f)
+            else:
+                alerts = get_clean_alerts_fn(*args, **kwargs)
+                with open(cache_path, "w") as f:
+                    json.dump(alerts, f, indent=2)
+                print(f"✅ Saved {len(alerts)} alerts to cache: {cache_path}")
+        else:
+            alerts = get_clean_alerts_fn(*args, **kwargs)
 
-        today_str = datetime.utcnow().strftime("%Y-%m-%d")
-        cache_dir = "cache"
-        Path(cache_dir).mkdir(exist_ok=True)
-        cache_path = os.path.join(cache_dir, f"alerts-{today_str}.json")
+        # ✅ Map categories for UI
+        for alert in alerts:
+            raw_type = alert.get("type", "Unclassified")
+            alert["type"] = CATEGORY_DISPLAY_MAP.get(raw_type, "Other")
 
-        if os.path.exists(cache_path):
-            with open(cache_path, "r") as f:
-                print(f"[CACHE] Loaded alerts from cache: {cache_path}")
-                return json.load(f)
-
-        alerts = get_clean_alerts_fn(*args, **kwargs)
-        with open(cache_path, "w") as f:
-            json.dump(alerts, f, indent=2)
-        print(f"\u2705 Saved {len(alerts)} alerts to cache: {cache_path}")
         return alerts
 
     return wrapper
 
-# Apply wrappers
+
+# ✅ Apply wrappers
 summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
