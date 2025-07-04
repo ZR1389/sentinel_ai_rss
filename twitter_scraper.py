@@ -32,7 +32,7 @@ def scrape_tweets(query, max_results=20):
         return alerts
 
     except subprocess.CalledProcessError as e:
-        print("❌ Error running snscrape:", e)
+        print("Error running snscrape:", e)
         print(e.stderr)
         return []
 
@@ -48,7 +48,7 @@ def detect_region(text):
         return "Middle East"
     return "Global"
 
-# ✅ Run test
+# Run test
 if __name__ == "__main__":
     test_query = "explosion OR kidnapping OR protest OR gunfire"
     tweet_alerts = scrape_tweets(test_query)

@@ -6,13 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# 🔒 Optional: High-impact keywords to auto-score "Critical" alerts instantly
+# Optional: High-impact keywords to auto-score "Critical" alerts instantly
 CRITICAL_KEYWORDS = [
     "assassination", "suicide bombing", "mass shooting", "IED", "terrorist attack",
     "hijacking", "hostage situation", "military raid"
 ]
 
-# ✅ Normalize GPT response
+# Normalize GPT response
 def normalize_threat_label(label):
     label = label.strip().lower()
     if "low" in label:
@@ -26,14 +26,14 @@ def normalize_threat_label(label):
     else:
         return "Unrated"
 
-# 🧠 GPT-Based Threat Level Assessment
+# GPT-Based Threat Level Assessment
 def assess_threat_level(alert_text):
-    # ✅ Pre-check: Auto-score based on known critical terms
+    # Pre-check: Auto-score based on known critical terms
     for keyword in CRITICAL_KEYWORDS:
         if keyword.lower() in alert_text.lower():
             return "Critical"
 
-    # 🧠 GPT logic
+    # GPT logic
     system_prompt = """
 You are a senior risk analyst for a global threat monitoring system.
 Your job is to assign a risk score to security-related alerts or incidents.
@@ -62,10 +62,10 @@ Do not explain. Respond with only the label.
         label = response.choices[0].message.content
         return normalize_threat_label(label)
     except Exception as e:
-        print(f"❌ Threat scoring error: {e}")
+        print(f"Threat scoring error: {e}")
         return "Unrated"
 
-# ✅ Test it
+# Test it
 if __name__ == "__main__":
     sample = "Assassination attempt on diplomat in Baghdad"
     level = assess_threat_level(sample)

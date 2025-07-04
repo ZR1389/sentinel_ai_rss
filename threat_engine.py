@@ -6,7 +6,7 @@ from threat_scorer import assess_threat_level
 load_dotenv()
 client = OpenAI()
 
-# ✅ Translate using OpenAI
+# Translate using OpenAI
 def translate_text(text, target_lang="en"):
     if not text or target_lang.lower() == "en":
         return text
@@ -23,7 +23,7 @@ def translate_text(text, target_lang="en"):
     except Exception as e:
         return text  # Fail-safe: return original if translation fails
 
-# ✅ GPT summary for alert + optional translation
+# GPT summary for alert + optional translation
 def summarize_alerts(alerts, lang="en"):
     summarized = []
     for alert in alerts:

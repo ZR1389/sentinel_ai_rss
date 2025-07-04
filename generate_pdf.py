@@ -81,7 +81,7 @@ def generate_translated_pdf(language="en"):
     pdf = PDF()
     pdf.add_page()
 
-    # ✅ Register NotoSans font before use
+    # Register NotoSans font before use
     pdf.add_font("NotoSans", "", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.set_font("NotoSans", "", 12)
 
@@ -89,5 +89,5 @@ def generate_translated_pdf(language="en"):
 
     output_path = os.path.expanduser(f"~/Desktop/daily-brief-{language}-{date.today().isoformat()}.pdf")
     pdf.output(output_path)
-    print(f"✅ PDF created: {output_path}")
+    print(f"PDF created: {output_path}")
     return output_path

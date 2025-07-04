@@ -20,7 +20,7 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
-# ✅ Generate Translated PDF Report
+# Generate Translated PDF Report
 def generate_translated_pdf(email, alerts, plan, language="en"):
     class PDF(FPDF):
         def header(self):
@@ -100,7 +100,7 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
     pdf.output(filename)
     return filename
 
-# ✅ Email PDF to Client
+# Email PDF to Client
 def send_pdf_report(email, plan, language="en"):
     if not PLAN_RULES.get(plan, {}).get("pdf", False):
         raise PermissionError(f"{plan} plan does not allow PDF report access.")
@@ -133,7 +133,7 @@ def send_pdf_report(email, plan, language="en"):
     os.remove(pdf_file)
     return True
 
-# ✅ Send to All Clients
+# Send to All Clients
 def send_daily_summaries():
     with open("clients.json", "r") as f:
         clients = json.load(f)
@@ -145,8 +145,8 @@ def send_daily_summaries():
         try:
             if PLAN_RULES.get(plan, {}).get("pdf", False):
                 send_pdf_report(email=email, plan=plan, language=language)
-                print(f"✅ Sent report to {email} ({plan}, {language})")
+                print(f"Sent report to {email} ({plan}, {language})")
             else:
-                print(f"⏩ Skipped {email} — no PDF access ({plan})")
+                print(f"Skipped {email} — no PDF access ({plan})")
         except Exception as e:
-            print(f"❌ Error sending to {email}: {str(e)}")
+            print(f"Error sending to {email}: {str(e)}")

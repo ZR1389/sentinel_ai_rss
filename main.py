@@ -7,12 +7,12 @@ from dotenv import load_dotenv
 from chat_handler import handle_user_query
 from email_dispatcher import send_pdf_report, send_daily_summaries
 from telegram_dispatcher import send_alerts_to_telegram
-from plan_rules import PLAN_RULES  # ✅ Centralized plan permissions
+from plan_rules import PLAN_RULES  #Centralized plan permissions
 
-# ✅ Load environment variables
+# Load environment variables
 load_dotenv()
 
-# ✅ Token-to-plan mapping
+# Token-to-plan mapping
 TOKEN_TO_PLAN = {
     os.getenv("FREE_TOKEN"): "FREE",
     os.getenv("BASIC_TOKEN"): "BASIC",
@@ -20,7 +20,7 @@ TOKEN_TO_PLAN = {
     os.getenv("VIP_TOKEN"): "VIP"
 }
 
-# ✅ Server routes
+# Server routes
 class ChatRequestHandler(BaseHTTPRequestHandler):
     def _set_headers(self):
         self.send_response(200)
@@ -41,7 +41,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         data = json.loads(body)
 
         if self.path == "/chat":
-            # ✅ Step 1: Validate Authorization header
+            # Step 1: Validate Authorization header
             auth_token = self.headers.get("Authorization")
             if not auth_token:
                 self.send_response(401)
@@ -49,7 +49,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Missing Authorization token"}')
                 return
 
-            # ✅ Step 2: Match token to plan
+            # Step 2: Match token to plan
             user_plan = TOKEN_TO_PLAN.get(auth_token)
             if not user_plan:
                 self.send_response(403)
@@ -57,7 +57,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Invalid or unauthorized token"}')
                 return
 
-            # ✅ Step 3: Extract and process chat
+            # Step 3: Extract and process chat
             message = data.get("message", "")
             email = data.get("email", "anonymous")
             lang = data.get("lang", "en")
@@ -81,13 +81,13 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             if allowed_pdf in ["Monthly", "On-request", True]:
                 try:
                     send_pdf_report(email=email, plan=plan, language=lang)
-                    msg = f"📄 Your {plan} report was sent to {email}."
+                    msg = f"Your {plan} report was sent to {email}."
                 except Exception as e:
-                    msg = f"❌ Failed to send report. Reason: {str(e)}"
+                    msg = f"Failed to send report. Reason: {str(e)}"
             elif plan == "BASIC":
-                msg = "📝 BASIC users can view alerts and summaries, but PDF reports are only available in PRO and VIP plans."
+                msg = "BASIC users can view alerts and summaries, but PDF reports are only available in PRO and VIP plans."
             else:
-                msg = "🚫 PDF reports are available for PRO and VIP users only. Upgrade to access full features."
+                msg = "PDF reports are available for PRO and VIP users only. Upgrade to access full features."
 
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
@@ -95,7 +95,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         elif self.path == "/send_telegram_alerts":
             email = data.get("email", "anonymous")
             count = send_alerts_to_telegram(email=email)
-            msg = f"✅ {count} alerts sent to Telegram." if count > 0 else "⚠️ No high-risk alerts to send right now."
+            msg = f"{count} alerts sent to Telegram." if count > 0 else "No high-risk alerts to send right now."
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
@@ -113,26 +113,26 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                             f.seek(0)
                             json.dump(subscribers, f, indent=2)
                             f.truncate()
-                    msg = "✅ Push subscription saved."
+                    msg = "Push subscription saved."
                 except Exception as e:
-                    msg = f"❌ Failed to save subscription: {str(e)}"
+                    msg = f"Failed to save subscription: {str(e)}"
             else:
-                msg = "❌ No subscription received."
+                msg = "No subscription received."
 
             self._set_headers()
             self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
 
-# ✅ Run HTTP server
+# Run HTTP server
 def run_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
-    print(f"🚀 Sentinel AI server running on port {port}")
+    print(f"Sentinel AI server running on port {port}")
     server.serve_forever()
 
-# ✅ Entry point: detect daily run vs server mode
+# Entry point: detect daily run vs server mode
 if __name__ == "__main__":
     if os.getenv("RUN_MODE") == "daily":
-        print("📬 Sending daily reports...")
+        print("Sending daily reports...")
         send_daily_summaries()
     else:
         run_server()

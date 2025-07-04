@@ -11,7 +11,7 @@ def generate_advice(user_message, alerts, lang="en", email="anonymous"):
     plan = get_plan(email)
     insight_level = PLAN_RULES.get(plan, {}).get("insights", False)
 
-    # ✅ Return generic message if plan doesn’t allow insights
+    # Return generic message if plan doesn’t allow insights
     if not insight_level or plan == "FREE":
         return (
             "🛡️ Basic safety alert summary:\n"
@@ -20,7 +20,7 @@ def generate_advice(user_message, alerts, lang="en", email="anonymous"):
             "- Upgrade to receive personalized threat analysis."
         )
 
-    # ✅ Use GPT to generate tailored insight
+    # Use GPT to generate tailored insight
     try:
         content = f"You are a global security advisor. Based on the following user message and alerts, provide a safety briefing for a traveler:\n\n"
         content += f"User message: {user_message}\n\n"
@@ -40,4 +40,4 @@ def generate_advice(user_message, alerts, lang="en", email="anonymous"):
         return response.choices[0].message.content.strip()
 
     except Exception as e:
-        return f"⚠️ Error generating advisory: {str(e)}"
+        return f"Error generating advisory: {str(e)}"

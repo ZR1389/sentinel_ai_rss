@@ -8,7 +8,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not TOKEN:
-    print("❌ TELEGRAM_BOT_TOKEN not set in .env")
+    print("TELEGRAM_BOT_TOKEN not set in .env")
     exit()
 
 try:
@@ -17,16 +17,16 @@ try:
     response.raise_for_status()
     data = response.json()
 
-    print("✅ Telegram updates received:")
+    print("Telegram updates received:")
     print(data)
 
     if "result" in data and len(data["result"]) > 0:
         for update in data["result"]:
             chat = update.get("message", {}).get("chat", {})
             if chat:
-                print(f"📩 Chat ID: {chat.get('id')} | Username: {chat.get('username')}")
+                print(f"Chat ID: {chat.get('id')} | Username: {chat.get('username')}")
     else:
-        print("ℹ️ No chat messages yet. Send a message to the bot first.")
+        print("No chat messages yet. Send a message to the bot first.")
 
 except requests.RequestException as e:
-    print(f"❌ Error: {e}")
+    print(f"Error: {e}")

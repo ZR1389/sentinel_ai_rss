@@ -12,7 +12,7 @@ from openai import OpenAI
 from hashlib import sha256
 from pathlib import Path
 
-from telegram_scraper import scrape_telegram_messages  # ✅ NEW
+from telegram_scraper import scrape_telegram_messages  # NEW
 
 # -------------------------------
 # 🚨 THREAT KEYWORDS (intelligence-grade)
@@ -40,10 +40,10 @@ KEYWORD_PATTERN = re.compile(
 )
 
 # -------------------------------
-# 🌐 RSS FEEDS
+# RSS FEEDS
 # -------------------------------
 # -------------------------------
-# 🌐 GOOGLE NEWS FEEDS
+# GOOGLE NEWS FEEDS
 # -------------------------------
 GOOGLE_NEWS_FEEDS = [
     "https://news.google.com/rss/search?q=assassination+OR+bombing+OR+kidnapping+OR+terrorist+attack+OR+suicide+bombing+OR+active+shooter+OR+military+raid",
@@ -58,7 +58,7 @@ GOOGLE_NEWS_FEEDS = [
     "https://news.google.com/rss/search?q=health+alert+OR+contamination+OR+public+health+emergency+OR+disease+spread"
 ]
 # -------------------------------
-# 🌐 RELIEFWEB & OCHA REGION FEEDS
+# RELIEFWEB & OCHA REGION FEEDS
 # -------------------------------
 RELIEF_OCHA_FEEDS = [
     "https://reliefweb.int/headlines/rss?region=45", "https://www.unocha.org/rss/west-africa.xml",
@@ -73,7 +73,7 @@ RELIEF_OCHA_FEEDS = [
     "https://reliefweb.int/headlines/rss?region=74", "https://www.unocha.org/rss/southern-africa.xml"
 ]
 # -------------------------------
-# 🌐 ALL RSS FEEDS
+# ALL RSS FEEDS
 # -------------------------------
 FEEDS = [
     "https://www.cisa.gov/news.xml",
@@ -98,7 +98,7 @@ FEEDS = [
 ] + GOOGLE_NEWS_FEEDS + RELIEF_OCHA_FEEDS
 
 # -------------------------------
-# 🧠 GPT SETUP
+# GPT SETUP
 # -------------------------------
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -307,6 +307,6 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
 
     return wrapper
 
-# ✅ Apply wrappers
+# Apply wrappers
 summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)

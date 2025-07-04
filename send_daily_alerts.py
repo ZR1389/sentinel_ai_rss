@@ -15,12 +15,12 @@ def send_daily_summaries():
         if PLAN_RULES.get(plan, {}).get("pdf") in ["Monthly", "On-request"]:
             try:
                 send_pdf_report(email=email, plan=plan)
-                print(f"✅ Sent daily PDF to {email} ({plan})")
+                print(f"Sent daily PDF to {email} ({plan})")
             except Exception as e:
-                print(f"❌ Error for {email}: {str(e)}")
+                print(f"Error for {email}: {str(e)}")
         else:
-            print(f"⏭️ Skipping {email} — PDF not allowed for {plan}")
+            print(f"Skipping {email} — PDF not allowed for {plan}")
 
 if __name__ == "__main__":
-    print("📬 Sending scheduled daily PDF summaries...")
+    print("Sending scheduled daily PDF summaries...")
     send_daily_summaries()

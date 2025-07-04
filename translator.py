@@ -20,5 +20,5 @@ def translate_text(text, target_lang="en"):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"⚠️ Translation failed: {e}")
+        print(f"Translation failed: {e}")
         return text  # Return original if translation fails

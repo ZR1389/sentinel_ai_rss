@@ -28,7 +28,7 @@ def load_unsubscribed():
         with open(UNSUBSCRIBE_FILE, "r") as f:
             return set(json.load(f))
     except Exception as e:
-        print(f"⚠️ Error loading unsubscribed file: {e}")
+        print(f"Error loading unsubscribed file: {e}")
         return set()
 
 
@@ -39,7 +39,7 @@ def save_unsubscribed(unsubscribed_ids):
 
 def send_telegram_pdf(pdf_path):
     if not os.path.exists(pdf_path):
-        print(f"❌ PDF not found: {pdf_path}")
+        print(f"PDF not found: {pdf_path}")
         return
 
     unsubscribed = load_unsubscribed()
@@ -47,33 +47,33 @@ def send_telegram_pdf(pdf_path):
 
     for chat_id in VIP_CLIENTS:
         if chat_id in unsubscribed:
-            print(f"⏩ Skipping unsubscribed user: {chat_id}")
+            print(f"Skipping unsubscribed user: {chat_id}")
             continue
 
         with open(pdf_path, 'rb') as pdf_file:
             files = {'document': pdf_file}
             data = {
                 'chat_id': chat_id,
-                'caption': f"📄 Sentinel AI Daily Brief — {date.today().isoformat()}"
+                'caption': f"Sentinel AI Daily Brief — {date.today().isoformat()}"
             }
 
             try:
                 response = requests.post(url, data=data, files=files, timeout=10)
                 if response.ok:
-                    print(f"✅ PDF sent to {chat_id}")
+                    print(f"PDF sent to {chat_id}")
                 else:
-                    print(f"❌ Failed to send PDF to {chat_id}: {response.status_code} {response.text}")
+                    print(f"Failed to send PDF to {chat_id}: {response.status_code} {response.text}")
             except requests.exceptions.RequestException as e:
-                print(f"❌ Telegram request error for {chat_id}: {e}")
+                print(f"Telegram request error for {chat_id}: {e}")
 
 
 def send_alerts_to_telegram(email="anonymous"):
     unsubscribed = load_unsubscribed()
     alerts = get_clean_alerts(limit=10)
-    print(f"📡 Alerts fetched: {len(alerts)}")
+    print(f"Alerts fetched: {len(alerts)}")
 
     if not alerts:
-        print("❌ No alerts to send.")
+        print("No alerts to send.")
         return 0
 
     qualified_alerts = []
@@ -85,7 +85,7 @@ def send_alerts_to_telegram(email="anonymous"):
             qualified_alerts.append(alert)
 
     if not qualified_alerts:
-        print("✅ No alerts passed the severity filter.")
+        print("No alerts passed the severity filter.")
         return 0
 
     print(f"📬 Sending {len(qualified_alerts)} alerts to {len(VIP_CLIENTS)} clients...")
@@ -93,17 +93,17 @@ def send_alerts_to_telegram(email="anonymous"):
     count = 0
     for alert in qualified_alerts:
         message = (
-            f"🛡️ *Sentinel AI High-Risk Alert* — {date.today().isoformat()}\n\n"
-            f"*📰 Title:* {alert['title']}\n"
-            f"*🌍 Source:* {alert['source']}\n"
-            f"*⚠️ Threat Level:* {alert['level']}\n\n"
+            f"*Sentinel AI High-Risk Alert* — {date.today().isoformat()}\n\n"
+            f"*Title:* {alert['title']}\n"
+            f"*Source:* {alert['source']}\n"
+            f"*Threat Level:* {alert['level']}\n\n"
             f"{alert['summary']}\n"
-            f"[🔗 Read more]({alert['link']})"
+            f"[Read more]({alert['link']})"
         )
 
         for chat_id in VIP_CLIENTS:
             if chat_id in unsubscribed:
-                print(f"⏩ Skipping unsubscribed user: {chat_id}")
+                print(f"Skipping unsubscribed user: {chat_id}")
                 continue
 
             url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -115,12 +115,12 @@ def send_alerts_to_telegram(email="anonymous"):
             try:
                 response = requests.post(url, data=payload, timeout=10)
                 if response.ok:
-                    print(f"✅ Alert sent to {chat_id}")
+                    print(f"Alert sent to {chat_id}")
                     count += 1
                 else:
-                    print(f"❌ Failed to send to {chat_id}: {response.text}")
+                    print(f"Failed to send to {chat_id}: {response.text}")
             except requests.exceptions.RequestException as e:
-                print(f"❌ Telegram error for {chat_id}: {e}")
+                print(f"Telegram error for {chat_id}: {e}")
 
     return count
 
@@ -133,16 +133,16 @@ def handle_unsubscribe(update):
         unsubscribed = load_unsubscribed()
         unsubscribed.add(chat_id)
         save_unsubscribed(unsubscribed)
-        print(f"🔕 User {chat_id} unsubscribed.")
+        print(f"User {chat_id} unsubscribed.")
         return {
             "chat_id": chat_id,
-            "text": "✅ You have been unsubscribed from Sentinel AI alerts.",
+            "text": "You have been unsubscribed from Sentinel AI alerts.",
         }
 
     return None
 
 
 if __name__ == "__main__":
-    print("🤖 Running Telegram dispatcher...")
+    print("Running Telegram dispatcher...")
     count = send_alerts_to_telegram()
-    print(f"✅ Finished sending {count} messages.")
+    print(f"Finished sending {count} messages.")

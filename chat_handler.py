@@ -15,7 +15,7 @@ USAGE_FILE = "usage_log.json"
 load_dotenv()
 client = OpenAI()
 
-# ✅ Load usage per user per day
+# Load usage per user per day
 def load_usage_data():
     if not os.path.exists(USAGE_FILE):
         return {}
@@ -25,12 +25,12 @@ def load_usage_data():
         except json.JSONDecodeError:
             return {}
 
-# ✅ Save usage log to disk
+# Save usage log to disk
 def save_usage_data(data):
     with open(USAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# ✅ Check if user can use chat again
+# Check if user can use chat again
 def check_usage_allowed(email, plan_rules):
     usage_data = load_usage_data()
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -41,7 +41,7 @@ def check_usage_allowed(email, plan_rules):
         return True
     return usage_today < plan_limit
 
-# ✅ Increment chat usage
+# Increment chat usage
 def increment_usage(email):
     usage_data = load_usage_data()
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -52,7 +52,7 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
-# ✅ Translate summaries or fallback text
+# Translate summaries or fallback text
 def translate_text(text, target_lang="en"):
     try:
         if not isinstance(text, str):
@@ -71,14 +71,14 @@ def translate_text(text, target_lang="en"):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"❌ Translation error: {e}")
+        print(f"Translation error: {e}")
         return f"[Translation error: {str(e)}]"
 
-# ✅ Main user query handler
+# Main user query handler
 def handle_user_query(message, email, lang="en"):
-    print(f"📩 Received query: {message} | Email: {email} | Lang: {lang}")
+    print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan = get_plan(email)
-    print(f"✅ Plan: {plan}")
+    print(f"Plan: {plan}")
 
     if message.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
@@ -90,23 +90,23 @@ def handle_user_query(message, email, lang="en"):
     }
 
     if not check_usage_allowed(email, plan_limits.get(plan, {})):
-        print("⛔ Usage limit reached")
+        print("Usage limit reached")
         return {
-            "reply": "⛔ You have reached your daily message limit. Upgrade for unlimited access.",
+            "reply": "You have reached your daily message limit. Upgrade for unlimited access.",
             "plan": plan,
             "alerts": []
         }
 
     increment_usage(email)
-    print("✅ Usage incremented")
+    print("Usage incremented")
 
     raw_alerts = get_clean_alerts()
-    print(f"✅ Alerts fetched: {len(raw_alerts)}")
+    print(f"Alerts fetched: {len(raw_alerts)}")
 
     if not raw_alerts:
         fallback = generate_advice(message, [])
         translated_fallback = translate_text(fallback, lang)
-        print("⚠️ No alerts — returning multilingual fallback")
+        print("No alerts — returning multilingual fallback")
         return {
             "reply": translated_fallback,
             "plan": plan,
@@ -115,10 +115,10 @@ def handle_user_query(message, email, lang="en"):
 
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
-    print("✅ Summaries generated")
+    print("Summaries generated")
 
     translated_summaries = [translate_text(summary, lang) for summary in summaries]
-    print(f"🌍 Summaries translated to {lang}")
+    print(f"Summaries translated to {lang}")
 
     results = []
     for i, alert in enumerate(raw_alerts):
@@ -134,7 +134,7 @@ def handle_user_query(message, email, lang="en"):
 
     fallback = generate_advice(message, raw_alerts)
     translated_fallback = translate_text(fallback, lang)
-    print("✅ Fallback advice generated and translated")
+    print("Fallback advice generated and translated")
 
     return {
         "reply": translated_fallback,
