@@ -32,7 +32,7 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
             for alert in alerts:
                 self.set_text_color(0)
                 self.set_font("Noto", "B", 12)
-                self.multi_cell(0, 10, f"📰 {alert['title']}", align='L')
+                self.multi_cell(0, 10, f"{alert['title']}", align='L')
 
                 level_color = get_threat_color(alert["level"])
                 self.set_text_color(100, 100, 100)
@@ -50,8 +50,10 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
 
                 if alert["link"]:
                     self.set_text_color(0, 0, 255)
-                    self.set_font("Noto", "U", 11)
+                    self.set_font("Noto", "", 11)
+                    self.set_underline(True)
                     self.cell(0, 10, alert["link"], ln=True, link=alert["link"])
+                    self.set_underline(False)
 
                 self.set_font("Noto", "", 12)
                 self.set_text_color(0)
@@ -89,7 +91,6 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
     pdf.add_font("Noto", "", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.add_font("Noto", "B", "fonts/NotoSans-Regular.ttf", uni=True)
     pdf.add_font("Noto", "I", "fonts/NotoSans-Regular.ttf", uni=True)
-    pdf.add_font("Noto", "U", "fonts/NotoSans-Regular.ttf", uni=True)
 
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
