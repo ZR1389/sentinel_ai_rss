@@ -51,9 +51,7 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
                 if alert["link"]:
                     self.set_text_color(0, 0, 255)
                     self.set_font("Noto", "", 11)
-                    self.set_underline(True)
                     self.cell(0, 10, alert["link"], ln=True, link=alert["link"])
-                    self.set_underline(False)
 
                 self.set_font("Noto", "", 12)
                 self.set_text_color(0)
@@ -103,7 +101,7 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
 # ✅ Email PDF to Client
 def send_pdf_report(email, plan, language="en"):
     if not PLAN_RULES.get(plan, {}).get("pdf", False):
-        raise PermissionError(f"❌ {plan} plan does not allow PDF report access.")
+        raise PermissionError(f"{plan} plan does not allow PDF report access.")
 
     alerts = get_clean_alerts()
     pdf_file = generate_translated_pdf(email, alerts, plan, language)
@@ -141,7 +139,7 @@ def send_daily_summaries():
     for client in clients:
         email = client["email"]
         plan = client.get("plan", "FREE")
-        language = client.get("lang", "en")  # ✅ Use 'lang' as the consistent key
+        language = client.get("lang", "en")
         try:
             if PLAN_RULES.get(plan, {}).get("pdf", False):
                 send_pdf_report(email=email, plan=plan, language=language)
