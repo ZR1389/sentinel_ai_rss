@@ -17,6 +17,8 @@ load_dotenv()
 
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
 # ✅ Generate Translated PDF Report
 def generate_translated_pdf(email, alerts, plan, language="en"):
@@ -122,7 +124,7 @@ def send_pdf_report(email, plan, language="en"):
         part['Content-Disposition'] = f'attachment; filename="{pdf_file}"'
         msg.attach(part)
 
-    server = smtplib.SMTP("smtp.gmail.com", 587)
+    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
     server.starttls()
     server.login(SENDER_EMAIL, SENDER_PASSWORD)
     server.send_message(msg)
