@@ -63,6 +63,26 @@ FEEDS = [
     "https://www.gov.uk/foreign-travel-advice.atom",
     "https://www.gdacs.org/xml/rss.xml",
 
+    "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
+    "https://africatimes.com/feed/",
+    "https://adf-magazine.com/feed/",
+    
+    "https://en.mercopress.com/rss",
+    "https://insightcrime.org/feed/",
+    "https://www.telesurenglish.net/rss",
+  
+    "https://www.aljazeera.com/xml/rss/all.xml",
+    "https://www.middleeasteye.net/rss",
+    "https://english.aawsat.com/home/rss",
+
+    "https://asiatimes.com/feed/",
+    "https://thediplomat.com/feed/",
+    "https://www.scmp.com/rss/91/feed",
+
+    "https://www.euronews.com/rss?level=theme&name=news",
+    "https://feeds.bbci.co.uk/news/world/europe/rss.xml",
+    "https://euobserver.com/rss",
+
 ]
 
 # -------------------------------
