@@ -306,6 +306,29 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
 
     return wrapper
 
+
+def generate_fallback_summary(region, threat_type, lang="en"):
+    prompt = f"""
+You are Sentinel AI, an elite threat analyst. No current RSS alerts were found for:
+
+Region: {region}
+Threat Type: {threat_type}
+
+Based on global intelligence patterns, provide a realistic and professional advisory summary (150–250 words) for travelers or security professionals. Include relevant recent risks, caution zones, and operational advice — even if general. This should sound like high-end analysis, not vague advice.
+
+Output in plain text. Language: {lang}
+"""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠️ Fallback error: {str(e)}"
+
+
 # Apply wrappers
 summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
