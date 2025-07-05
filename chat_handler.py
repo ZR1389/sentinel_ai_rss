@@ -108,11 +108,32 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
 
     raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
-
+    
     if not raw_alerts:
-        fallback = generate_advice(message, [])
+        # Use region, threat type, and message to generate realistic fallback
+        context = f"""
+        There are no current alerts available from RSS feeds or Telegram.
+        However, the user is asking: "{message}"
+        Region: {region or 'unspecified'}
+        Threat type: {threat_type or 'unspecified'}
+        Based on your intelligence training, offer a professional travel risk advisory.
+        """
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a threat intelligence advisor. Provide realistic fallback guidance for travelers even when real-time alerts are missing."},
+                    {"role": "user", "content": context}
+                ],
+            temperature=0.5,
+            max_tokens=300
+            )
+            fallback = response.choices[0].message.content.strip()
+        except Exception as e:
+            fallback = "⚠️ No current data available. Please consult official travel advisories."
+
         translated_fallback = translate_text(fallback, lang)
-        print("No alerts — returning multilingual fallback")
+        print("No alerts — returning realistic multilingual fallback")
         return {
             "reply": translated_fallback,
             "plan": plan,
