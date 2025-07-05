@@ -55,8 +55,18 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             message = data.get("message", "")
             email = data.get("email", "anonymous")
             lang = data.get("lang", "en")
+            region = data.get("region", None)
+            threat_type = data.get("threat_type", None)
 
-            result = handle_user_query(message, email=email, lang=lang, plan=user_plan)
+            result = handle_user_query(
+                message,
+                email=email,
+                lang=lang,
+                region=region,
+                threat_type=threat_type,
+                plan=user_plan
+            )
+
             self._set_headers()
             self.wfile.write(json.dumps(result).encode("utf-8"))
 
@@ -99,7 +109,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             if plan not in ["BASIC", "PRO", "VIP"]:
                 self._set_headers(403)
                 self.wfile.write(json.dumps({
-                    "message": "❌ Telegram alerts are only available for Basic, Pro, and VIP users."
+                    "message": "Telegram alerts are only available for Basic, Pro, and VIP users."
                 }).encode("utf-8"))
                 return
 

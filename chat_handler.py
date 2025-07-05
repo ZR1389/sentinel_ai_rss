@@ -75,7 +75,7 @@ def translate_text(text, target_lang="en"):
         return f"[Translation error: {str(e)}]"
 
 # Main user query handler
-def handle_user_query(message, email, lang="en"):
+def handle_user_query(message, email, lang="en", region=None, threat_type=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan = get_plan(email)
     print(f"Plan: {plan}")
@@ -100,7 +100,7 @@ def handle_user_query(message, email, lang="en"):
     increment_usage(email)
     print("Usage incremented")
 
-    raw_alerts = get_clean_alerts()
+    raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
 
     if not raw_alerts:
