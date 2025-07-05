@@ -15,7 +15,9 @@ USAGE_FILE = "usage_log.json"
 load_dotenv()
 client = OpenAI()
 
-# Load usage per user per day
+# -------------------------
+# Load & Save Usage
+# -------------------------
 def load_usage_data():
     if not os.path.exists(USAGE_FILE):
         return {}
@@ -25,23 +27,29 @@ def load_usage_data():
         except json.JSONDecodeError:
             return {}
 
-# Save usage log to disk
 def save_usage_data(data):
     with open(USAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# Check if user can use chat again
-def check_usage_allowed(email, plan_rules):
+# -------------------------
+# Usage Limit Enforcement
+# -------------------------
+PLAN_LIMITS = {
+    "Free": {"chat_limit": 3},
+    "Basic": {"chat_limit": 100},
+    "Pro": {"chat_limit": 500},
+    "VIP": {"chat_limit": None},  # Unlimited
+}
+
+def check_usage_allowed(email, plan):
     usage_data = load_usage_data()
     today = datetime.utcnow().strftime("%Y-%m-%d")
     usage_today = usage_data.get(email, {}).get(today, 0)
-
-    plan_limit = plan_rules.get("chat_limit")
-    if plan_limit is None:
+    limit = PLAN_LIMITS.get(plan, {}).get("chat_limit")
+    if limit is None:
         return True
-    return usage_today < plan_limit
+    return usage_today < limit
 
-# Increment chat usage
 def increment_usage(email):
     usage_data = load_usage_data()
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -52,7 +60,9 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
-# Translate summaries or fallback text
+# -------------------------
+# Translation Support
+# -------------------------
 def translate_text(text, target_lang="en"):
     try:
         if not isinstance(text, str):
@@ -74,8 +84,10 @@ def translate_text(text, target_lang="en"):
         print(f"Translation error: {e}")
         return f"[Translation error: {str(e)}]"
 
-# Main user query handler
-def handle_user_query(message, email, lang="en", region=None, threat_type=None):
+# -------------------------
+# MAIN ENTRY POINT
+# -------------------------
+def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan = get_plan(email)
     print(f"Plan: {plan}")
@@ -83,16 +95,10 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None):
     if message.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
-    plan_limits = {
-        "Free": {"chat_limit": 3},
-        "Pro": {"chat_limit": 15},
-        "VIP": {"chat_limit": None}
-    }
-
-    if not check_usage_allowed(email, plan_limits.get(plan, {})):
+    if not check_usage_allowed(email, plan):
         print("Usage limit reached")
         return {
-            "reply": "You have reached your daily message limit. Upgrade for unlimited access.",
+            "reply": "\u274c You reached your monthly message quota. Please upgrade to get more access.",
             "plan": plan,
             "alerts": []
         }
