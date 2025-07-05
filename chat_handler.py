@@ -14,6 +14,8 @@ USAGE_FILE = "usage_log.json"
 
 load_dotenv()
 client = OpenAI()
+with open("risk_profiles.json", "r") as f:
+    risk_profiles = json.load(f)
 
 # -------------------------
 # Load & Save Usage
@@ -110,35 +112,48 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     print(f"Alerts fetched: {len(raw_alerts)}")
     
     if not raw_alerts:
-        # Use region, threat type, and message to generate realistic fallback
-        context = f"""
-        There are no current alerts available from RSS feeds or Telegram.
-        However, the user is asking: "{message}"
-        Region: {region or 'unspecified'}
-        Threat type: {threat_type or 'unspecified'}
-        Based on your intelligence training, offer a professional travel risk advisory.
-        """
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a threat intelligence advisor. Provide realistic fallback guidance for travelers even when real-time alerts are missing."},
-                    {"role": "user", "content": context}
-                ],
-            temperature=0.5,
-            max_tokens=300
-            )
-            fallback = response.choices[0].message.content.strip()
-        except Exception as e:
-            fallback = "⚠️ No current data available. Please consult official travel advisories."
+        if plan in ["PRO", "VIP"]:
+            # Use GPT fallback
+            context = f"""
+            There are no current alerts available from RSS feeds or Telegram.
+            However, the user is asking: "{message}"
+            Region: {region or 'unspecified'}
+            Threat type: {threat_type or 'unspecified'}
+            Based on your intelligence training, offer a professional travel risk advisory.
+            """
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a threat intelligence advisor. Provide realistic fallback guidance for travelers even when real-time alerts are missing."},
+                        {"role": "user", "content": context}
+                    ],
+                    temperature=0.5,
+                    max_tokens=300
+                )
+                fallback = response.choices[0].message.content.strip()
+            except Exception as e:
+                fallback = "⚠️ No current data available. Please consult official travel advisories."
 
-        translated_fallback = translate_text(fallback, lang)
-        print("No alerts — returning realistic multilingual fallback")
-        return {
-            "reply": translated_fallback,
-            "plan": plan,
-            "alerts": []
-        }
+            translated_fallback = translate_text(fallback, lang)
+            print("No alerts — returning GPT fallback")
+            return {
+                "reply": translated_fallback,
+                "plan": plan,
+                "alerts": []
+            }
+
+        else:
+            # Use static fallback from risk_profiles.json            
+            region_data = risk_profiles.get(region, {})
+            fallback = region_data.get(lang) or region_data.get("en")
+            translated = fallback or "No relevant alerts"
+            print("No alerts — returning static fallback")
+            return {
+                "reply": translated,
+                "plan": plan,
+                "alerts": []
+            }
 
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
@@ -154,7 +169,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             "summary": alert.get("summary", ""),
             "link": alert.get("link", ""),
             "source": alert.get("source", ""),
-            "type": alert.get("type", ""),
+            "type": translate_text(alert.get("type", ""), lang),
             "level": threat_scores[i],
             "gpt_summary": translated_summaries[i]
         })

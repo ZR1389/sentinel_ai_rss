@@ -18,6 +18,8 @@ TOKEN_TO_PLAN = {
     os.getenv("VIP_TOKEN"): "VIP"
 }
 
+print("🛡️ Loaded TOKEN_TO_PLAN map:", TOKEN_TO_PLAN)
+
 class ChatRequestHandler(BaseHTTPRequestHandler):
     def _set_headers(self, code=200):
         self.send_response(code)
