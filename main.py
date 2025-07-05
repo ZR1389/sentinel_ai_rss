@@ -38,8 +38,10 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         data = json.loads(body)
 
         if self.path == "/chat":
+            print("📩 Incoming /chat request...")
             auth_token = self.headers.get("Authorization")
             if not auth_token:
+                print("❌ Missing token")
                 self.send_response(401)
                 self.end_headers()
                 self.wfile.write(b'{"error": "Missing Authorization token"}')
@@ -47,28 +49,38 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
             user_plan = TOKEN_TO_PLAN.get(auth_token)
             if not user_plan:
+                print("❌ Invalid token")
                 self.send_response(403)
                 self.end_headers()
                 self.wfile.write(b'{"error": "Invalid or unauthorized token"}')
                 return
 
-            message = data.get("message", "")
-            email = data.get("email", "anonymous")
-            lang = data.get("lang", "en")
-            region = data.get("region", None)
-            threat_type = data.get("threat_type", None)
+            try:
+                message = data.get("message", "")
+                email = data.get("email", "anonymous")
+                lang = data.get("lang", "en")
+                region = data.get("region", None)
+                threat_type = data.get("threat_type", None)
 
-            result = handle_user_query(
-                message,
-                email=email,
-                lang=lang,
-                region=region,
-                threat_type=threat_type,
-                plan=user_plan
-            )
+                print(f"🧠 Processing chat: plan={user_plan}, region={region}, type={threat_type}")
 
-            self._set_headers()
-            self.wfile.write(json.dumps(result).encode("utf-8"))
+                result = handle_user_query(
+                    message,
+                    email=email,
+                    lang=lang,
+                    region=region,
+                    threat_type=threat_type,
+                    plan=user_plan
+                )
+
+                self._set_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+
+            except Exception as e:
+                print("💥 Error in /chat handler:", str(e))
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
         elif self.path == "/request_report":
             email = data.get("email", "")
@@ -99,7 +111,6 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         elif self.path == "/send_telegram_alerts":
             email = data.get("email", "anonymous")
             plan = "FREE"
-
             try:
                 result = handle_user_query("status", email=email)
                 plan = result.get("plan", "FREE").upper()
