@@ -1,170 +1,103 @@
-import os
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 from dotenv import load_dotenv
+from flask import Flask, request, jsonify
 from chat_handler import handle_user_query
-from email_dispatcher import send_pdf_report, send_daily_summaries
-from telegram_dispatcher import send_alerts_to_telegram
-from plan_rules import PLAN_RULES
+from email_dispatcher import generate_translated_pdf
+from flask_cors import CORS
 
 load_dotenv()
 
-TOKEN_TO_PLAN = {
-    os.getenv("FREE_TOKEN"): "FREE",
-    os.getenv("BASIC_TOKEN"): "BASIC",
-    os.getenv("PRO_TOKEN"): "PRO",
-    os.getenv("VIP_TOKEN"): "VIP"
-}
+app = Flask(__name__)
+CORS(app)
+PORT = int(os.getenv("PORT", 8080))
 
-print("🛡️ Loaded TOKEN_TO_PLAN map:", TOKEN_TO_PLAN)
+@app.route("/chat", methods=["POST", "OPTIONS"])
+def chat():
+    if request.method == "OPTIONS":
+        return _build_cors_response()
 
-class ChatRequestHandler(BaseHTTPRequestHandler):
-    def _set_headers(self, code=200):
-        self.send_response(code)
-        self.send_header("Content-type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
+    try:
+        data = request.get_json(force=True)
+        print("📩 Incoming /chat request...")
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.end_headers()
+        query = data.get("query", "")
+        email = data.get("email", "anonymous")
+        lang = data.get("lang", "en")
+        region = data.get("region", "All")
+        threat_type = data.get("type", "All")
+        plan = data.get("plan", "Free")
 
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length)
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError as e:
-            print(f"💥 Error in /chat handler: Invalid JSON - {str(e)}")
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Invalid JSON format"}).encode("utf-8"))
-            return
+        print(f"🧠 Processing chat: plan={plan}, region={region}, type={threat_type}")
+        region = str(region) if not isinstance(region, str) else region
+        threat_type = str(threat_type) if not isinstance(threat_type, str) else threat_type
+        plan = str(plan).capitalize()
+        lang = str(lang)
 
-        if self.path == "/chat":
-            print("📩 Incoming /chat request...")
-            auth_token = self.headers.get("Authorization")
-            if not auth_token:
-                print("❌ Missing token")
-                self._set_headers(401)
-                self.wfile.write(json.dumps({"error": "Missing Authorization token"}).encode("utf-8"))
-                return
+        result = handle_user_query(
+            {"query": query},
+            email=email,
+            lang=lang,
+            region=region,
+            threat_type=threat_type,
+            plan=plan
+        )
 
-            user_plan = TOKEN_TO_PLAN.get(auth_token)
-            if not user_plan:
-                print("❌ Invalid token")
-                self._set_headers(403)
-                self.wfile.write(json.dumps({"error": "Invalid or unauthorized token"}).encode("utf-8"))
-                return
+        return _build_cors_response(jsonify(result))
 
-            try:
-                message = data.get("message", "")
-                email = data.get("email", "anonymous")
-                lang = data.get("lang", "en")
-                region = data.get("region", None)
-                threat_type = data.get("threat_type", None)
+    except Exception as e:
+        print(f"💥 Error in /chat handler: {e}")
+        return _build_cors_response(jsonify({
+            "reply": f"❌ Advisory engine error: {str(e)}",
+            "plan": "Unknown",
+            "alerts": []
+        })), 500
 
-                print(f"🧠 Processing chat: plan={user_plan}, region={region}, type={threat_type}")
+@app.route("/request_report", methods=["POST"])
+def request_report():
+    try:
+        data = request.get_json(force=True)
+        email = data.get("email", "anonymous")
+        lang = data.get("lang", "en")
+        region = data.get("region", "All")
+        threat_type = data.get("type", "All")
+        plan = data.get("plan", "Free").capitalize()
 
-                result = handle_user_query(
-                    message,
-                    email=email,
-                    lang=lang,
-                    region=region,
-                    threat_type=threat_type,
-                    plan=user_plan
-                )
+        print(f"📄 Generating report for {email} | Region={region}, Type={threat_type}, Lang={lang}, Plan={plan}")
+        alerts = handle_user_query(
+            {"query": "Generate my report"},
+            email=email,
+            lang=lang,
+            region=region,
+            threat_type=threat_type,
+            plan=plan
+        ).get("alerts", [])
 
-                self._set_headers()
-                self.wfile.write(json.dumps(result).encode("utf-8"))
+        generate_translated_pdf(email, alerts, plan, lang)
 
-            except Exception as e:
-                print(f"💥 Error in /chat handler: {str(e)}")
-                self._set_headers(500)
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+        return _build_cors_response(jsonify({
+            "status": "✅ Report generated and sent",
+            "alerts_included": len(alerts)
+        }))
 
-        elif self.path == "/request_report":
-            email = data.get("email", "")
-            lang = data.get("lang", "en")
-            plan = result = None
-            try:
-                result = handle_user_query("status", email=email)
-                plan = result.get("plan", "FREE")
-            except:
-                plan = "FREE"
+    except Exception as e:
+        print(f"💥 Report generation error: {e}")
+        return _build_cors_response(jsonify({
+            "status": f"❌ Failed to generate report: {str(e)}"
+        })), 500
 
-            allowed_pdf = PLAN_RULES.get(plan, {}).get("pdf", False)
-
-            if allowed_pdf in ["Monthly", "On-request", True]:
-                try:
-                    send_pdf_report(email=email, plan=plan, language=lang)
-                    msg = f"Your {plan} report was sent to {email}."
-                except Exception as e:
-                    msg = f"Failed to send report. Reason: {str(e)}"
-            elif plan == "BASIC":
-                msg = "BASIC users can view alerts and summaries, but PDF reports are only available in PRO and VIP plans."
-            else:
-                msg = "PDF reports are available for PRO and VIP users only. Upgrade to access full features."
-
-            self._set_headers()
-            self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
-
-        elif self.path == "/send_telegram_alerts":
-            email = data.get("email", "anonymous")
-            plan = "FREE"
-            try:
-                result = handle_user_query("status", email=email)
-                plan = result.get("plan", "FREE").upper()
-            except:
-                plan = "FREE"
-
-            if plan not in ["BASIC", "PRO", "VIP"]:
-                self._set_headers(403)
-                self.wfile.write(json.dumps({
-                    "message": "Telegram alerts are only available for Basic, Pro, and VIP users."
-                }).encode("utf-8"))
-                return
-
-            count = send_alerts_to_telegram(email=email)
-            msg = f"{count} alerts sent to Telegram." if count > 0 else "No high-risk alerts to send right now."
-            self._set_headers()
-            self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
-
-        elif self.path == "/subscribe_push":
-            subscription = data.get("subscription")
-            if subscription:
-                try:
-                    with open("subscribers.json", "r+") as f:
-                        try:
-                            subscribers = json.load(f)
-                        except json.JSONDecodeError:
-                            subscribers = []
-                        if subscription not in subscribers:
-                            subscribers.append(subscription)
-                            f.seek(0)
-                            json.dump(subscribers, f, indent=2)
-                            f.truncate()
-                    msg = "Push subscription saved."
-                except Exception as e:
-                    msg = f"Failed to save subscription: {str(e)}"
-            else:
-                msg = "No subscription received."
-
-            self._set_headers()
-            self.wfile.write(json.dumps({"message": msg}).encode("utf-8"))
-
-def run_server():
-    port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), ChatRequestHandler)
-    print(f"Sentinel AI server running on port {port}")
-    server.serve_forever()
+def _build_cors_response(response=None):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+    }
+    if response is None:
+        response = jsonify({})
+    response.headers.update(headers)
+    return response
 
 if __name__ == "__main__":
-    if os.getenv("RUN_MODE") == "daily":
-        print("Sending daily reports...")
-        send_daily_summaries()
-    else:
-        run_server()
+    print(f"🛡️ Loaded TOKEN_TO_PLAN map: {{'sentinel_free_2025': 'FREE', 'sentinel_basic_2025': 'BASIC', 'sentinel_pro_2025': 'PRO', 'sentinel_vip_2025': 'VIP'}}")
+    print(f"Sentinel AI server running on port {PORT}")
+    app.run(host="0.0.0.0", port=PORT)
