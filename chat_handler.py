@@ -94,7 +94,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     plan = get_plan(email)
     print(f"Plan: {plan}")
 
-    if message.lower().strip() in ["status", "plan"]:
+    if str(message).lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
     if not check_usage_allowed(email, plan):
