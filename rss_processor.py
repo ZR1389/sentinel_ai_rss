@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from hashlib import sha256
 from pathlib import Path
+import signal
 
 from telegram_scraper import scrape_telegram_messages
 
@@ -69,8 +70,13 @@ If the user is not a subscriber, end with:
 “To receive personalized alerts, intelligence briefings, and emergency support, upgrade your access at zikarisk.com.”
 """
 
+def timeout_handler(signum, frame):
+    raise TimeoutError("OpenAI timed out")
+
 def summarize_with_gpt(text):
     try:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(15)  # 15 seconds max
         response = client.chat.completions.create(
             model=GPT_SUMMARY_MODEL,
             messages=[
@@ -80,9 +86,12 @@ def summarize_with_gpt(text):
             temperature=0.3,
             max_tokens=300
         )
+        signal.alarm(0)
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"[GPT error] {str(e)}"
+        signal.alarm(0)
+        print(f"[GPT error] {str(e)}")
+        return "No summary available due to an error."
 
 def summarize_with_gpt_cached(summarize_fn):
     cache_file = "summary_cache.json"
@@ -122,6 +131,8 @@ Respond with only the category name.
 
 def classify_threat_type(text):
     try:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(10)
         response = client.chat.completions.create(
             model=GPT_CLASSIFY_MODEL,
             messages=[
@@ -131,6 +142,7 @@ def classify_threat_type(text):
             temperature=0,
             max_tokens=10
         )
+        signal.alarm(0)
         label = response.choices[0].message.content.strip()
         if label not in [
             "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
@@ -139,6 +151,7 @@ def classify_threat_type(text):
             return "Unclassified"
         return label
     except Exception as e:
+        signal.alarm(0)
         print(f"❌ Threat type classification error: {e}")
         return "Unclassified"
 
@@ -173,6 +186,8 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
 
     try:
         telegram_alerts = scrape_telegram_messages()
+        if not telegram_alerts or not isinstance(telegram_alerts, list):
+            telegram_alerts = []
         for tg in telegram_alerts:
             if region and isinstance(region, str) and region.lower() not in tg["summary"].lower():
                 continue
@@ -282,13 +297,17 @@ Based on global intelligence patterns, provide a realistic and professional advi
 Output in plain text. Language: {lang}
 """
     try:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(20)
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4
         )
+        signal.alarm(0)
         return response.choices[0].message.content.strip()
     except Exception as e:
+        signal.alarm(0)
         return f"⚠️ Fallback error: {str(e)}"
 
 # ✅ Wrap for caching

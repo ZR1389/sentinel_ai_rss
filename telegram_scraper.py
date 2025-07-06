@@ -2,6 +2,8 @@ from telethon.sync import TelegramClient
 from telethon.tl.types import PeerChannel
 from datetime import datetime, timedelta, timezone
 import json
+import os
+import sys
 
 # Your API credentials
 api_id = 25094393
@@ -74,32 +76,41 @@ def detect_region(text):
 
 def scrape_telegram_messages():
     alerts = []
-    with TelegramClient(session_name, api_id, api_hash) as client:
-        for username in channels:
-            print(f"Scraping channel: {username}")
-            try:
-                entity = client.get_entity(username)
-                messages = client.iter_messages(entity, limit=30)
+    # --- PATCH: Skip prompting for credentials in non-interactive environments ---
+    try:
+        # If neither an existing session nor required env variable exists, skip scraping
+        if not os.path.exists(session_name + ".session") and not (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_API_ID")):
+            print("⚠️ Telegram session or credentials not set. Skipping Telegram scraping.")
+            return []
+        with TelegramClient(session_name, api_id, api_hash) as client:
+            for username in channels:
+                print(f"Scraping channel: {username}")
+                try:
+                    entity = client.get_entity(username)
+                    messages = client.iter_messages(entity, limit=30)
 
-                for msg in messages:
-                    if msg.date < datetime.now(timezone.utc) - timedelta(hours=24):
-                        continue
-                    if msg.message:
-                        content = msg.message.lower()
-                        if any(k.lower() in content for k in THREAT_KEYWORDS):
-                            alert = {
-                                "title": f"Telegram Post: {username}",
-                                "summary": msg.message,
-                                "link": f"https://t.me/{username}/{msg.id}",
-                                "source": "Telegram",
-                                "region": detect_region(msg.message),
-                                "language": "en",
-                                "timestamp": msg.date.isoformat()
-                            }
-                            alerts.append(alert)
-            except Exception as e:
-                print(f"Error with channel {username}: {e}")
-
+                    for msg in messages:
+                        if msg.date < datetime.now(timezone.utc) - timedelta(hours=24):
+                            continue
+                        if msg.message:
+                            content = msg.message.lower()
+                            if any(k.lower() in content for k in THREAT_KEYWORDS):
+                                alert = {
+                                    "title": f"Telegram Post: {username}",
+                                    "summary": msg.message,
+                                    "link": f"https://t.me/{username}/{msg.id}",
+                                    "source": "Telegram",
+                                    "region": detect_region(msg.message),
+                                    "language": "en",
+                                    "timestamp": msg.date.isoformat()
+                                }
+                                alerts.append(alert)
+                except Exception as e:
+                    print(f"Error with channel {username}: {e}")
+    except Exception as e:
+        print(f"Telegram client setup failed: {e}")
+        return []
+    # --- END PATCH ---
     return alerts
 
 # Run test
