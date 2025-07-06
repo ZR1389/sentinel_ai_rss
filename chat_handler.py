@@ -12,18 +12,14 @@ from advisor import generate_advice
 from clients import get_plan
 
 USAGE_FILE = "usage_log.json"
-# Cache for API responses to improve speed
 RESPONSE_CACHE = {}
 
 load_dotenv()
-# Configure OpenAI API
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)
 
-# -------------------------
-# Load & Save Usage
-# -------------------------
 def load_usage_data():
     if not os.path.exists(USAGE_FILE):
         return {}
@@ -37,14 +33,11 @@ def save_usage_data(data):
     with open(USAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# -------------------------
-# Usage Limit Enforcement
-# -------------------------
 PLAN_LIMITS = {
     "Free": {"chat_limit": 3},
     "Basic": {"chat_limit": 100},
     "Pro": {"chat_limit": 500},
-    "VIP": {"chat_limit": None},  # Unlimited
+    "VIP": {"chat_limit": None},
 }
 
 def check_usage_allowed(email, plan):
@@ -52,9 +45,7 @@ def check_usage_allowed(email, plan):
     today = datetime.utcnow().strftime("%Y-%m-%d")
     usage_today = usage_data.get(email, {}).get(today, 0)
     limit = PLAN_LIMITS.get(plan, {}).get("chat_limit")
-    if limit is None:
-        return True
-    return usage_today < limit
+    return usage_today < limit if limit is not None else True
 
 def increment_usage(email):
     usage_data = load_usage_data()
@@ -66,12 +57,9 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
-# -------------------------
-# Translation Support with OpenAI
-# -------------------------
 def translate_text(text, target_lang="en"):
     max_retries = 3
-    retry_delay = 4  # Initial delay in seconds
+    retry_delay = 4
     for attempt in range(max_retries):
         try:
             if not isinstance(text, str):
@@ -93,23 +81,20 @@ def translate_text(text, target_lang="en"):
             print(f"Translation error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
+                retry_delay *= 2
             else:
                 return f"[Translation error: {str(e)}]"
 
-# -------------------------
-# MAIN ENTRY POINT
-# -------------------------
 def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
-    plan = get_plan(email) or plan or "Free"
+    plan_raw = get_plan(email) or plan or "Free"
+    plan = plan_raw if isinstance(plan_raw, str) else "Free"
+    plan = plan.strip().capitalize()
     print(f"Plan: {plan}")
 
-    # Extract query from message dictionary
     query = message.get("query", "") if isinstance(message, dict) else str(message)
     print(f"Query content: {query}")
 
-    # Handle status/plan requests
     if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
@@ -127,7 +112,6 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     increment_usage(email)
     print("Usage incremented")
 
-    # Check cache
     cache_key = f"{query}_{lang}_{region}_{threat_type}_{plan}"
     if cache_key in RESPONSE_CACHE:
         print("Returning cached response")
@@ -138,7 +122,6 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
 
     if not raw_alerts:
         if plan in ["Pro", "VIP"]:
-            # GPT-4 fallback (intelligent, Zika-style)
             context = (
                 f"No live alerts available, but the user asked: '{query}'\n"
                 f"Region: {region or 'Unspecified'}\n"
@@ -184,7 +167,6 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             RESPONSE_CACHE[cache_key] = result
             return result
         else:
-            # Static fallback from risk_profiles.json
             region_data = risk_profiles.get(region, {})
             fallback = region_data.get(lang) or region_data.get("en", "No alerts right now. Stay aware and consult regional sources.")
             translated = translate_text(fallback, lang)
@@ -196,7 +178,6 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             RESPONSE_CACHE[cache_key] = result
             return result
 
-    # Process raw alerts
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
     print("Summaries generated")
