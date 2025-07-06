@@ -1,5 +1,3 @@
-# main.py ✅ WORKING TELEGRAM PLAN CHECK VIA GPT
-
 import os
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -37,24 +35,29 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
-        data = json.loads(body)
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            print(f"💥 Error in /chat handler: Invalid JSON - {str(e)}")
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Invalid JSON format"}).encode("utf-8"))
+            return
 
         if self.path == "/chat":
             print("📩 Incoming /chat request...")
             auth_token = self.headers.get("Authorization")
             if not auth_token:
                 print("❌ Missing token")
-                self.send_response(401)
-                self.end_headers()
-                self.wfile.write(b'{"error": "Missing Authorization token"}')
+                self._set_headers(401)
+                self.wfile.write(json.dumps({"error": "Missing Authorization token"}).encode("utf-8"))
                 return
 
             user_plan = TOKEN_TO_PLAN.get(auth_token)
             if not user_plan:
                 print("❌ Invalid token")
-                self.send_response(403)
-                self.end_headers()
-                self.wfile.write(b'{"error": "Invalid or unauthorized token"}')
+                self._set_headers(403)
+                self.wfile.write(json.dumps({"error": "Invalid or unauthorized token"}).encode("utf-8"))
                 return
 
             try:
@@ -79,9 +82,8 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(result).encode("utf-8"))
 
             except Exception as e:
-                print("💥 Error in /chat handler:", str(e))
-                self.send_response(500)
-                self.end_headers()
+                print(f"💥 Error in /chat handler: {str(e)}")
+                self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
         elif self.path == "/request_report":

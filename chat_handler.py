@@ -1,6 +1,5 @@
 import json
 import os
-import asyncio
 import time
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -70,7 +69,7 @@ def increment_usage(email):
 # -------------------------
 # Translation Support with OpenAI
 # -------------------------
-async def translate_text(text, target_lang="en"):
+def translate_text(text, target_lang="en"):
     max_retries = 3
     retry_delay = 4  # Initial delay in seconds
     for attempt in range(max_retries):
@@ -80,7 +79,7 @@ async def translate_text(text, target_lang="en"):
             text = text.strip()
             if target_lang == "en" or not text:
                 return text
-            response = await client.chat.completions.acreate(
+            response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": f"Translate the following text into {target_lang} with cultural accuracy."},
@@ -93,7 +92,7 @@ async def translate_text(text, target_lang="en"):
         except Exception as e:
             print(f"Translation error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
+                time.sleep(retry_delay)
                 retry_delay *= 2  # Exponential backoff
             else:
                 return f"[Translation error: {str(e)}]"
@@ -101,7 +100,7 @@ async def translate_text(text, target_lang="en"):
 # -------------------------
 # MAIN ENTRY POINT
 # -------------------------
-async def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
+def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan = get_plan(email) or plan or "Free"
     print(f"Plan: {plan}")
@@ -116,7 +115,7 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
 
     if not check_usage_allowed(email, plan):
         print("Usage limit reached")
-        translated_error = await translate_text(
+        translated_error = translate_text(
             "❌ You reached your monthly message quota. Please upgrade to get more access.", lang
         )
         return {
@@ -150,7 +149,7 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
             retry_delay = 4
             for attempt in range(max_retries):
                 try:
-                    response = await client.chat.completions.acreate(
+                    response = client.chat.completions.create(
                         model="gpt-4",
                         messages=[
                             {
@@ -171,12 +170,12 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
                 except Exception as e:
                     print(f"Fallback error (attempt {attempt + 1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(retry_delay)
+                        time.sleep(retry_delay)
                         retry_delay *= 2
                     else:
                         fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
 
-            translated_fallback = await translate_text(fallback, lang)
+            translated_fallback = translate_text(fallback, lang)
             result = {
                 "reply": translated_fallback,
                 "plan": plan,
@@ -188,7 +187,7 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
             # Static fallback from risk_profiles.json
             region_data = risk_profiles.get(region, {})
             fallback = region_data.get(lang) or region_data.get("en", "No alerts right now. Stay aware and consult regional sources.")
-            translated = await translate_text(fallback, lang)
+            translated = translate_text(fallback, lang)
             result = {
                 "reply": translated,
                 "plan": plan,
@@ -202,7 +201,7 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
     summaries = summarize_alerts(raw_alerts)
     print("Summaries generated")
 
-    translated_summaries = [await translate_text(summary, lang) for summary in summaries]
+    translated_summaries = [translate_text(summary, lang) for summary in summaries]
     print(f"Summaries translated to {lang}")
 
     results = []
@@ -212,13 +211,13 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
             "summary": alert.get("summary", ""),
             "link": alert.get("link", ""),
             "source": alert.get("source", ""),
-            "type": await translate_text(alert.get("type", ""), lang),
+            "type": translate_text(alert.get("type", ""), lang),
             "level": threat_scores[i],
             "gpt_summary": translated_summaries[i]
         })
 
     fallback = generate_advice(query, raw_alerts)
-    translated_fallback = await translate_text(fallback, lang)
+    translated_fallback = translate_text(fallback, lang)
     print("Fallback advice generated and translated")
 
     result = {
