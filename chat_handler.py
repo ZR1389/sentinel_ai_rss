@@ -17,8 +17,8 @@ USAGE_FILE = "usage_log.json"
 RESPONSE_CACHE = {}
 
 load_dotenv()
-# Configure xAI API (OpenAI-compatible)
-client = OpenAI(api_key=os.getenv("XAI_API_KEY"), base_url="https://api.x.ai/v1")
+# Configure OpenAI API
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)
 
@@ -68,7 +68,7 @@ def increment_usage(email):
     save_usage_data(usage_data)
 
 # -------------------------
-# Translation Support with Grok 3
+# Translation Support with OpenAI
 # -------------------------
 async def translate_text(text, target_lang="en"):
     max_retries = 3
@@ -81,7 +81,7 @@ async def translate_text(text, target_lang="en"):
             if target_lang == "en" or not text:
                 return text
             response = await client.chat.completions.acreate(
-                model="grok-3",
+                model="gpt-4",
                 messages=[
                     {"role": "system", "content": f"Translate the following text into {target_lang} with cultural accuracy."},
                     {"role": "user", "content": text}
@@ -139,7 +139,7 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
 
     if not raw_alerts:
         if plan in ["Pro", "VIP"]:
-            # Grok 3 fallback (intelligent, Zika-style)
+            # GPT-4 fallback (intelligent, Zika-style)
             context = (
                 f"No live alerts available, but the user asked: '{query}'\n"
                 f"Region: {region or 'Unspecified'}\n"
@@ -151,7 +151,7 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
             for attempt in range(max_retries):
                 try:
                     response = await client.chat.completions.acreate(
-                        model="grok-3",
+                        model="gpt-4",
                         messages=[
                             {
                                 "role": "system",
