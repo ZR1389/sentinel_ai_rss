@@ -1,27 +1,29 @@
-.env
-.env
-__pycache__/
-*.pyc
-reports/
-# Sentinel AI local/temporary files
-generate_vapid.py
-subscribers.json
-
-# Python artifacts
+# Python
 __pycache__/
 *.py[cod]
-*.env
 *.log
 
-# MacOS cruft
-.DS_Store
+# Environment files
+.env
 
-# Output folders
+# Virtual environment
+venv/
+
+# Output
 /reports/
-/venv/
 /*.pdf
+
+# Local Sentinel AI files
+generate_vapid.py
+subscribers.json
 
 # Editor backups
 *.swp
 *.bak
 
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/

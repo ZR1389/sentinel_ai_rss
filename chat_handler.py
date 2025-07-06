@@ -101,7 +101,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     if not check_usage_allowed(email, plan):
         print("Usage limit reached")
         translated_error = translate_text(
-            "❌ You reached your monthly message quota. Please upgrade to get more access.", lang
+            "You reached your monthly message quota. Please upgrade to get more access.", lang
         )
         return {
             "reply": translated_error,

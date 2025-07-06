@@ -6,10 +6,12 @@ from chat_handler import handle_user_query
 from email_dispatcher import generate_translated_pdf
 from flask_cors import CORS
 
-load_dotenv()
-
+# Flask app
 app = Flask(__name__)
 CORS(app)
+
+load_dotenv()
+
 PORT = int(os.getenv("PORT", 8080))
 
 @app.route("/chat", methods=["POST", "OPTIONS"])
@@ -19,7 +21,7 @@ def chat():
 
     try:
         data = request.get_json(force=True)
-        print("📩 Incoming /chat request...")
+        print("Incoming /chat request...")
 
         query = data.get("query", "")
         email = data.get("email", "anonymous")
@@ -28,7 +30,7 @@ def chat():
         threat_type = data.get("type", "All")
         plan = data.get("plan", "Free")
 
-        print(f"🧠 Processing chat: plan={plan}, region={region}, type={threat_type}")
+        print(f"Processing chat: plan={plan}, region={region}, type={threat_type}")
         region = str(region) if not isinstance(region, str) else region
         threat_type = str(threat_type) if not isinstance(threat_type, str) else threat_type
         plan = str(plan).capitalize()
@@ -46,9 +48,9 @@ def chat():
         return _build_cors_response(jsonify(result))
 
     except Exception as e:
-        print(f"💥 Error in /chat handler: {e}")
+        print(f"Error in /chat handler: {e}")
         return _build_cors_response(jsonify({
-            "reply": f"❌ Advisory engine error: {str(e)}",
+            "reply": f"Advisory engine error: {str(e)}",
             "plan": "Unknown",
             "alerts": []
         })), 500
@@ -76,14 +78,14 @@ def request_report():
         generate_translated_pdf(email, alerts, plan, lang)
 
         return _build_cors_response(jsonify({
-            "status": "✅ Report generated and sent",
+            "status": "Report generated and sent",
             "alerts_included": len(alerts)
         }))
 
     except Exception as e:
         print(f"💥 Report generation error: {e}")
         return _build_cors_response(jsonify({
-            "status": f"❌ Failed to generate report: {str(e)}"
+            "status": f"Failed to generate report: {str(e)}"
         })), 500
 
 def _build_cors_response(response=None):
@@ -98,6 +100,7 @@ def _build_cors_response(response=None):
     return response
 
 if __name__ == "__main__":
-    print(f"🛡️ Loaded TOKEN_TO_PLAN map: {{'sentinel_free_2025': 'FREE', 'sentinel_basic_2025': 'BASIC', 'sentinel_pro_2025': 'PRO', 'sentinel_vip_2025': 'VIP'}}")
+    print(f"Loaded TOKEN_TO_PLAN map: {{'sentinel_free_2025': 'FREE', 'sentinel_basic_2025': 'BASIC', 'sentinel_pro_2025': 'PRO', 'sentinel_vip_2025': 'VIP'}}")
     print(f"Sentinel AI server running on port {PORT}")
-    app.run(host="0.0.0.0", port=PORT)
+    # Only run this for local dev testing
+    # app.run(host="0.0.0.0", port=PORT)

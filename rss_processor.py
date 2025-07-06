@@ -55,7 +55,6 @@ FEEDS = [
     "https://www.aljazeera.com/xml/rss/all.xml",
     "https://www.france24.com/en/rss",
     "https://www.gov.uk/foreign-travel-advice.atom",
-    "https://www.gdacs.org/xml/rss.xml",
 ]
 
 load_dotenv()

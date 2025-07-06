@@ -8,5 +8,7 @@ pyasn1==0.6.1
 rsa==4.9.1
 Telethon==1.40.0
 requests==2.31.0
-flask
-flask-cors
+flask==3.0.3
+flask-cors==4.0.1
+gunicorn==23.0.0
+
