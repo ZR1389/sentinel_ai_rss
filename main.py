@@ -8,7 +8,7 @@ from flask_cors import CORS
 
 # Flask app
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "https://zikarisk.com"}}, allow_headers=["Authorization", "Content-Type"])
 
 load_dotenv()
 
