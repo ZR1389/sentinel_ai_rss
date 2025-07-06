@@ -116,6 +116,14 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     if cache_key in RESPONSE_CACHE:
         print("Returning cached response")
         return RESPONSE_CACHE[cache_key]
+    
+    if not isinstance(region, str):
+       print(f"[!] Warning: region was not a string: {region}")
+       region = "All Regions"
+
+    if not isinstance(threat_type, str):
+       print(f"[!] Warning: threat_type was not a string: {threat_type}")
+       threat_type = "All Threats"
 
     raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
