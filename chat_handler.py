@@ -3,6 +3,8 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 from datetime import datetime
+import asyncio
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
@@ -11,9 +13,12 @@ from advisor import generate_advice
 from clients import get_plan
 
 USAGE_FILE = "usage_log.json"
+# Cache for API responses to improve speed
+RESPONSE_CACHE = {}
 
 load_dotenv()
-client = OpenAI()
+# Configure xAI API (OpenAI-compatible)
+client = OpenAI(api_key=os.getenv("XAI_API_KEY"), base_url="https://api.x.ai/v1")
 with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)
 
@@ -63,9 +68,10 @@ def increment_usage(email):
     save_usage_data(usage_data)
 
 # -------------------------
-# Translation Support
+# Translation Support with Grok 3
 # -------------------------
-def translate_text(text, target_lang="en"):
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def translate_text(text, target_lang="en"):
     try:
         if not isinstance(text, str):
             text = str(text)
@@ -73,13 +79,14 @@ def translate_text(text, target_lang="en"):
         if target_lang == "en" or not text:
             return text
 
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = await client.chat.completions.create(
+            model="grok-3",
             messages=[
-                {"role": "system", "content": f"Translate the following text into {target_lang}."},
+                {"role": "system", "content": f"Translate the following text into {target_lang} with cultural accuracy."},
                 {"role": "user", "content": text}
             ],
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=200
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -89,20 +96,26 @@ def translate_text(text, target_lang="en"):
 # -------------------------
 # MAIN ENTRY POINT
 # -------------------------
-def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
-    print(f"TYPE OF message: {type(message)}")
-    print(f"MESSAGE content: {message}")
+async def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
-    plan = get_plan(email)
+    plan = get_plan(email) or plan or "Free"
     print(f"Plan: {plan}")
 
-    if str(message).lower().strip() in ["status", "plan"]:
+    # Extract query from message dictionary
+    query = message.get("query", "") if isinstance(message, dict) else str(message)
+    print(f"Query content: {query}")
+
+    # Handle status/plan requests
+    if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
     if not check_usage_allowed(email, plan):
         print("Usage limit reached")
+        translated_error = await translate_text(
+            "❌ You reached your monthly message quota. Please upgrade to get more access.", lang
+        )
         return {
-            "reply": "❌ You reached your monthly message quota. Please upgrade to get more access.",
+            "reply": translated_error,
             "plan": plan,
             "alerts": []
         }
@@ -110,31 +123,37 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     increment_usage(email)
     print("Usage incremented")
 
+    # Check cache
+    cache_key = f"{query}_{lang}_{region}_{threat_type}_{plan}"
+    if cache_key in RESPONSE_CACHE:
+        print("Returning cached response")
+        return RESPONSE_CACHE[cache_key]
+
     raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
 
     if not raw_alerts:
-        if plan in ["PRO", "VIP"]:
-            # GPT fallback (intelligent, Zika-style)
-            context = f"""
-            No live alerts available, but the user asked: "{message}"
-            Region: {region or 'Unspecified'}
-            Threat Type: {threat_type or 'Unspecified'}
-            Based on professional security logic, provide clear, field-tested travel advisory.
-            Use a tone that is expert, direct, and realistic — like Zika Rakita would speak.
-            """
+        if plan in ["Pro", "VIP"]:
+            # Grok 3 fallback (intelligent, Zika-style)
+            context = (
+                f"No live alerts available, but the user asked: '{query}'\n"
+                f"Region: {region or 'Unspecified'}\n"
+                f"Threat Type: {threat_type or 'Unspecified'}\n"
+                f"Based on professional security logic, provide clear, field-tested travel advisory."
+            )
             try:
-                response = client.chat.completions.create(
-                    model="gpt-4",
+                response = await client.chat.completions.create(
+                    model="grok-3",
                     messages=[
                         {
                             "role": "system",
-                            "content": "You're a seasoned travel risk advisor trained by Zika Rakita. Deliver professional advice using his tone, logic, and field-tested wisdom."
+                            "content": (
+                                "You're Zika Rakita, a global security advisor with 20+ years of experience. "
+                                "Deliver professional travel security advice using a direct, realistic tone. "
+                                "Incorporate general security knowledge and static risk profiles if needed."
+                            )
                         },
-                        {
-                            "role": "user",
-                            "content": context
-                        }
+                        {"role": "user", "content": context}
                     ],
                     temperature=0.4,
                     max_tokens=400
@@ -143,29 +162,33 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             except Exception as e:
                 fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
 
-            translated_fallback = translate_text(fallback, lang)
-            return {
+            translated_fallback = await translate_text(fallback, lang)
+            result = {
                 "reply": translated_fallback,
                 "plan": plan,
                 "alerts": []
             }
+            RESPONSE_CACHE[cache_key] = result
+            return result
         else:
             # Static fallback from risk_profiles.json
             region_data = risk_profiles.get(region, {})
-            fallback = region_data.get(lang) or region_data.get("en")
-            translated = fallback or "No alerts right now. Stay aware and consult regional sources."
-            return {
+            fallback = region_data.get(lang) or region_data.get("en", "No alerts right now. Stay aware and consult regional sources.")
+            translated = await translate_text(fallback, lang)
+            result = {
                 "reply": translated,
                 "plan": plan,
                 "alerts": []
             }
+            RESPONSE_CACHE[cache_key] = result
+            return result
 
     # Process raw alerts
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
     print("Summaries generated")
 
-    translated_summaries = [translate_text(summary, lang) for summary in summaries]
+    translated_summaries = [await translate_text(summary, lang) for summary in summaries]
     print(f"Summaries translated to {lang}")
 
     results = []
@@ -175,17 +198,19 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             "summary": alert.get("summary", ""),
             "link": alert.get("link", ""),
             "source": alert.get("source", ""),
-            "type": translate_text(alert.get("type", ""), lang),
+            "type": await translate_text(alert.get("type", ""), lang),
             "level": threat_scores[i],
             "gpt_summary": translated_summaries[i]
         })
 
-    fallback = generate_advice(message, raw_alerts)
-    translated_fallback = translate_text(fallback, lang)
+    fallback = generate_advice(query, raw_alerts)
+    translated_fallback = await translate_text(fallback, lang)
     print("Fallback advice generated and translated")
 
-    return {
+    result = {
         "reply": translated_fallback,
         "plan": plan,
         "alerts": results
     }
+    RESPONSE_CACHE[cache_key] = result
+    return result
