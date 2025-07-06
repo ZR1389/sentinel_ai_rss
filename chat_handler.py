@@ -1,10 +1,10 @@
 import json
 import os
+import asyncio
+import time
 from dotenv import load_dotenv
 from openai import OpenAI
 from datetime import datetime
-import asyncio
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
@@ -70,28 +70,33 @@ def increment_usage(email):
 # -------------------------
 # Translation Support with Grok 3
 # -------------------------
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def translate_text(text, target_lang="en"):
-    try:
-        if not isinstance(text, str):
-            text = str(text)
-        text = text.strip()
-        if target_lang == "en" or not text:
-            return text
-
-        response = await client.chat.completions.create(
-            model="grok-3",
-            messages=[
-                {"role": "system", "content": f"Translate the following text into {target_lang} with cultural accuracy."},
-                {"role": "user", "content": text}
-            ],
-            temperature=0.3,
-            max_tokens=200
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"Translation error: {e}")
-        return f"[Translation error: {str(e)}]"
+    max_retries = 3
+    retry_delay = 4  # Initial delay in seconds
+    for attempt in range(max_retries):
+        try:
+            if not isinstance(text, str):
+                text = str(text)
+            text = text.strip()
+            if target_lang == "en" or not text:
+                return text
+            response = await client.chat.completions.acreate(
+                model="grok-3",
+                messages=[
+                    {"role": "system", "content": f"Translate the following text into {target_lang} with cultural accuracy."},
+                    {"role": "user", "content": text}
+                ],
+                temperature=0.3,
+                max_tokens=200
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Translation error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                return f"[Translation error: {str(e)}]"
 
 # -------------------------
 # MAIN ENTRY POINT
@@ -141,26 +146,35 @@ async def handle_user_query(message, email, lang="en", region=None, threat_type=
                 f"Threat Type: {threat_type or 'Unspecified'}\n"
                 f"Based on professional security logic, provide clear, field-tested travel advisory."
             )
-            try:
-                response = await client.chat.completions.create(
-                    model="grok-3",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You're Zika Rakita, a global security advisor with 20+ years of experience. "
-                                "Deliver professional travel security advice using a direct, realistic tone. "
-                                "Incorporate general security knowledge and static risk profiles if needed."
-                            )
-                        },
-                        {"role": "user", "content": context}
-                    ],
-                    temperature=0.4,
-                    max_tokens=400
-                )
-                fallback = response.choices[0].message.content.strip()
-            except Exception as e:
-                fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
+            max_retries = 3
+            retry_delay = 4
+            for attempt in range(max_retries):
+                try:
+                    response = await client.chat.completions.acreate(
+                        model="grok-3",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You're Zika Rakita, a global security advisor with 20+ years of experience. "
+                                    "Deliver professional travel security advice using a direct, realistic tone. "
+                                    "Incorporate general security knowledge and static risk profiles if needed."
+                                )
+                            },
+                            {"role": "user", "content": context}
+                        ],
+                        temperature=0.4,
+                        max_tokens=400
+                    )
+                    fallback = response.choices[0].message.content.strip()
+                    break
+                except Exception as e:
+                    print(f"Fallback error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                    else:
+                        fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
 
             translated_fallback = await translate_text(fallback, lang)
             result = {
