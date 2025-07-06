@@ -12,11 +12,8 @@ from openai import OpenAI
 from hashlib import sha256
 from pathlib import Path
 
-from telegram_scraper import scrape_telegram_messages  # NEW
+from telegram_scraper import scrape_telegram_messages
 
-# -------------------------------
-# 🚨 THREAT KEYWORDS (intelligence-grade)
-# -------------------------------
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
     "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
@@ -39,9 +36,6 @@ KEYWORD_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# -------------------------------
-# ALL RSS FEEDS
-# -------------------------------
 FEEDS = [
     "https://www.cisa.gov/news.xml",
     "https://feeds.bbci.co.uk/news/uk/rss.xml",
@@ -62,32 +56,8 @@ FEEDS = [
     "https://www.france24.com/en/rss",
     "https://www.gov.uk/foreign-travel-advice.atom",
     "https://www.gdacs.org/xml/rss.xml",
-
-    "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
-    "https://africatimes.com/feed/",
-    "https://adf-magazine.com/feed/",
-    
-    "https://en.mercopress.com/rss",
-    "https://insightcrime.org/feed/",
-    "https://www.telesurenglish.net/rss",
-  
-    "https://www.aljazeera.com/xml/rss/all.xml",
-    "https://www.middleeasteye.net/rss",
-    "https://english.aawsat.com/home/rss",
-
-    "https://asiatimes.com/feed/",
-    "https://thediplomat.com/feed/",
-    "https://www.scmp.com/rss/91/feed",
-
-    "https://www.euronews.com/rss?level=theme&name=news",
-    "https://feeds.bbci.co.uk/news/world/europe/rss.xml",
-    "https://euobserver.com/rss",
-
 ]
 
-# -------------------------------
-# GPT SETUP
-# -------------------------------
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
@@ -149,10 +119,6 @@ Classify the threat type based on the following news headline and summary. Choos
 - Health
 - Unclassified
 Respond with only the category name.
-Example:
-Input: "Hacking group hits hospital IT system"
-Output: Cyber
-Now classify this:
 """
 
 def classify_threat_type(text):
@@ -167,12 +133,14 @@ def classify_threat_type(text):
             max_tokens=10
         )
         label = response.choices[0].message.content.strip()
-        if label not in ["Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
-                         "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"]:
+        if label not in [
+            "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
+            "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
+        ]:
             return "Unclassified"
         return label
     except Exception as e:
-        print(f"\u274c Threat type classification error: {e}")
+        print(f"❌ Threat type classification error: {e}")
         return "Unclassified"
 
 def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
@@ -181,27 +149,35 @@ def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
         try:
             response = httpx.get(url, timeout=timeout)
             if response.status_code == 200:
-                print(f"\u2705 Fetched: {url}")
+                print(f"✅ Fetched: {url}")
                 return feedparser.parse(response.content.decode('utf-8', errors='ignore')), url
             else:
-                print(f"\u26a0\ufe0f Feed returned {response.status_code}: {url}")
+                print(f"⚠️ Feed returned {response.status_code}: {url}")
         except Exception as e:
-            print(f"\u274c Attempt {attempt + 1} failed for {url} — {e}")
+            print(f"❌ Attempt {attempt + 1} failed for {url} — {e}")
         attempt += 1
         time.sleep(backoff ** attempt)
-    print(f"\u274c Failed to fetch after {retries} retries: {url}")
+    print(f"❌ Failed to fetch after {retries} retries: {url}")
     return None, url
 
 def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
 
+    # 🛡 Sanitize inputs
+    if not isinstance(region, str):
+        print(f"[!] Invalid region type: {type(region)} — Defaulting to 'All'")
+        region = "All"
+    if not isinstance(topic, str):
+        print(f"[!] Invalid topic type: {type(topic)} — Defaulting to 'All'")
+        topic = "All"
+
     try:
         telegram_alerts = scrape_telegram_messages()
         for tg in telegram_alerts:
-            if region and region.lower() not in tg["summary"].lower():
+            if region and isinstance(region, str) and region.lower() not in tg["summary"].lower():
                 continue
-            if topic and topic.lower() not in tg["summary"].lower():
+            if topic and isinstance(topic, str) and topic.lower() not in tg["summary"].lower():
                 continue
 
             gpt_summary = summarize_with_gpt(tg["summary"]) if summarize else None
@@ -217,10 +193,10 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
-                print(f"\u2705 Parsed {len(alerts)} alerts.")
+                print(f"✅ Parsed {len(alerts)} alerts.")
                 return alerts
     except Exception as e:
-        print(f"\u274c Telegram scrape failed: {e}")
+        print(f"❌ Telegram scrape failed: {e}")
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(fetch_feed, FEEDS))
@@ -237,9 +213,9 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             link = entry.get("link", "").strip()
             full_text = f"{title}: {summary}"
 
-            if region and region.lower() not in full_text.lower():
+            if region and isinstance(region, str) and region.lower() not in full_text.lower():
                 continue
-            if topic and topic.lower() not in full_text.lower():
+            if topic and isinstance(topic, str) and topic.lower() not in full_text.lower():
                 continue
             if not KEYWORD_PATTERN.search(full_text):
                 continue
@@ -262,21 +238,10 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             })
 
             if len(alerts) >= limit:
-                print(f"\u2705 Parsed {len(alerts)} alerts.")
+                print(f"✅ Parsed {len(alerts)} alerts.")
                 return alerts
 
-    print(f"\u2705 Parsed {len(alerts)} alerts.")
-    # ✅ Filter alerts by region and topic
-    if region or topic:
-        filtered = []
-        for alert in alerts:
-            if region and alert.get("region", "").strip() != region:
-                continue
-            if topic and alert.get("type", "").strip() != topic:
-                continue
-            filtered.append(alert)
-        return filtered[:limit]
-    
+    print(f"✅ Parsed {len(alerts)} alerts.")
     return alerts[:limit]
 
 def get_clean_alerts_cached(get_clean_alerts_fn):
@@ -301,11 +266,10 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
         alerts = get_clean_alerts_fn(*args, **kwargs)
         with open(cache_path, "w") as f:
             json.dump(alerts, f, indent=2)
-        print(f"\u2705 Saved {len(alerts)} alerts to cache: {cache_path}")
+        print(f"✅ Saved {len(alerts)} alerts to cache: {cache_path}")
         return alerts
 
     return wrapper
-
 
 def generate_fallback_summary(region, threat_type, lang="en"):
     prompt = f"""
@@ -328,8 +292,7 @@ Output in plain text. Language: {lang}
     except Exception as e:
         return f"⚠️ Fallback error: {str(e)}"
 
-
-# Apply wrappers
+# ✅ Wrap for caching
 summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 
