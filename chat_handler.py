@@ -88,8 +88,7 @@ def translate_text(text, target_lang="en"):
 def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan_raw = get_plan(email) or plan or "Free"
-    plan = plan_raw if isinstance(plan_raw, str) else "Free"
-    plan = plan.strip().capitalize()
+    plan = plan_raw.upper() if isinstance(plan_raw, str) else "FREE"
     print(f"Plan: {plan}")
 
     query = message.get("query", "") if isinstance(message, dict) else str(message)
@@ -131,7 +130,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     print(f"Alerts fetched: {len(raw_alerts)}")
 
     if not raw_alerts:
-        if plan in ["Pro", "VIP"]:
+        if plan in ["PRO", "VIP"]:
             context = (
                 f"No live alerts available, but the user asked: '{query}'\n"
                 f"Region: {region or 'Unspecified'}\n"
