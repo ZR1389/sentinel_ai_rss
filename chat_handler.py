@@ -90,6 +90,8 @@ def translate_text(text, target_lang="en"):
 # MAIN ENTRY POINT
 # -------------------------
 def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
+    print(f"TYPE OF message: {type(message)}")
+    print(f"MESSAGE content: {message}")
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan = get_plan(email)
     print(f"Plan: {plan}")
