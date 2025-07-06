@@ -100,7 +100,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     if not check_usage_allowed(email, plan):
         print("Usage limit reached")
         return {
-            "reply": "\u274c You reached your monthly message quota. Please upgrade to get more access.",
+            "reply": "❌ You reached your monthly message quota. Please upgrade to get more access.",
             "plan": plan,
             "alerts": []
         }
@@ -110,51 +110,55 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
 
     raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
-    
+
     if not raw_alerts:
         if plan in ["PRO", "VIP"]:
-            # Use GPT fallback
+            # GPT fallback (intelligent, Zika-style)
             context = f"""
-            There are no current alerts available from RSS feeds or Telegram.
-            However, the user is asking: "{message}"
-            Region: {region or 'unspecified'}
-            Threat type: {threat_type or 'unspecified'}
-            Based on your intelligence training, offer a professional travel risk advisory.
+            No live alerts available, but the user asked: "{message}"
+            Region: {region or 'Unspecified'}
+            Threat Type: {threat_type or 'Unspecified'}
+            Based on professional security logic, provide clear, field-tested travel advisory.
+            Use a tone that is expert, direct, and realistic — like Zika Rakita would speak.
             """
             try:
                 response = client.chat.completions.create(
                     model="gpt-4",
                     messages=[
-                        {"role": "system", "content": "You are a threat intelligence advisor. Provide realistic fallback guidance for travelers even when real-time alerts are missing."},
-                        {"role": "user", "content": context}
+                        {
+                            "role": "system",
+                            "content": "You're a seasoned travel risk advisor trained by Zika Rakita. Deliver professional advice using his tone, logic, and field-tested wisdom."
+                        },
+                        {
+                            "role": "user",
+                            "content": context
+                        }
                     ],
-                    temperature=0.5,
-                    max_tokens=300
+                    temperature=0.4,
+                    max_tokens=400
                 )
                 fallback = response.choices[0].message.content.strip()
             except Exception as e:
-                fallback = "⚠️ No current data available. Please consult official travel advisories."
+                fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
 
             translated_fallback = translate_text(fallback, lang)
-            print("No alerts — returning GPT fallback")
             return {
                 "reply": translated_fallback,
                 "plan": plan,
                 "alerts": []
             }
-
         else:
-            # Use static fallback from risk_profiles.json            
+            # Static fallback from risk_profiles.json
             region_data = risk_profiles.get(region, {})
             fallback = region_data.get(lang) or region_data.get("en")
-            translated = fallback or "No relevant alerts"
-            print("No alerts — returning static fallback")
+            translated = fallback or "No alerts right now. Stay aware and consult regional sources."
             return {
                 "reply": translated,
                 "plan": plan,
                 "alerts": []
             }
 
+    # Process raw alerts
     threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
     summaries = summarize_alerts(raw_alerts)
     print("Summaries generated")
