@@ -30,7 +30,7 @@ def normalize_threat_label(label):
 def assess_threat_level(alert_text):
     # Pre-check: Auto-score based on known critical terms
     for keyword in CRITICAL_KEYWORDS:
-        if keyword.lower() in alert_text.lower():
+        if isinstance(keyword, str) and keyword.lower() in alert_text.lower():
             return "Critical"
 
     # GPT logic

@@ -6,7 +6,7 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Set timeout here
 
 def translate_text(text, target_lang="en"):
-    if not text or target_lang.lower() == "en":
+    if not text or (isinstance(target_lang, str) and target_lang.lower() == "en"):
         return text  # No translation needed
     try:
         response = client.chat.completions.create(

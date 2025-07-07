@@ -12,6 +12,7 @@ from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from chat_handler import get_plan
 from translator import translate_text
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
 
@@ -20,7 +21,8 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT"))
 
-# Generate Translated PDF Report
+PDF_ALERT_LIMIT = 5  # Max alerts per PDF/report
+
 def generate_translated_pdf(email, alerts, plan, language="en"):
     class PDF(FPDF):
         def header(self):
@@ -71,20 +73,26 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
         else:
             return (100, 100, 100)
 
+    # Limit number of alerts and parallelize translation
+    alerts = alerts[:PDF_ALERT_LIMIT]
+
+    titles = [alert["title"] for alert in alerts]
+    summaries = [alert["summary"] for alert in alerts]
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        translated_titles = list(executor.map(lambda t: translate_text(t, target_lang=language), titles))
+        translated_summaries = list(executor.map(lambda s: translate_text(s, target_lang=language), summaries))
+        threat_levels = list(executor.map(lambda tup: assess_threat_level(f"{tup[0]}: {tup[1]}"),
+                                         zip(translated_titles, translated_summaries)))
+
     scored_alerts = []
-    for alert in alerts:
-        title = translate_text(alert["title"], target_lang=language)
-        summary = translate_text(alert["summary"], target_lang=language)
-        try:
-            level = assess_threat_level(f"{title}: {summary}")
-        except:
-            level = "Unrated"
+    for i, alert in enumerate(alerts):
         scored_alerts.append({
-            "title": title,
-            "summary": summary,
+            "title": translated_titles[i],
+            "summary": translated_summaries[i],
             "source": alert["source"],
             "link": alert["link"],
-            "level": level
+            "level": threat_levels[i]
         })
 
     pdf = PDF()
@@ -100,7 +108,6 @@ def generate_translated_pdf(email, alerts, plan, language="en"):
     pdf.output(filename)
     return filename
 
-# Email PDF to Client
 def send_pdf_report(email, plan, language="en"):
     if not PLAN_RULES.get(plan, {}).get("pdf", False):
         raise PermissionError(f"{plan} plan does not allow PDF report access.")
@@ -133,7 +140,6 @@ def send_pdf_report(email, plan, language="en"):
     os.remove(pdf_file)
     return True
 
-# Send to All Clients
 def send_daily_summaries():
     with open("clients.json", "r") as f:
         clients = json.load(f)

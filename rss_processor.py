@@ -69,6 +69,8 @@ If the user is not a subscriber, end with:
 “To receive personalized alerts, intelligence briefings, and emergency support, upgrade your access at zikarisk.com.”
 """
 
+SUMMARY_LIMIT = 5  # Max number of items to summarize per request
+
 def summarize_with_gpt(text):
     try:
         response = client.chat.completions.create(
@@ -160,11 +162,20 @@ def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
     print(f"❌ Failed to fetch after {retries} retries: {url}")
     return None, url
 
+def parallel_summarize_alerts(alerts, summarize_fn, limit=SUMMARY_LIMIT, max_workers=5):
+    to_summarize = alerts[:limit]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        summaries = list(executor.map(lambda alert: summarize_fn(alert["summary"]), to_summarize))
+    for i, alert in enumerate(to_summarize):
+        alert["gpt_summary"] = summaries[i]
+    for alert in alerts[limit:]:
+        alert["gpt_summary"] = f"Summary not generated (limit {limit} reached)"
+    return alerts
+
 def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
 
-    # 🛡 Sanitize inputs
     if not isinstance(region, str):
         print(f"[!] Invalid region type: {type(region)} — Defaulting to 'All'")
         region = "All"
@@ -177,26 +188,21 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
         if not telegram_alerts or not isinstance(telegram_alerts, list):
             telegram_alerts = []
         for tg in telegram_alerts:
-            if region and isinstance(region, str) and region.lower() not in tg["summary"].lower():
+            if region and isinstance(region, str) and region.lower() not in str(tg["summary"]).lower():
                 continue
-            if topic and isinstance(topic, str) and topic.lower() not in tg["summary"].lower():
+            if topic and isinstance(topic, str) and topic.lower() not in str(tg["summary"]).lower():
                 continue
-
-            gpt_summary = summarize_with_gpt(tg["summary"]) if summarize else None
-            threat_type = classify_threat_type(tg["summary"])
 
             alerts.append({
                 "title": tg["title"],
                 "summary": tg["summary"],
                 "link": tg["link"],
-                "source": tg["source"],
-                "gpt_summary": gpt_summary,
-                "type": threat_type
+                "source": tg["source"]
             })
 
             if len(alerts) >= limit:
                 print(f"✅ Parsed {len(alerts)} alerts.")
-                return alerts
+                break
     except Exception as e:
         print(f"❌ Telegram scrape failed: {e}")
 
@@ -215,9 +221,9 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             link = entry.get("link", "").strip()
             full_text = f"{title}: {summary}"
 
-            if region and isinstance(region, str) and region.lower() not in full_text.lower():
+            if region and isinstance(region, str) and region.lower() not in str(full_text).lower():
                 continue
-            if topic and isinstance(topic, str) and topic.lower() not in full_text.lower():
+            if topic and isinstance(topic, str) and topic.lower() not in str(full_text).lower():
                 continue
             if not KEYWORD_PATTERN.search(full_text):
                 continue
@@ -227,21 +233,28 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
                 continue
             seen.add(key)
 
-            gpt_summary = summarize_with_gpt(full_text) if summarize else None
-            threat_type = classify_threat_type(full_text)
-
             alerts.append({
                 "title": title,
                 "summary": summary,
                 "link": link,
-                "source": source_domain,
-                "gpt_summary": gpt_summary,
-                "type": threat_type
+                "source": source_domain
             })
 
             if len(alerts) >= limit:
                 print(f"✅ Parsed {len(alerts)} alerts.")
-                return alerts
+                break
+        if len(alerts) >= limit:
+            break
+
+    if summarize and alerts:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            threat_types = list(executor.map(lambda alert: classify_threat_type(alert["summary"]), alerts))
+        for i, alert in enumerate(alerts):
+            alert["type"] = threat_types[i]
+        alerts = parallel_summarize_alerts(alerts, summarize_with_gpt)
+    else:
+        for alert in alerts:
+            alert["type"] = classify_threat_type(alert["summary"])
 
     print(f"✅ Parsed {len(alerts)} alerts.")
     return alerts[:limit]
@@ -294,7 +307,6 @@ Output in plain text. Language: {lang}
     except Exception as e:
         return f"⚠️ Fallback error: {str(e)}"
 
-# ✅ Wrap for caching
 summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 

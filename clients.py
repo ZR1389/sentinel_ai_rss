@@ -11,6 +11,6 @@ def get_plan(email):
     with open(CLIENTS_FILE, "r") as f:
         clients = json.load(f)
     for client in clients:
-        if client["email"].lower() == email.lower():
+        if isinstance(client.get("email"), str) and client["email"].lower() == email.lower():
             return client.get("plan", "Free")
     return "Free"

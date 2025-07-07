@@ -4,6 +4,7 @@ import time
 from dotenv import load_dotenv
 from openai import OpenAI
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
@@ -15,8 +16,7 @@ USAGE_FILE = "usage_log.json"
 RESPONSE_CACHE = {}
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Set timeout here
-
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
 
 with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)
@@ -66,7 +66,7 @@ def translate_text(text, target_lang="en"):
             if not isinstance(text, str):
                 text = str(text)
             text = text.strip()
-            if target_lang == "en" or not text:
+            if not (isinstance(target_lang, str) and target_lang.lower() != "en"):
                 return text
             response = client.chat.completions.create(
                 model="gpt-4",
@@ -95,6 +95,10 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     query = message.get("query", "") if isinstance(message, dict) else str(message)
     print(f"Query content: {query}")
 
+    # Ensure lang is a string
+    if not isinstance(lang, str):
+        lang = "en"
+
     if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
@@ -118,12 +122,12 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
         return RESPONSE_CACHE[cache_key]
     
     if not isinstance(region, str):
-       print(f"[!] Warning: region was not a string: {region}")
-       region = "All Regions"
+        print(f"[!] Warning: region was not a string: {region}")
+        region = "All Regions"
 
     if not isinstance(threat_type, str):
-       print(f"[!] Warning: threat_type was not a string: {threat_type}")
-       threat_type = "All Threats"
+        print(f"[!] Warning: threat_type was not a string: {threat_type}")
+        threat_type = "All Threats"
 
     print(f"[TRACE] region={region} ({type(region)}), threat_type={threat_type} ({type(threat_type)})")
 
@@ -188,26 +192,30 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             RESPONSE_CACHE[cache_key] = result
             return result
 
-    threat_scores = [assess_threat_level(alert) for alert in raw_alerts]
-    summaries = summarize_alerts(raw_alerts)
+    # Assess threat levels in parallel (optional)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        threat_scores = list(executor.map(assess_threat_level, raw_alerts))
+
+    # Summarize alerts using the new limited/parallelized summarize_alerts
+    summarized = summarize_alerts(raw_alerts, lang=lang)
     print("Summaries generated")
 
-    translated_summaries = [translate_text(summary, lang) for summary in summaries]
-    print(f"Summaries translated to {lang}")
-
     results = []
-    for i, alert in enumerate(raw_alerts):
+    for i, alert in enumerate(summarized):
+        alert_type = alert.get("type", "")
+        if not isinstance(alert_type, str):
+            alert_type = str(alert_type)
         results.append({
             "title": alert.get("title", ""),
             "summary": alert.get("summary", ""),
             "link": alert.get("link", ""),
             "source": alert.get("source", ""),
-            "type": translate_text(alert.get("type", ""), lang),
-            "level": threat_scores[i],
-            "gpt_summary": translated_summaries[i]
+            "type": translate_text(alert_type, lang),
+            "level": threat_scores[i] if i < len(threat_scores) else None,
+            "gpt_summary": alert.get("gpt_summary", "")
         })
 
-    fallback = generate_advice(query, raw_alerts)
+    fallback = generate_advice(query, raw_alerts, lang=lang, email=email)
     translated_fallback = translate_text(fallback, lang)
     print("Fallback advice generated and translated")
 

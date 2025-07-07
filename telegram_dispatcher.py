@@ -127,7 +127,9 @@ def send_alerts_to_telegram(email="anonymous"):
 
 def handle_unsubscribe(update):
     chat_id = str(update.get("message", {}).get("chat", {}).get("id"))
-    text = update.get("message", {}).get("text", "").strip().lower()
+    text = update.get("message", {}).get("text", "")
+    if isinstance(text, str):
+        text = text.strip().lower()
 
     if text == "/stop":
         unsubscribed = load_unsubscribed()
@@ -143,6 +145,6 @@ def handle_unsubscribe(update):
 
 
 if __name__ == "__main__":
-    print("Running Telegram dispatcher...")
+    print("📨 Running Telegram dispatcher...")
     count = send_alerts_to_telegram()
-    print(f"Finished sending {count} messages.")
+    print(f"✅ Finished sending {count} messages.")

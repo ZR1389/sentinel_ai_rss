@@ -35,13 +35,14 @@ PLAN_RULES = {
     }
 }
 
+
 def get_plan(email):
     try:
         with open("clients.json") as f:
             clients = json.load(f)
             for client in clients:
-                if client["email"].lower() == email.lower():
+                if isinstance(client.get("email"), str) and client["email"].lower() == email.lower():
                     return client.get("plan", "FREE").upper()
-    except:
-        pass
+    except Exception as e:
+        print(f"[ERROR] Failed to load client plan: {e}")
     return "FREE"
