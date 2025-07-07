@@ -2,28 +2,20 @@ from telethon.sync import TelegramClient
 from datetime import datetime, timedelta, timezone
 import json
 import os
+from dotenv import load_dotenv
 
-# Telegram API credentials
-api_id = 25094393
-api_hash = 'c9f39c23e0d33cd825b2918d99346cb9'
+load_dotenv()
+
+# Load credentials from .env
+api_id = int(os.getenv("TELEGRAM_API_ID"))
+api_hash = os.getenv("TELEGRAM_API_HASH")
 session_name = "sentinel_session"
 
-# High-signal channels to monitor
 channels = [
-    "war_monitors",
-    "sentdefender",
-    "noelreports",
-    "tacticalreport",
-    "IntelRepublic",
-    "MilitarySummary",
-    "BNOFeed",
-    "vxunderground",
-    "aljazeeraenglish",
-    "cnnbrk",
-    "bbcbreaking"
+    "war_monitors", "sentdefender", "noelreports", "tacticalreport", "IntelRepublic",
+    "MilitarySummary", "BNOFeed", "vxunderground", "aljazeeraenglish", "cnnbrk", "bbcbreaking"
 ]
 
-# Risk-relevant keywords (no translation)
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
     "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
@@ -41,7 +33,6 @@ THREAT_KEYWORDS = [
     "lockdown", "security alert", "critical infrastructure"
 ]
 
-# Region tagging (can expand later)
 def detect_region(text):
     t = text.lower() if isinstance(text, str) else str(text).lower()
     if "mexico" in t:
@@ -56,10 +47,10 @@ def detect_region(text):
         return "Russia"
     return "Global"
 
-# Scraper logic
 def scrape_telegram_messages():
     alerts = []
 
+    # ✅ Only proceed if session file exists (avoid interactive login)
     if not os.path.exists(session_name + ".session"):
         print("⚠️ Telegram session file not found. Skipping Telegram scraping in production.")
         return []
@@ -82,7 +73,7 @@ def scrape_telegram_messages():
                         if any(keyword in content for keyword in THREAT_KEYWORDS):
                             alerts.append({
                                 "title": f"Telegram Post: {username}",
-                                "summary": msg.message if isinstance(msg.message, str) else str(msg.message),
+                                "summary": msg.message,
                                 "link": f"https://t.me/{username}/{msg.id}",
                                 "source": "Telegram",
                                 "region": detect_region(msg.message),
@@ -98,7 +89,6 @@ def scrape_telegram_messages():
 
     return alerts
 
-# Manual test run
 if __name__ == "__main__":
     alerts = scrape_telegram_messages()
     if alerts:

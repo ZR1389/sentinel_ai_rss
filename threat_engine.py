@@ -1,11 +1,11 @@
 import os
-from mistralai import Mistral
+from mistralai.client import MistralClient
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from threat_scorer import assess_threat_level
 
 load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
 
 # Configurable parameters
 SUMMARY_LIMIT = 5  # Max number of alerts to summarize

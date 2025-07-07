@@ -1,9 +1,9 @@
 import os
-from mistralai import Mistral
 from dotenv import load_dotenv
+from mistralai.client import MistralClient
 
 load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
 
 # High-priority keywords to instantly flag Critical threats
 CRITICAL_KEYWORDS = [

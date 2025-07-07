@@ -8,14 +8,14 @@ from datetime import datetime
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-from mistralai import Mistral
+from mistralai.client import MistralClient
 from hashlib import sha256
 from pathlib import Path
 
 from telegram_scraper import scrape_telegram_messages
 
 load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
