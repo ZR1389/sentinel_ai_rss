@@ -27,3 +27,6 @@ subscribers.json
 # IDEs
 .vscode/
 .idea/
+
+# Telegram session (Telethon)
+sentinel_session.session
