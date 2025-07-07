@@ -92,12 +92,15 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     plan = plan_raw.upper() if isinstance(plan_raw, str) else "FREE"
     print(f"Plan: {plan}")
 
-    query = message.get("query", "") if isinstance(message, dict) else str(message)
-    print(f"Query content: {query}")
+    # Ensure all inputs are strings to avoid attribute errors
+    region = str(region) if region is not None else "All"
+    threat_type = str(threat_type) if threat_type is not None else "All"
+    lang = str(lang) if lang is not None else "en"
 
-    # Ensure lang is a string
-    if not isinstance(lang, str):
-        lang = "en"
+    query = message.get("query") if isinstance(message, dict) else message
+    if not isinstance(query, str):
+        query = str(query)
+    print(f"Query content: {query}")
 
     if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
@@ -180,8 +183,10 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             }
             RESPONSE_CACHE[cache_key] = result
             return result
-        else:
-            region_data = risk_profiles.get(region, {})
+        else:            
+            region_data = risk_profiles.get(region)
+            if not isinstance(region_data, dict):
+                region_data = {}
             fallback = region_data.get(lang) or region_data.get("en", "No alerts right now. Stay aware and consult regional sources.")
             translated = translate_text(fallback, lang)
             result = {
