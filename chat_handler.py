@@ -20,9 +20,9 @@ with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)
 
 PLAN_LIMITS = {
-    "Free": {"chat_limit": 3},
-    "Basic": {"chat_limit": 100},
-    "Pro": {"chat_limit": 500},
+    "FREE": {"chat_limit": 3},
+    "BASIC": {"chat_limit": 100},
+    "PRO": {"chat_limit": 500},
     "VIP": {"chat_limit": None},
 }
 
@@ -56,8 +56,38 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
+def normalize_value(val, default="All"):
+    """Ensure value is a clean string for backend logic."""
+    if isinstance(val, str):
+        val = val.strip()
+        if not val or val.lower() in ["all", "all regions", "all threats"]:
+            return default
+        return val
+    return default
+
+def smart_risk_profile_fallback(region, lang="en", original_query=None):
+    """
+    Try to find a region profile, fallback to 'All', fallback to English, fallback to generic.
+    """
+    # Try exact match
+    region_data = risk_profiles.get(region)
+    if not region_data:
+        # Try case-insensitive match
+        for r in risk_profiles:
+            if r.lower() == region.lower():
+                region_data = risk_profiles[r]
+                break
+    if not region_data:
+        region_data = risk_profiles.get("All", {})
+    # Try lang, then English, then generic
+    return (
+        (region_data.get(lang) or region_data.get("en"))
+        or "No alerts right now. Stay aware and consult regional sources."
+    )
+
 def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
+
     plan_raw = get_plan(email) or plan or "Free"
     plan = plan_raw.upper() if isinstance(plan_raw, str) else "FREE"
     print(f"Plan: {plan}")
@@ -65,8 +95,14 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     query = message.get("query", "") if isinstance(message, dict) else str(message)
     print(f"Query content: {query}")
 
-    if not isinstance(lang, str):
-        lang = "en"
+    # Sanitize and normalize all user-facing values
+    lang = lang if isinstance(lang, str) else "en"
+    # PATCH: region and threat_type set to None if blank/All for advisor.py compatibility
+    region = normalize_value(region)
+    threat_type = normalize_value(threat_type)
+    region = None if region.lower() == "all" else region
+    threat_type = None if threat_type.lower() == "all" else threat_type
+    print(f"[DEBUG] region={region!r}, threat_type={threat_type!r}")
 
     if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
@@ -82,86 +118,33 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     increment_usage(email)
     print("Usage incremented")
 
-    if not isinstance(region, str):
-        print(f"[!] Warning: region was not a string: {region}")
-        region = "All Regions"
-
-    if not isinstance(threat_type, str):
-        print(f"[!] Warning: threat_type was not a string: {threat_type}")
-        threat_type = "All Threats"
-
-    print(f"[TRACE] region={region} ({type(region)}), threat_type={threat_type} ({type(threat_type)})")
-
     cache_key = f"{query}_{lang}_{region}_{threat_type}_{plan}"
     if cache_key in RESPONSE_CACHE:
         print("Returning cached response")
         return RESPONSE_CACHE[cache_key]
 
+    # Fetch alerts
     raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
 
+    # SMART FALLBACK: handle all cases when no alerts exist
     if not raw_alerts:
-        if plan in ["PRO", "VIP"]:
-            context = (
-                f"No live alerts available, but the user asked: '{query}'\n"
-                f"Region: {region or 'Unspecified'}\n"
-                f"Threat Type: {threat_type or 'Unspecified'}\n"
-                f"Based on professional security logic, provide clear, field-tested travel advisory."
-            )
-            from openai import OpenAI
-            client = OpenAI()
-            max_retries = 3
-            retry_delay = 4
-            for attempt in range(max_retries):
-                try:
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You're Zika Rakita, a global security advisor with 20+ years of experience. "
-                                    "Deliver professional travel security advice using a direct, realistic tone. "
-                                    "Incorporate general security knowledge and static risk profiles if needed."
-                                )
-                            },
-                            {"role": "user", "content": context}
-                        ],
-                        temperature=0.4,
-                        max_tokens=400
-                    )
-                    fallback = response.choices[0].message.content.strip()
-                    break
-                except Exception as e:
-                    print(f"Fallback error (attempt {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-                    else:
-                        fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
+        # Use advisor.py's logic for all plans, including static and GPT fallback
+        fallback = generate_advice(query, [], email=email, region=region, threat_type=threat_type)
+        result = {
+            "reply": fallback,
+            "plan": plan,
+            "alerts": []
+        }
+        RESPONSE_CACHE[cache_key] = result
+        return result
 
-            result = {
-                "reply": fallback,
-                "plan": plan,
-                "alerts": []
-            }
-            RESPONSE_CACHE[cache_key] = result
-            return result
-        else:
-            region_data = risk_profiles.get(region, {})
-            fallback = region_data.get(lang) or region_data.get("en", "No alerts right now. Stay aware and consult regional sources.")
-            result = {
-                "reply": fallback,
-                "plan": plan,
-                "alerts": []
-            }
-            RESPONSE_CACHE[cache_key] = result
-            return result
-
+    # Threat scoring in parallel
     with ThreadPoolExecutor(max_workers=5) as executor:
         threat_scores = list(executor.map(assess_threat_level, raw_alerts))
 
-    summarized = summarize_alerts(raw_alerts)
+    # Summarize alerts
+    summarized = summarize_alerts(raw_alerts, lang=lang)
     print("Summaries generated")
 
     results = []
@@ -179,7 +162,8 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             "gpt_summary": alert.get("gpt_summary", "")
         })
 
-    fallback = generate_advice(query, raw_alerts, email=email)
+    # Always generate advice for the UI (for sidebar, etc)
+    fallback = generate_advice(query, raw_alerts, lang=lang, email=email, region=region, threat_type=threat_type)
     print("Fallback advice generated")
 
     result = {

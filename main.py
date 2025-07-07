@@ -24,9 +24,14 @@ def chat():
 
         query = data.get("query", "")
         email = data.get("email", "anonymous")
-        region = str(data.get("region", "All"))
-        threat_type = str(data.get("type", "All"))
-        plan = str(data.get("plan", "Free")).capitalize()
+        # PATCH: accept null or 'All' as None for region/type
+        region = data.get("region")
+        threat_type = data.get("type")
+        plan = str(data.get("plan", "Free")).upper()
+
+        # Normalize "All" or empty to None for advisor fallback logic
+        region = None if not region or region.lower() == "all" else str(region)
+        threat_type = None if not threat_type or threat_type.lower() == "all" else str(threat_type)
 
         print(f"Processing chat: plan={plan}, region={region}, type={threat_type}")
 
@@ -53,9 +58,12 @@ def request_report():
     try:
         data = request.get_json(force=True)
         email = data.get("email", "anonymous")
-        region = str(data.get("region", "All"))
-        threat_type = str(data.get("type", "All"))
-        plan = str(data.get("plan", "Free")).capitalize()
+        region = data.get("region")
+        threat_type = data.get("type")
+        plan = str(data.get("plan", "Free")).upper()
+
+        region = None if not region or region.lower() == "all" else str(region)
+        threat_type = None if not threat_type or threat_type.lower() == "all" else str(threat_type)
 
         print(f"📄 Generating report for {email} | Region={region}, Type={threat_type}, Plan={plan}")
         alerts = handle_user_query(

@@ -1,5 +1,3 @@
-# push_dispatcher.py
-
 import json
 import os
 from dotenv import load_dotenv

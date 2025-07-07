@@ -2,7 +2,7 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from datetime import date
 from threat_scorer import assess_threat_level
-from rss_processor import get_clean_alerts, FEEDS
+from rss_processor import get_clean_alerts
 import os
 
 def get_threat_color(level):
@@ -17,7 +17,7 @@ def get_threat_color(level):
     else:
         return (100, 100, 100)
 
-def generate_pdf():
+def generate_pdf(output_path=None):
     raw_alerts = get_clean_alerts()
     scored_alerts = []
 
@@ -75,7 +75,8 @@ def generate_pdf():
     pdf.add_page()
     pdf.chapter_body(scored_alerts)
 
-    output_path = os.path.expanduser(f"~/Desktop/daily-brief-{date.today().isoformat()}.pdf")
+    if output_path is None:
+        output_path = os.path.expanduser(f"~/Desktop/daily-brief-{date.today().isoformat()}.pdf")
     pdf.output(output_path)
     print(f"PDF created: {output_path}")
     return output_path
