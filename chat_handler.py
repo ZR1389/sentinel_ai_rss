@@ -65,7 +65,7 @@ def normalize_value(val, default="All"):
         return val
     return default
 
-def smart_risk_profile_fallback(region, lang="en", original_query=None):
+def smart_risk_profile_fallback(region, original_query=None):
     """
     Try to find a region profile, fallback to 'All', fallback to English, fallback to generic.
     """
@@ -79,14 +79,14 @@ def smart_risk_profile_fallback(region, lang="en", original_query=None):
                 break
     if not region_data:
         region_data = risk_profiles.get("All", {})
-    # Try lang, then English, then generic
+    # Try English, then generic
     return (
-        (region_data.get(lang) or region_data.get("en"))
+        region_data.get("en")
         or "No alerts right now. Stay aware and consult regional sources."
     )
 
-def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
-    print(f"Received query: {message} | Email: {email} | Lang: {lang}")
+def handle_user_query(message, email, region=None, threat_type=None, plan=None):
+    print(f"Received query: {message} | Email: {email}")
 
     plan_raw = get_plan(email) or plan or "Free"
     plan = plan_raw.upper() if isinstance(plan_raw, str) else "FREE"
@@ -95,8 +95,6 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     query = message.get("query", "") if isinstance(message, dict) else str(message)
     print(f"Query content: {query}")
 
-    # Sanitize and normalize all user-facing values
-    lang = lang if isinstance(lang, str) else "en"
     # PATCH: region and threat_type set to None if blank/All for advisor.py compatibility
     region = normalize_value(region)
     threat_type = normalize_value(threat_type)
@@ -118,7 +116,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     increment_usage(email)
     print("Usage incremented")
 
-    cache_key = f"{query}_{lang}_{region}_{threat_type}_{plan}"
+    cache_key = f"{query}_{region}_{threat_type}_{plan}"
     if cache_key in RESPONSE_CACHE:
         print("Returning cached response")
         return RESPONSE_CACHE[cache_key]
@@ -143,8 +141,8 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     with ThreadPoolExecutor(max_workers=5) as executor:
         threat_scores = list(executor.map(assess_threat_level, raw_alerts))
 
-    # Summarize alerts
-    summarized = summarize_alerts(raw_alerts, lang=lang)
+    # Summarize alerts (no lang argument)
+    summarized = summarize_alerts(raw_alerts)
     print("Summaries generated")
 
     results = []
@@ -163,7 +161,7 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
         })
 
     # Always generate advice for the UI (for sidebar, etc)
-    fallback = generate_advice(query, raw_alerts, lang=lang, email=email, region=region, threat_type=threat_type)
+    fallback = generate_advice(query, raw_alerts, email=email, region=region, threat_type=threat_type)
     print("Fallback advice generated")
 
     result = {

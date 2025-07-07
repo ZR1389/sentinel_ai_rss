@@ -15,7 +15,7 @@ from pathlib import Path
 from telegram_scraper import scrape_telegram_messages
 
 load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"), timeout=15)
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
@@ -74,7 +74,7 @@ SUMMARY_LIMIT = 5
 
 def summarize_with_mistral(text):
     try:
-        response = client.chat.completions.create(
+        response = client.chat(
             model=MISTRAL_SUMMARY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -126,7 +126,7 @@ Respond with only the category name.
 
 def classify_threat_type(text):
     try:
-        response = client.chat.completions.create(
+        response = client.chat(
             model=MISTRAL_CLASSIFY_MODEL,
             messages=[
                 {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
@@ -295,7 +295,7 @@ Based on global intelligence patterns, provide a realistic and professional advi
 Respond in professional English. Output in plain text.
 """
     try:
-        response = client.chat.completions.create(
+        response = client.chat(
             model=MISTRAL_SUMMARY_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4

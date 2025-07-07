@@ -3,7 +3,7 @@ from mistralai import Mistral
 from dotenv import load_dotenv
 
 load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"), timeout=15)
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
 # High-priority keywords to instantly flag Critical threats
 CRITICAL_KEYWORDS = [
@@ -47,7 +47,7 @@ def assess_threat_level(alert_text):
     )
 
     try:
-        response = client.chat.completions.create(
+        response = client.chat(
             model=MISTRAL_THREAT_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},

@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threat_scorer import assess_threat_level
 
 load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"), timeout=15)
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
 # Configurable parameters
 SUMMARY_LIMIT = 5  # Max number of alerts to summarize
@@ -23,7 +23,7 @@ def summarize_single_alert(alert):
         summary = str(summary) if not isinstance(summary, str) else summary
         full_text = f"{title}\n{summary}".strip()
 
-        response = client.chat.completions.create(
+        response = client.chat(
             model=MISTRAL_MODEL,
             messages=[
                 {"role": "system", "content": "Summarize this security alert in one concise sentence."},
