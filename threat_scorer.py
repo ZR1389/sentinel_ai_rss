@@ -1,15 +1,17 @@
 import os
-from openai import OpenAI
+from mistralai import Mistral
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"), timeout=15)
 
 # High-priority keywords to instantly flag Critical threats
 CRITICAL_KEYWORDS = [
     "assassination", "suicide bombing", "mass shooting", "IED",
     "terrorist attack", "hijacking", "hostage situation", "military raid"
 ]
+
+MISTRAL_THREAT_MODEL = os.getenv("MISTRAL_THREAT_MODEL", "mistral-small-3.2")
 
 def normalize_threat_label(label):
     label = label.strip().lower()
@@ -46,12 +48,13 @@ def assess_threat_level(alert_text):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=MISTRAL_THREAT_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": alert_text}
             ],
-            temperature=0
+            temperature=0,
+            max_tokens=8
         )
         label = response.choices[0].message.content
         return normalize_threat_label(label)

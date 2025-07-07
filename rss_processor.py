@@ -8,14 +8,14 @@ from datetime import datetime
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-from openai import OpenAI
+from mistralai import Mistral
 from hashlib import sha256
 from pathlib import Path
 
 from telegram_scraper import scrape_telegram_messages
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"), timeout=15)
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
@@ -60,8 +60,8 @@ FEEDS = [
     "https://www.gov.uk/foreign-travel-advice.atom",
 ]
 
-GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
-GPT_CLASSIFY_MODEL = os.getenv("GPT_CLASSIFY_MODEL", "gpt-4o")
+MISTRAL_SUMMARY_MODEL = os.getenv("MISTRAL_SUMMARY_MODEL", "mistral-small-3.2")
+MISTRAL_CLASSIFY_MODEL = os.getenv("MISTRAL_CLASSIFY_MODEL", "mistral-small-3.2")
 
 system_prompt = """
 You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
@@ -72,10 +72,10 @@ If the user is not a subscriber, end with:
 
 SUMMARY_LIMIT = 5
 
-def summarize_with_gpt(text):
+def summarize_with_mistral(text):
     try:
         response = client.chat.completions.create(
-            model=GPT_SUMMARY_MODEL,
+            model=MISTRAL_SUMMARY_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Summarize this for a traveler:\n\n{text}"}
@@ -85,10 +85,10 @@ def summarize_with_gpt(text):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[GPT error] {str(e)}")
+        print(f"[Mistral error] {str(e)}")
         return "No summary available due to an error."
 
-def summarize_with_gpt_cached(summarize_fn):
+def summarize_with_mistral_cached(summarize_fn):
     cache_file = "summary_cache.json"
     Path(cache_file).touch(exist_ok=True)
     try:
@@ -127,7 +127,7 @@ Respond with only the category name.
 def classify_threat_type(text):
     try:
         response = client.chat.completions.create(
-            model=GPT_CLASSIFY_MODEL,
+            model=MISTRAL_CLASSIFY_MODEL,
             messages=[
                 {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
                 {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
@@ -247,7 +247,7 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             threat_types = list(executor.map(lambda alert: classify_threat_type(alert["summary"]), alerts))
         for i, alert in enumerate(alerts):
             alert["type"] = threat_types[i]
-        alerts = parallel_summarize_alerts(alerts, summarize_with_gpt)
+        alerts = parallel_summarize_alerts(alerts, summarize_with_mistral)
     else:
         for alert in alerts:
             alert["type"] = classify_threat_type(alert["summary"])
@@ -296,7 +296,7 @@ Respond in professional English. Output in plain text.
 """
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=MISTRAL_SUMMARY_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4
         )
@@ -304,7 +304,7 @@ Respond in professional English. Output in plain text.
     except Exception as e:
         return f"⚠️ Fallback error: {str(e)}"
 
-summarize_with_gpt = summarize_with_gpt_cached(summarize_with_gpt)
+summarize_with_mistral = summarize_with_mistral_cached(summarize_with_mistral)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 
 if __name__ == "__main__":
