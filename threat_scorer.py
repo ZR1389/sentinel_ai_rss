@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Set timeout here
 
 # Optional: High-impact keywords to auto-score "Critical" alerts instantly
 CRITICAL_KEYWORDS = [

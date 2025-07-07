@@ -3,13 +3,9 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from plan_rules import PLAN_RULES
 from plan_utils import get_plan, PLAN_RULES
-import signal
 
 load_dotenv()
-client = OpenAI()
-
-def timeout_handler(signum, frame):
-    raise TimeoutError("OpenAI timed out")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Set timeout here
 
 def generate_advice(user_message, alerts, lang="en", email="anonymous"):
     plan = get_plan(email)
@@ -32,8 +28,6 @@ def generate_advice(user_message, alerts, lang="en", email="anonymous"):
         for alert in alerts[:5]:
             content += f"- {alert['title']}: {alert['summary']}\n"
 
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(20)
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -42,8 +36,6 @@ def generate_advice(user_message, alerts, lang="en", email="anonymous"):
             ],
             temperature=0.5
         )
-        signal.alarm(0)
         return response.choices[0].message.content.strip()
     except Exception as e:
-        signal.alarm(0)
         return f"Error generating advisory: {str(e)}"

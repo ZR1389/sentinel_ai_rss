@@ -3,7 +3,6 @@ from telethon.tl.types import PeerChannel
 from datetime import datetime, timedelta, timezone
 import json
 import os
-import sys
 
 # Your API credentials
 api_id = 25094393
@@ -12,7 +11,6 @@ api_hash = 'c9f39c23e0d33cd825b2918d99346cb9'
 # Session file name
 session_name = "sentinel_session"
 
-# Verified Telegram OSINT channels
 channels = [
     "war_monitors",
     "sentdefender",
@@ -27,36 +25,20 @@ channels = [
     "bbcbreaking"
 ]
 
-# Full threat keywords from rss_processor
 THREAT_KEYWORDS = [
-    # High-Intensity Threats
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
     "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
     "suicide bombing", "military raid", "abduction", "hostage situation",
-
-    # Political & Civil Unrest
     "civil unrest", "riot", "protest", "coup d'etat", "regime change",
     "political unrest", "uprising", "insurrection", "state of emergency", "martial law",
-
-    # Travel & Movement Disruption
     "evacuation", "roadblock", "border closure", "curfew", "flight cancellation",
     "airport closure", "port closure", "embassy alert", "travel advisory", "travel ban",
-
-    # Health Crises
     "pandemic", "viral outbreak", "disease spread", "contamination", "quarantine",
     "public health emergency", "infectious disease", "epidemic", "biological threat", "health alert",
-
-    # Cyber Threats
     "data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing",
     "malware", "cyber espionage", "identity theft", "network security",
-
-    # Border, Extremism, Organized Crime
     "extremist activity", "radicalization", "border security", "smuggling", "human trafficking",
-
-    # Natural Disasters
     "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire",
-
-    # General Threats
     "lockdown", "security alert", "critical infrastructure"
 ]
 
@@ -76,11 +58,10 @@ def detect_region(text):
 
 def scrape_telegram_messages():
     alerts = []
-    # --- PATCH: Skip prompting for credentials in non-interactive environments ---
+    # PATCH: Never prompt for input. Only run if session file exists.
     try:
-        # If neither an existing session nor required env variable exists, skip scraping
-        if not os.path.exists(session_name + ".session") and not (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_API_ID")):
-            print("⚠️ Telegram session or credentials not set. Skipping Telegram scraping.")
+        if not os.path.exists(session_name + ".session"):
+            print("⚠️ Telegram session file not found. Skipping Telegram scraping in production.")
             return []
         with TelegramClient(session_name, api_id, api_hash) as client:
             for username in channels:
@@ -110,10 +91,8 @@ def scrape_telegram_messages():
     except Exception as e:
         print(f"Telegram client setup failed: {e}")
         return []
-    # --- END PATCH ---
     return alerts
 
-# Run test
 if __name__ == "__main__":
     alerts = scrape_telegram_messages()
     if alerts:

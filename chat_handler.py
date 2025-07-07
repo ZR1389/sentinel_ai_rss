@@ -15,7 +15,8 @@ USAGE_FILE = "usage_log.json"
 RESPONSE_CACHE = {}
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Set timeout here
+
 
 with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)

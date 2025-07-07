@@ -9,9 +9,9 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Timeout is set here
 from hashlib import sha256
 from pathlib import Path
-import signal
 
 from telegram_scraper import scrape_telegram_messages
 
@@ -59,7 +59,6 @@ FEEDS = [
 ]
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
 GPT_CLASSIFY_MODEL = os.getenv("GPT_CLASSIFY_MODEL", "gpt-4o")
 
@@ -70,13 +69,8 @@ If the user is not a subscriber, end with:
 “To receive personalized alerts, intelligence briefings, and emergency support, upgrade your access at zikarisk.com.”
 """
 
-def timeout_handler(signum, frame):
-    raise TimeoutError("OpenAI timed out")
-
 def summarize_with_gpt(text):
     try:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(15)  # 15 seconds max
         response = client.chat.completions.create(
             model=GPT_SUMMARY_MODEL,
             messages=[
@@ -86,10 +80,8 @@ def summarize_with_gpt(text):
             temperature=0.3,
             max_tokens=300
         )
-        signal.alarm(0)
         return response.choices[0].message.content.strip()
     except Exception as e:
-        signal.alarm(0)
         print(f"[GPT error] {str(e)}")
         return "No summary available due to an error."
 
@@ -131,8 +123,6 @@ Respond with only the category name.
 
 def classify_threat_type(text):
     try:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(10)
         response = client.chat.completions.create(
             model=GPT_CLASSIFY_MODEL,
             messages=[
@@ -142,7 +132,6 @@ def classify_threat_type(text):
             temperature=0,
             max_tokens=10
         )
-        signal.alarm(0)
         label = response.choices[0].message.content.strip()
         if label not in [
             "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
@@ -151,7 +140,6 @@ def classify_threat_type(text):
             return "Unclassified"
         return label
     except Exception as e:
-        signal.alarm(0)
         print(f"❌ Threat type classification error: {e}")
         return "Unclassified"
 
@@ -297,17 +285,13 @@ Based on global intelligence patterns, provide a realistic and professional advi
 Output in plain text. Language: {lang}
 """
     try:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(20)
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4
         )
-        signal.alarm(0)
         return response.choices[0].message.content.strip()
     except Exception as e:
-        signal.alarm(0)
         return f"⚠️ Fallback error: {str(e)}"
 
 # ✅ Wrap for caching
