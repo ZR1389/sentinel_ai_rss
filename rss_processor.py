@@ -1,3 +1,4 @@
+
 import os
 import re
 import time
@@ -9,11 +10,13 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)  # Timeout is set here
 from hashlib import sha256
 from pathlib import Path
 
 from telegram_scraper import scrape_telegram_messages
+
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
@@ -58,7 +61,6 @@ FEEDS = [
     "https://www.gov.uk/foreign-travel-advice.atom",
 ]
 
-load_dotenv()
 GPT_SUMMARY_MODEL = os.getenv("GPT_SUMMARY_MODEL", "gpt-4o")
 GPT_CLASSIFY_MODEL = os.getenv("GPT_CLASSIFY_MODEL", "gpt-4o")
 
@@ -69,7 +71,7 @@ If the user is not a subscriber, end with:
 “To receive personalized alerts, intelligence briefings, and emergency support, upgrade your access at zikarisk.com.”
 """
 
-SUMMARY_LIMIT = 5  # Max number of items to summarize per request
+SUMMARY_LIMIT = 5
 
 def summarize_with_gpt(text):
     try:
@@ -176,33 +178,29 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     alerts = []
     seen = set()
 
-    if not isinstance(region, str):
-        print(f"[!] Invalid region type: {type(region)} — Defaulting to 'All'")
-        region = "All"
-    if not isinstance(topic, str):
-        print(f"[!] Invalid topic type: {type(topic)} — Defaulting to 'All'")
-        topic = "All"
+    region_str = str(region).lower() if isinstance(region, str) else "all"
+    topic_str = str(topic).lower() if isinstance(topic, str) else "all"
 
     try:
         telegram_alerts = scrape_telegram_messages()
-        if not telegram_alerts or not isinstance(telegram_alerts, list):
-            telegram_alerts = []
-        for tg in telegram_alerts:
-            if region and isinstance(region, str) and region.lower() not in str(tg["summary"]).lower():
-                continue
-            if topic and isinstance(topic, str) and topic.lower() not in str(tg["summary"]).lower():
-                continue
+        if telegram_alerts and isinstance(telegram_alerts, list):
+            for tg in telegram_alerts:
+                full_text = f"{tg['title']} {tg['summary']}".lower()
+                if region_str != "all" and region_str not in full_text:
+                    continue
+                if topic_str != "all" and topic_str not in full_text:
+                    continue
 
-            alerts.append({
-                "title": tg["title"],
-                "summary": tg["summary"],
-                "link": tg["link"],
-                "source": tg["source"]
-            })
+                alerts.append({
+                    "title": tg["title"],
+                    "summary": tg["summary"],
+                    "link": tg["link"],
+                    "source": tg["source"]
+                })
 
-            if len(alerts) >= limit:
-                print(f"✅ Parsed {len(alerts)} alerts.")
-                break
+                if len(alerts) >= limit:
+                    print(f"✅ Parsed {len(alerts)} alerts.")
+                    break
     except Exception as e:
         print(f"❌ Telegram scrape failed: {e}")
 
@@ -214,16 +212,15 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             continue
 
         source_domain = urlparse(source_url).netloc.replace("www.", "")
-
         for entry in feed.entries:
             title = entry.get("title", "").strip()
             summary = entry.get("summary", "").strip()
             link = entry.get("link", "").strip()
-            full_text = f"{title}: {summary}"
+            full_text = f"{title}: {summary}".lower()
 
-            if region and isinstance(region, str) and region.lower() not in str(full_text).lower():
+            if region_str != "all" and region_str not in full_text:
                 continue
-            if topic and isinstance(topic, str) and topic.lower() not in str(full_text).lower():
+            if topic_str != "all" and topic_str not in full_text:
                 continue
             if not KEYWORD_PATTERN.search(full_text):
                 continue
@@ -286,16 +283,17 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
 
     return wrapper
 
-def generate_fallback_summary(region, threat_type, lang="en"):
+def generate_fallback_summary(region, threat_type):
     prompt = f"""
-You are Sentinel AI, an elite threat analyst. No current RSS alerts were found for:
+You are Sentinel AI, an elite threat analyst created by Zika Rakita at Zika Risk.
 
-Region: {region}
-Threat Type: {threat_type}
+No current threat alerts were found for:
+- Region: {region}
+- Threat Type: {threat_type}
 
-Based on global intelligence patterns, provide a realistic and professional advisory summary (150–250 words) for travelers or security professionals. Include relevant recent risks, caution zones, and operational advice — even if general. This should sound like high-end analysis, not vague advice.
+Based on global intelligence patterns, provide a realistic and professional advisory summary (150–250 words) for travelers or security professionals. Mention relevant threats, operational considerations, and situational awareness — even if generalized. This should sound like real field intelligence, not generic advice.
 
-Output in plain text. Language: {lang}
+Respond in professional English. Output in plain text.
 """
     try:
         response = client.chat.completions.create(

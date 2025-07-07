@@ -1,22 +1,18 @@
 [
   {
     "email": "zika.rakita@gmail.com",
-    "plan": "VIP",
-    "lang": "en"
+    "plan": "VIP"
   },
   {
     "email": "dragana.rakita985@gmail.com",
-    "plan": "PRO",
-    "lang": "sr"
+    "plan": "PRO"
   },
   {
     "email": "zika.rakita@outlook.com",
-    "plan": "FREE",
-    "lang": "es"
+    "plan": "FREE"
   },
   {
     "email": "zika.rakita@mail.usa",
-    "plan": "BASIC",
-    "lang": "en"
+    "plan": "BASIC"
   }
 ]

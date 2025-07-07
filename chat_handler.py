@@ -2,7 +2,6 @@ import json
 import os
 import time
 from dotenv import load_dotenv
-from openai import OpenAI
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,10 +15,16 @@ USAGE_FILE = "usage_log.json"
 RESPONSE_CACHE = {}
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
 
 with open("risk_profiles.json", "r") as f:
     risk_profiles = json.load(f)
+
+PLAN_LIMITS = {
+    "Free": {"chat_limit": 3},
+    "Basic": {"chat_limit": 100},
+    "Pro": {"chat_limit": 500},
+    "VIP": {"chat_limit": None},
+}
 
 def load_usage_data():
     if not os.path.exists(USAGE_FILE):
@@ -33,13 +38,6 @@ def load_usage_data():
 def save_usage_data(data):
     with open(USAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
-
-PLAN_LIMITS = {
-    "Free": {"chat_limit": 3},
-    "Basic": {"chat_limit": 100},
-    "Pro": {"chat_limit": 500},
-    "VIP": {"chat_limit": None},
-}
 
 def check_usage_allowed(email, plan):
     usage_data = load_usage_data()
@@ -58,60 +56,25 @@ def increment_usage(email):
     usage_data[email][today] += 1
     save_usage_data(usage_data)
 
-def translate_text(text, target_lang="en"):
-    max_retries = 3
-    retry_delay = 4
-    for attempt in range(max_retries):
-        try:
-            if not isinstance(text, str):
-                text = str(text)
-            text = text.strip()
-            if not (isinstance(target_lang, str) and target_lang.lower() != "en"):
-                return text
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": f"Translate the following text into {target_lang} with cultural accuracy."},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0.3,
-                max_tokens=200
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"Translation error (attempt {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                retry_delay *= 2
-            else:
-                return f"[Translation error: {str(e)}]"
-
 def handle_user_query(message, email, lang="en", region=None, threat_type=None, plan=None):
     print(f"Received query: {message} | Email: {email} | Lang: {lang}")
     plan_raw = get_plan(email) or plan or "Free"
     plan = plan_raw.upper() if isinstance(plan_raw, str) else "FREE"
     print(f"Plan: {plan}")
 
-    # Ensure all inputs are strings to avoid attribute errors
-    region = str(region) if region is not None else "All"
-    threat_type = str(threat_type) if threat_type is not None else "All"
-    lang = str(lang) if lang is not None else "en"
-
-    query = message.get("query") if isinstance(message, dict) else message
-    if not isinstance(query, str):
-        query = str(query)
+    query = message.get("query", "") if isinstance(message, dict) else str(message)
     print(f"Query content: {query}")
+
+    if not isinstance(lang, str):
+        lang = "en"
 
     if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
     if not check_usage_allowed(email, plan):
         print("Usage limit reached")
-        translated_error = translate_text(
-            "You reached your monthly message quota. Please upgrade to get more access.", lang
-        )
         return {
-            "reply": translated_error,
+            "reply": "You reached your monthly message quota. Please upgrade to get more access.",
             "plan": plan,
             "alerts": []
         }
@@ -119,11 +82,6 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
     increment_usage(email)
     print("Usage incremented")
 
-    cache_key = f"{query}_{lang}_{region}_{threat_type}_{plan}"
-    if cache_key in RESPONSE_CACHE:
-        print("Returning cached response")
-        return RESPONSE_CACHE[cache_key]
-    
     if not isinstance(region, str):
         print(f"[!] Warning: region was not a string: {region}")
         region = "All Regions"
@@ -133,6 +91,11 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
         threat_type = "All Threats"
 
     print(f"[TRACE] region={region} ({type(region)}), threat_type={threat_type} ({type(threat_type)})")
+
+    cache_key = f"{query}_{lang}_{region}_{threat_type}_{plan}"
+    if cache_key in RESPONSE_CACHE:
+        print("Returning cached response")
+        return RESPONSE_CACHE[cache_key]
 
     raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
     print(f"Alerts fetched: {len(raw_alerts)}")
@@ -145,6 +108,8 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
                 f"Threat Type: {threat_type or 'Unspecified'}\n"
                 f"Based on professional security logic, provide clear, field-tested travel advisory."
             )
+            from openai import OpenAI
+            client = OpenAI()
             max_retries = 3
             retry_delay = 4
             for attempt in range(max_retries):
@@ -175,34 +140,28 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
                     else:
                         fallback = "Advisory temporarily unavailable. Please check back soon or consult official channels."
 
-            translated_fallback = translate_text(fallback, lang)
             result = {
-                "reply": translated_fallback,
+                "reply": fallback,
                 "plan": plan,
                 "alerts": []
             }
             RESPONSE_CACHE[cache_key] = result
             return result
-        else:            
-            region_data = risk_profiles.get(region)
-            if not isinstance(region_data, dict):
-                region_data = {}
+        else:
+            region_data = risk_profiles.get(region, {})
             fallback = region_data.get(lang) or region_data.get("en", "No alerts right now. Stay aware and consult regional sources.")
-            translated = translate_text(fallback, lang)
             result = {
-                "reply": translated,
+                "reply": fallback,
                 "plan": plan,
                 "alerts": []
             }
             RESPONSE_CACHE[cache_key] = result
             return result
 
-    # Assess threat levels in parallel (optional)
     with ThreadPoolExecutor(max_workers=5) as executor:
         threat_scores = list(executor.map(assess_threat_level, raw_alerts))
 
-    # Summarize alerts using the new limited/parallelized summarize_alerts
-    summarized = summarize_alerts(raw_alerts, lang=lang)
+    summarized = summarize_alerts(raw_alerts)
     print("Summaries generated")
 
     results = []
@@ -215,17 +174,16 @@ def handle_user_query(message, email, lang="en", region=None, threat_type=None, 
             "summary": alert.get("summary", ""),
             "link": alert.get("link", ""),
             "source": alert.get("source", ""),
-            "type": translate_text(alert_type, lang),
+            "type": alert_type,
             "level": threat_scores[i] if i < len(threat_scores) else None,
             "gpt_summary": alert.get("gpt_summary", "")
         })
 
-    fallback = generate_advice(query, raw_alerts, lang=lang, email=email)
-    translated_fallback = translate_text(fallback, lang)
-    print("Fallback advice generated and translated")
+    fallback = generate_advice(query, raw_alerts, email=email)
+    print("Fallback advice generated")
 
     result = {
-        "reply": translated_fallback,
+        "reply": fallback,
         "plan": plan,
         "alerts": results
     }

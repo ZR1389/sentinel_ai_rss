@@ -6,21 +6,26 @@ import json
 load_dotenv()
 
 def send_daily_summaries():
-    with open("clients.json", "r") as f:
-        clients = json.load(f)
+    try:
+        with open("clients.json", "r") as f:
+            clients = json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load clients.json: {e}")
+        return
 
     for client in clients:
-        email = client["email"]
-        plan = client.get("plan", "FREE")
-        if PLAN_RULES.get(plan, {}).get("pdf") in ["Monthly", "On-request"]:
+        email = client.get("email", "unknown")
+        plan = client.get("plan", "FREE").upper()
+
+        if PLAN_RULES.get(plan, {}).get("pdf", False):
             try:
                 send_pdf_report(email=email, plan=plan)
-                print(f"Sent daily PDF to {email} ({plan})")
+                print(f"✅ Sent daily PDF to {email} ({plan})")
             except Exception as e:
-                print(f"Error for {email}: {str(e)}")
+                print(f"❌ Error for {email}: {e}")
         else:
-            print(f"Skipping {email} — PDF not allowed for {plan}")
+            print(f"⏩ Skipped {email} — No PDF access for {plan}")
 
 if __name__ == "__main__":
-    print("Sending scheduled daily PDF summaries...")
+    print("📤 Sending scheduled daily PDF summaries...")
     send_daily_summaries()
