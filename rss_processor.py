@@ -11,7 +11,10 @@ from dotenv import load_dotenv
 from hashlib import sha256
 from pathlib import Path
 
-load_dotenv()  # ✅ load before using env vars
+# Import feed catalogs from external file
+from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+
+load_dotenv()  # Load environment variables
 
 from telegram_scraper import scrape_telegram_messages
 from xai_client import grok_chat
@@ -42,27 +45,6 @@ KEYWORD_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-FEEDS = [
-    "https://www.cisa.gov/news.xml",
-    "https://feeds.bbci.co.uk/news/uk/rss.xml",
-    "https://www.darkreading.com/rss.xml",
-    "https://krebsonsecurity.com/feed/",
-    "https://www.bleepingcomputer.com/feed/",
-    "https://www.theguardian.com/world/rss",
-    "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
-    "https://www.crimemagazine.com/rss.xml",
-    "https://www.murdermap.co.uk/feed/",
-    "https://kidnappingmurderandmayhem.blogspot.com/feeds/posts/default",
-    "https://www.securitymagazine.com/rss/",
-    "https://feeds.feedburner.com/TheHackersNews",
-    "https://www.csoonline.com/feed/",
-    "https://www.arlingtoncardinal.com/category/crime/feed/",
-    "https://intel471.com/blog/feed",
-    "https://www.aljazeera.com/xml/rss/all.xml",
-    "https://www.france24.com/en/rss",
-    "https://www.gov.uk/foreign-travel-advice.atom",
-]
-
 system_prompt = """
 You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
 You deliver concise, professional threat summaries and actionable advice. Speak with clarity and authority.
@@ -72,8 +54,17 @@ If the user is not a subscriber, end with:
 
 SUMMARY_LIMIT = 5
 
+def get_feeds_for_location(region=None, city=None):
+    """Return the most specific feed(s) for the query."""
+    city_key = city.lower().strip() if city else None
+    region_key = region.lower().strip() if region else None
+    if city_key and city_key in LOCAL_FEEDS:
+        return LOCAL_FEEDS[city_key]
+    if region_key and region_key in COUNTRY_FEEDS:
+        return COUNTRY_FEEDS[region_key]
+    return GLOBAL_FEEDS
+
 def summarize_with_fallback(text):
-    # 1. Try Grok-3-mini
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Summarize this for a traveler:\n\n{text}"}
@@ -81,7 +72,6 @@ def summarize_with_fallback(text):
     grok_summary = grok_chat(messages)
     if grok_summary:
         return grok_summary
-    # 2. Try OpenAI fallback
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -141,11 +131,9 @@ def classify_threat_type(text):
         {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
         {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
     ]
-    # 1. Try Grok-3-mini
     grok_label = grok_chat(messages, max_tokens=10, temperature=0)
     if grok_label and grok_label in THREAT_CATEGORIES:
         return grok_label
-    # 2. Try OpenAI fallback
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -189,38 +177,71 @@ def parallel_summarize_alerts(alerts, summarize_fn, limit=SUMMARY_LIMIT, max_wor
         alert["gpt_summary"] = f"Summary not generated (limit {limit} reached)"
     return alerts
 
-def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
+def llm_is_alert_relevant(alert, region=None, city=None):
+    location = ""
+    if city and region:
+        location = f"{city}, {region}"
+    elif city:
+        location = city
+    elif region:
+        location = region
+    else:
+        return False
+
+    text = (alert.get("title", "") + " " + alert.get("summary", ""))
+    prompt = (
+        f"Is the following security alert directly relevant to {location}? "
+        "Be strict: Only answer Yes if the alert concerns events happening in, targeting, or otherwise mentioning this location. "
+        "If it's general, about another country/region, or does not mention this location, answer No.\n\n"
+        f"Alert:\n{text}\n\n"
+        "Reply with only Yes or No."
+    )
+    messages = [{"role": "user", "content": prompt}]
+    answer = grok_chat(messages, max_tokens=3, temperature=0)
+    if answer:
+        answer = answer.strip().lower()
+        if answer.startswith("yes"):
+            return True
+        if answer.startswith("no"):
+            return False
+    if openai_client:
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0,
+                max_tokens=3
+            )
+            txt = response.choices[0].message.content.strip().lower()
+            if txt.startswith("yes"):
+                return True
+            if txt.startswith("no"):
+                return False
+        except Exception as e:
+            print(f"[LLM relevance fallback error] {e}")
+    return False
+
+def filter_alerts_llm(alerts, region=None, city=None, max_workers=4):
+    args = [(alert, region, city) for alert in alerts]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        relevant_flags = list(executor.map(lambda ac: llm_is_alert_relevant(*ac), args))
+    filtered = []
+    for i, flag in enumerate(relevant_flags):
+        if flag:
+            filtered.append(alerts[i])
+    return filtered
+
+def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=False, llm_location_filter=True):
     alerts = []
     seen = set()
+    region_str = str(region).strip() if region else None
+    topic_str = str(topic).lower() if isinstance(topic, str) and topic else "all"
+    city_str = str(city).strip() if city else None
 
-    region_str = str(region).lower() if isinstance(region, str) else "all"
-    topic_str = str(topic).lower() if isinstance(topic, str) else "all"
+    feeds = get_feeds_for_location(region=region_str, city=city_str)
 
-    try:
-        telegram_alerts = scrape_telegram_messages()
-        if telegram_alerts and isinstance(telegram_alerts, list):
-            for tg in telegram_alerts:
-                full_text = f"{tg['title']} {tg['summary']}".lower()
-                if region_str != "all" and region_str not in full_text:
-                    continue
-                if topic_str != "all" and topic_str not in full_text:
-                    continue
-
-                alerts.append({
-                    "title": tg["title"],
-                    "summary": tg["summary"],
-                    "link": tg["link"],
-                    "source": tg["source"]
-                })
-
-                if len(alerts) >= limit:
-                    print(f"✅ Parsed {len(alerts)} alerts.")
-                    break
-    except Exception as e:
-        print(f"❌ Telegram scrape failed: {e}")
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(fetch_feed, FEEDS))
+    with ThreadPoolExecutor(max_workers=len(feeds)) as executor:
+        results = list(executor.map(fetch_feed, feeds))
 
     for feed, source_url in results:
         if not feed or 'entries' not in feed:
@@ -233,8 +254,6 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             link = entry.get("link", "").strip()
             full_text = f"{title}: {summary}".lower()
 
-            if region_str != "all" and region_str not in full_text:
-                continue
             if topic_str != "all" and topic_str not in full_text:
                 continue
             if not KEYWORD_PATTERN.search(full_text):
@@ -258,26 +277,39 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
         if len(alerts) >= limit:
             break
 
-    if summarize and alerts:
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            threat_types = list(executor.map(lambda alert: classify_threat_type(alert["summary"]), alerts))
-        for i, alert in enumerate(alerts):
-            alert["type"] = threat_types[i]
-        alerts = parallel_summarize_alerts(alerts, summarize_with_grok)
+    # LLM Location Filtering
+    filtered_alerts = []
+    if llm_location_filter and (city_str or region_str):
+        print("🔍 Running LLM-based location relevance filtering...")
+        filtered_alerts = filter_alerts_llm(alerts, region=region_str, city=city_str)
     else:
-        for alert in alerts:
+        filtered_alerts = alerts
+
+    if not filtered_alerts:
+        print("⚠️ No relevant alerts found for city/region. Will use fallback advisory.")
+        return []
+
+    if summarize and filtered_alerts:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            threat_types = list(executor.map(lambda alert: classify_threat_type(alert["summary"]), filtered_alerts))
+        for i, alert in enumerate(filtered_alerts):
+            alert["type"] = threat_types[i]
+        filtered_alerts = parallel_summarize_alerts(filtered_alerts, summarize_with_grok)
+    else:
+        for alert in filtered_alerts:
             alert["type"] = classify_threat_type(alert["summary"])
 
-    print(f"✅ Parsed {len(alerts)} alerts.")
-    return alerts[:limit]
+    print(f"✅ Parsed {len(filtered_alerts)} location-relevant alerts.")
+    return filtered_alerts[:limit]
 
 def get_clean_alerts_cached(get_clean_alerts_fn):
     def wrapper(*args, **kwargs):
         summarize = kwargs.get("summarize", False)
         region = kwargs.get("region", None)
+        city = kwargs.get("city", None)
         topic = kwargs.get("topic", None)
 
-        if summarize or region or topic:
+        if summarize or region or city or topic:
             return get_clean_alerts_fn(*args, **kwargs)
 
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
@@ -298,12 +330,13 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
 
     return wrapper
 
-def generate_fallback_summary(region, threat_type):
+def generate_fallback_summary(region, threat_type, city=None):
+    location = f"{city}, {region}" if city and region else (city or region or "your location")
     prompt = f"""
 You are Sentinel AI, an elite threat analyst created by Zika Rakita at Zika Risk.
 
 No current threat alerts were found for:
-- Region: {region}
+- Location: {location}
 - Threat Type: {threat_type}
 
 Based on global intelligence patterns, provide a realistic and professional advisory summary (150–250 words) for travelers or security professionals. Mention relevant threats, operational considerations, and situational awareness — even if generalized. This should sound like real field intelligence, not generic advice.
@@ -311,11 +344,9 @@ Based on global intelligence patterns, provide a realistic and professional advi
 Respond in professional English. Output in plain text.
 """
     messages = [{"role": "user", "content": prompt}]
-    # 1. Try Grok-3-mini
     grok_summary = grok_chat(messages, max_tokens=300, temperature=0.4)
     if grok_summary:
         return grok_summary
-    # 2. Try OpenAI fallback
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -334,5 +365,11 @@ get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 
 if __name__ == "__main__":
     print("🔍 Running standalone RSS processor...")
-    alerts = get_clean_alerts()
-    print(f"✅ Parsed {len(alerts)} alerts.")
+    # Example: get_clean_alerts(region="uk", city="london", limit=5, summarize=True)
+    alerts = get_clean_alerts(region="uk", city="london", limit=5, summarize=True)
+    if not alerts:
+        print("No relevant alerts found. Generating fallback advisory...")
+        print(generate_fallback_summary(region="uk", threat_type="All", city="london"))
+    else:
+        for alert in alerts:
+            print(json.dumps(alert, indent=2))
