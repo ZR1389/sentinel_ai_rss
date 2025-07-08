@@ -3,6 +3,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from plan_rules import PLAN_RULES
 from plan_utils import get_plan
+from xai_client import grok_chat
 import json
 import time
 
@@ -70,6 +71,14 @@ def gpt_fallback(user_message, region, threat_type, plan):
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
+            print(f"[OpenAI error] {e}")
+            # Fallback to Grok-3-mini
+            grok_resp = grok_chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ], model="grok-3-mini", temperature=0.4, max_tokens=400)
+            if grok_resp:
+                return grok_resp
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
                 retry_delay *= 2
@@ -127,6 +136,14 @@ def generate_advice(user_message, alerts, email="anonymous", region=None, threat
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
+            print(f"[OpenAI error] {e}")
+            # Fallback to Grok-3-mini
+            grok_resp = grok_chat([
+                {"role": "system", "content": "Respond as a travel security expert. Be concise, realistic, and actionable."},
+                {"role": "user", "content": content}
+            ], model="grok-3-mini", temperature=0.5, max_tokens=400)
+            if grok_resp:
+                return grok_resp
             return f"Error generating advisory: {str(e)}"
 
     # Fallback for non-insight plans

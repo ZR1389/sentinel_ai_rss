@@ -1,32 +1,54 @@
-# Python
+```gitignore
+# Python compiled files and logs
 __pycache__/
 *.py[cod]
 *.log
 
-# Environment files
+# Environment files and secrets
 .env
-
-# Virtual environment
+.env.*
 venv/
+.venv/
 
-# Output
+# Output and reports
 /reports/
 /*.pdf
+/daily-brief-*.pdf
+/report_*.pdf
+
+# LLM cache and temporary data
+summary_cache.json
+cache/
 
 # Local Sentinel AI files
 generate_vapid.py
 subscribers.json
 
-# Editor backups
+# Editor/IDE backups and configs
 *.swp
 *.bak
-
-# macOS
 .DS_Store
-
-# IDEs
 .vscode/
 .idea/
 
 # Telegram session (Telethon)
 sentinel_session.session
+
+# Jupyter Notebooks
+*.ipynb_checkpoints
+
+# pip-tools/requirements output
+requirements*.txt~
+
+# Coverage/test output
+.coverage
+htmlcov/
+
+# SDK temp/session files
+*.tmp
+*.temp
+
+# Key/secret dumps (precaution)
+*key*.txt
+*secret*.txt
+```

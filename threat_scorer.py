@@ -2,11 +2,14 @@ import os
 from dotenv import load_dotenv
 from mistralai.client import Client
 from mistralai.models.chat_completion import ChatMessage
+from xai_client import grok_chat
+from openai import OpenAI
 
 load_dotenv()
 client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# High-priority keywords to instantly flag Critical threats
 CRITICAL_KEYWORDS = [
     "assassination", "suicide bombing", "mass shooting", "IED",
     "terrorist attack", "hijacking", "hostage situation", "military raid"
@@ -47,6 +50,11 @@ def assess_threat_level(alert_text):
         "Only return the label, no explanation."
     )
 
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": alert_text},
+    ]
+    # 1. Mistral
     try:
         response = client.chat(
             model=MISTRAL_THREAT_MODEL,
@@ -60,10 +68,26 @@ def assess_threat_level(alert_text):
         label = response.choices[0].message.content
         return normalize_threat_label(label)
     except Exception as e:
-        print(f"❌ Threat scoring error: {e}")
-        return "Unrated"
+        print(f"[Mistral error] {e}")
+    # 2. Grok-3
+    grok_label = grok_chat(messages, max_tokens=8, temperature=0)
+    if grok_label:
+        return normalize_threat_label(grok_label)
+    # 3. OpenAI fallback
+    if openai_client:
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0,
+                max_tokens=8
+            )
+            label = response.choices[0].message.content
+            return normalize_threat_label(label)
+        except Exception as e:
+            print(f"[OpenAI fallback error] {e}")
+    return "Unrated"
 
-# Test run
 if __name__ == "__main__":
     test = "Gunfire reported near embassy with possible hostage situation."
     print("Threat Level:", assess_threat_level(test))
