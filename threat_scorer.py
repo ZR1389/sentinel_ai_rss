@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from mistralai.client import MistralClient
+from mistralai import MistralClient, ChatMessage
 
 load_dotenv()
 client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
@@ -50,8 +50,8 @@ def assess_threat_level(alert_text):
         response = client.chat(
             model=MISTRAL_THREAT_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": alert_text}
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=alert_text)
             ],
             temperature=0,
             max_tokens=8

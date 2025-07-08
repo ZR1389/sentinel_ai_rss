@@ -8,11 +8,13 @@ from datetime import datetime
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-from mistralai.client import MistralClient
 from hashlib import sha256
 from pathlib import Path
 
 from telegram_scraper import scrape_telegram_messages
+
+# --- Mistral AI (new client import) ---
+from mistralai import MistralClient, ChatMessage
 
 load_dotenv()
 client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
@@ -77,8 +79,8 @@ def summarize_with_mistral(text):
         response = client.chat(
             model=MISTRAL_SUMMARY_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Summarize this for a traveler:\n\n{text}"}
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=f"Summarize this for a traveler:\n\n{text}")
             ],
             temperature=0.3,
             max_tokens=300
@@ -129,8 +131,8 @@ def classify_threat_type(text):
         response = client.chat(
             model=MISTRAL_CLASSIFY_MODEL,
             messages=[
-                {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
-                {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
+                ChatMessage(role="system", content="You are a threat classifier. Respond only with one category."),
+                ChatMessage(role="user", content=TYPE_PROMPT + "\n\n" + text)
             ],
             temperature=0,
             max_tokens=10
@@ -297,7 +299,7 @@ Respond in professional English. Output in plain text.
     try:
         response = client.chat(
             model=MISTRAL_SUMMARY_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[ChatMessage(role="user", content=prompt)],
             temperature=0.4
         )
         return response.choices[0].message.content.strip()

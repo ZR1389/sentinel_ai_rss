@@ -11,9 +11,14 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is required but not set.")
+if not CHAT_ID:
+    raise RuntimeError("TELEGRAM_CHAT_ID environment variable is required but not set.")
+
 VIP_CLIENTS = [
-    CHAT_ID,  # Zika default
-    # Add more chat IDs if needed
+    str(CHAT_ID),  # Zika default
+    # Add more chat IDs as strings if needed
 ]
 
 SEVERITY_FILTER = {"High", "Critical"}

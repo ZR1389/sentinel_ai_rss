@@ -1,5 +1,5 @@
 import os
-from mistralai.client import MistralClient
+from mistralai import MistralClient, ChatMessage
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from threat_scorer import assess_threat_level
@@ -26,8 +26,8 @@ def summarize_single_alert(alert):
         response = client.chat(
             model=MISTRAL_MODEL,
             messages=[
-                {"role": "system", "content": "Summarize this security alert in one concise sentence."},
-                {"role": "user", "content": full_text}
+                ChatMessage(role="system", content="Summarize this security alert in one concise sentence."),
+                ChatMessage(role="user", content=full_text)
             ],
             temperature=TEMPERATURE,
             max_tokens=80

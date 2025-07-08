@@ -6,10 +6,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Load credentials from .env
-api_id = int(os.getenv("TELEGRAM_API_ID"))
+# --- Credential loading with safety checks ---
+api_id_raw = os.getenv("TELEGRAM_API_ID")
 api_hash = os.getenv("TELEGRAM_API_HASH")
 session_name = "sentinel_session"
+
+if not api_id_raw:
+    raise RuntimeError("Environment variable TELEGRAM_API_ID is required but not set.")
+if not api_hash:
+    raise RuntimeError("Environment variable TELEGRAM_API_HASH is required but not set.")
+try:
+    api_id = int(api_id_raw)
+except Exception:
+    raise RuntimeError("TELEGRAM_API_ID must be a valid integer string.")
 
 channels = [
     "war_monitors", "sentdefender", "noelreports", "tacticalreport", "IntelRepublic",
@@ -50,7 +59,7 @@ def detect_region(text):
 def scrape_telegram_messages():
     alerts = []
 
-    # ✅ Only proceed if session file exists (avoid interactive login)
+    # Only proceed if session file exists (avoid interactive login)
     if not os.path.exists(session_name + ".session"):
         print("⚠️ Telegram session file not found. Skipping Telegram scraping in production.")
         return []
