@@ -5,7 +5,7 @@ try:
     import mistralai
     print("MISTRALAI VERSION:", getattr(mistralai, "__version__", "unknown"))
 except Exception as e:
-    print("MISTRALAI IMPORT ERROR:", e)
+    print("MISTRALAI IMPORT ERROR:", e) # Triggering full rebuild due to Mistral client error
 
 import os
 import re
@@ -23,9 +23,10 @@ from pathlib import Path
 load_dotenv()  # ✅ load before using env vars
 
 from telegram_scraper import scrape_telegram_messages
-from mistralai.client import MistralClient
+from mistralai.client import Client
+from mistralai.models.chat_completion import ChatMessage
 
-client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
+client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
