@@ -1,9 +1,10 @@
 import os
 from dotenv import load_dotenv
-from mistralai import MistralClient, ChatMessage
+from mistralai.client import Client
+from mistralai.models.chat_completion import ChatMessage
 
 load_dotenv()
-client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
+client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
 
 # High-priority keywords to instantly flag Critical threats
 CRITICAL_KEYWORDS = [

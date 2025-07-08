@@ -1,11 +1,12 @@
 import os
-from mistralai import MistralClient, ChatMessage
+from mistralai.client import Client
+from mistralai.models.chat_completion import ChatMessage
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from threat_scorer import assess_threat_level
 
 load_dotenv()
-client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
+client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
 
 # Configurable parameters
 SUMMARY_LIMIT = 5  # Max number of alerts to summarize
@@ -14,7 +15,7 @@ TEMPERATURE = 0.4
 
 def summarize_single_alert(alert):
     """
-    Summarize a single alert using Mistral LLM.
+    Summarize a single threat alert using Mistral LLM.
     """
     try:
         title = alert.get("title", "")
@@ -26,7 +27,7 @@ def summarize_single_alert(alert):
         response = client.chat(
             model=MISTRAL_MODEL,
             messages=[
-                ChatMessage(role="system", content="Summarize this security alert in one concise sentence."),
+                ChatMessage(role="system", content="Summarize this security threat alert in one concise sentence."),
                 ChatMessage(role="user", content=full_text)
             ],
             temperature=TEMPERATURE,
@@ -39,7 +40,7 @@ def summarize_single_alert(alert):
 
 def summarize_alerts(alerts):
     """
-    Summarize a list of alerts with the Mistral LLM (up to SUMMARY_LIMIT).
+    Summarize a list of threat alerts with the Mistral LLM (up to SUMMARY_LIMIT).
     Adds 'gpt_summary' to each alert.
     """
     summarized = []

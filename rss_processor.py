@@ -14,10 +14,11 @@ from pathlib import Path
 from telegram_scraper import scrape_telegram_messages
 
 # --- Mistral AI (new client import) ---
-from mistralai import MistralClient, ChatMessage
+from mistralai.client import Client
+from mistralai.models.chat_completion import ChatMessage
 
 load_dotenv()
-client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
+client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
