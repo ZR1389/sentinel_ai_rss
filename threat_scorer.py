@@ -1,12 +1,9 @@
 import os
 from dotenv import load_dotenv
-from mistralai.client import Client
-from mistralai.models.chat_completion import ChatMessage
 from xai_client import grok_chat
 from openai import OpenAI
 
 load_dotenv()
-client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -14,8 +11,6 @@ CRITICAL_KEYWORDS = [
     "assassination", "suicide bombing", "mass shooting", "IED",
     "terrorist attack", "hijacking", "hostage situation", "military raid"
 ]
-
-MISTRAL_THREAT_MODEL = os.getenv("MISTRAL_THREAT_MODEL", "mistral-small-3.2")
 
 def normalize_threat_label(label):
     label = label.strip().lower()
@@ -54,26 +49,11 @@ def assess_threat_level(alert_text):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": alert_text},
     ]
-    # 1. Mistral
-    try:
-        response = client.chat(
-            model=MISTRAL_THREAT_MODEL,
-            messages=[
-                ChatMessage(role="system", content=system_prompt),
-                ChatMessage(role="user", content=alert_text)
-            ],
-            temperature=0,
-            max_tokens=8
-        )
-        label = response.choices[0].message.content
-        return normalize_threat_label(label)
-    except Exception as e:
-        print(f"[Mistral error] {e}")
-    # 2. Grok-3
+    # 1. Grok-3-mini
     grok_label = grok_chat(messages, max_tokens=8, temperature=0)
     if grok_label:
         return normalize_threat_label(grok_label)
-    # 3. OpenAI fallback
+    # 2. OpenAI fallback
     if openai_client:
         try:
             response = openai_client.chat.completions.create(

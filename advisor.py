@@ -31,7 +31,7 @@ def get_static_profile(region, risk_profiles):
         return entry
     return None
 
-def gpt_fallback(user_message, region, threat_type, plan):
+def gpt_primary_grok_fallback(user_message, region, threat_type, plan):
     if plan in ["PRO", "VIP"]:
         system_prompt = (
             "You're Zika Rakita, a global security advisor with 20+ years of experience. "
@@ -107,8 +107,8 @@ def generate_advice(user_message, alerts, email="anonymous", region=None, threat
         static = get_static_profile(region, risk_profiles)
         if static:
             return static
-        # 2. Otherwise, always use GPT fallback for everyone
-        return gpt_fallback(user_message, region, threat_type, plan)
+        # 2. Otherwise, use OpenAI primary, Grok fallback for everyone
+        return gpt_primary_grok_fallback(user_message, region, threat_type, plan)
 
     # If alerts exist and plan allows insights, use GPT for tailored advice
     if insight_level and plan != "FREE":
@@ -137,7 +137,6 @@ def generate_advice(user_message, alerts, email="anonymous", region=None, threat
             return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"[OpenAI error] {e}")
-            # Fallback to Grok-3-mini
             grok_resp = grok_chat([
                 {"role": "system", "content": "Respond as a travel security expert. Be concise, realistic, and actionable."},
                 {"role": "user", "content": content}

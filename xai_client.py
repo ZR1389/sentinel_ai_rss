@@ -19,7 +19,7 @@ def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, max_tokens=30
                 chat.append(system(m["content"]))
             elif m["role"] == "user":
                 chat.append(user(m["content"]))
-        response = chat.sample()
+        response = chat.sample(max_tokens=max_tokens)
         return response.content.strip()
     except Exception as e:
         print(f"[Grok-3-mini error] {e}")

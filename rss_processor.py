@@ -14,17 +14,13 @@ from pathlib import Path
 load_dotenv()  # ✅ load before using env vars
 
 from telegram_scraper import scrape_telegram_messages
-from mistralai.client import Client
-from mistralai.models.chat_completion import ChatMessage
 from xai_client import grok_chat
 from openai import OpenAI
 
-client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 THREAT_KEYWORDS = [
-    # ... (as before)
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
     "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
     "suicide bombing", "military raid", "abduction", "hostage situation",
@@ -47,7 +43,6 @@ KEYWORD_PATTERN = re.compile(
 )
 
 FEEDS = [
-    # ... (as before)
     "https://www.cisa.gov/news.xml",
     "https://feeds.bbci.co.uk/news/uk/rss.xml",
     "https://www.darkreading.com/rss.xml",
@@ -68,9 +63,6 @@ FEEDS = [
     "https://www.gov.uk/foreign-travel-advice.atom",
 ]
 
-MISTRAL_SUMMARY_MODEL = os.getenv("MISTRAL_SUMMARY_MODEL", "mistral-small-3.2")
-MISTRAL_CLASSIFY_MODEL = os.getenv("MISTRAL_CLASSIFY_MODEL", "mistral-small-3.2")
-
 system_prompt = """
 You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
 You deliver concise, professional threat summaries and actionable advice. Speak with clarity and authority.
@@ -81,21 +73,7 @@ If the user is not a subscriber, end with:
 SUMMARY_LIMIT = 5
 
 def summarize_with_fallback(text):
-    # 1. Try Mistral
-    try:
-        response = client.chat(
-            model=MISTRAL_SUMMARY_MODEL,
-            messages=[
-                ChatMessage(role="system", content=system_prompt),
-                ChatMessage(role="user", content=f"Summarize this for a traveler:\n\n{text}")
-            ],
-            temperature=0.3,
-            max_tokens=300
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"[Mistral error] {str(e)}")
-    # 2. Try Grok-3-mini
+    # 1. Try Grok-3-mini
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Summarize this for a traveler:\n\n{text}"}
@@ -103,7 +81,7 @@ def summarize_with_fallback(text):
     grok_summary = grok_chat(messages)
     if grok_summary:
         return grok_summary
-    # 3. Try OpenAI (optional)
+    # 2. Try OpenAI fallback
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -117,7 +95,7 @@ def summarize_with_fallback(text):
             print(f"[OpenAI fallback error] {e}")
     return "No summary available due to an error."
 
-def summarize_with_mistral_cached(summarize_fn):
+def summarize_with_grok_cached(summarize_fn):
     cache_file = "summary_cache.json"
     Path(cache_file).touch(exist_ok=True)
     try:
@@ -153,39 +131,21 @@ Classify the threat type based on the following news headline and summary. Choos
 Respond with only the category name.
 """
 
+THREAT_CATEGORIES = [
+    "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
+    "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
+]
+
 def classify_threat_type(text):
     messages = [
         {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
         {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
     ]
-    # 1. Try Mistral
-    try:
-        response = client.chat(
-            model=MISTRAL_CLASSIFY_MODEL,
-            messages=[
-                ChatMessage(role="system", content="You are a threat classifier. Respond only with one category."),
-                ChatMessage(role="user", content=TYPE_PROMPT + "\n\n" + text)
-            ],
-            temperature=0,
-            max_tokens=10
-        )
-        label = response.choices[0].message.content.strip()
-        if label not in [
-            "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
-            "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
-        ]:
-            return "Unclassified"
-        return label
-    except Exception as e:
-        print(f"❌ Threat type classification error: {e}")
-    # 2. Try Grok-3-mini
+    # 1. Try Grok-3-mini
     grok_label = grok_chat(messages, max_tokens=10, temperature=0)
-    if grok_label and grok_label in [
-        "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
-        "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
-    ]:
+    if grok_label and grok_label in THREAT_CATEGORIES:
         return grok_label
-    # 3. Try OpenAI fallback
+    # 2. Try OpenAI fallback
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -195,10 +155,7 @@ def classify_threat_type(text):
                 max_tokens=10
             )
             label = response.choices[0].message.content.strip()
-            if label not in [
-                "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
-                "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
-            ]:
+            if label not in THREAT_CATEGORIES:
                 return "Unclassified"
             return label
         except Exception as e:
@@ -206,7 +163,6 @@ def classify_threat_type(text):
     return "Unclassified"
 
 def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
-    # ... (unchanged)
     attempt = 0
     while attempt < retries:
         try:
@@ -224,7 +180,6 @@ def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
     return None, url
 
 def parallel_summarize_alerts(alerts, summarize_fn, limit=SUMMARY_LIMIT, max_workers=5):
-    # ... (unchanged)
     to_summarize = alerts[:limit]
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         summaries = list(executor.map(lambda alert: summarize_fn(alert["summary"]), to_summarize))
@@ -235,7 +190,6 @@ def parallel_summarize_alerts(alerts, summarize_fn, limit=SUMMARY_LIMIT, max_wor
     return alerts
 
 def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
-    # ... (unchanged except summary/classification now uses fallback)
     alerts = []
     seen = set()
 
@@ -309,7 +263,7 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
             threat_types = list(executor.map(lambda alert: classify_threat_type(alert["summary"]), alerts))
         for i, alert in enumerate(alerts):
             alert["type"] = threat_types[i]
-        alerts = parallel_summarize_alerts(alerts, summarize_with_mistral)
+        alerts = parallel_summarize_alerts(alerts, summarize_with_grok)
     else:
         for alert in alerts:
             alert["type"] = classify_threat_type(alert["summary"])
@@ -318,7 +272,6 @@ def get_clean_alerts(region=None, topic=None, limit=20, summarize=False):
     return alerts[:limit]
 
 def get_clean_alerts_cached(get_clean_alerts_fn):
-    # ... (unchanged)
     def wrapper(*args, **kwargs):
         summarize = kwargs.get("summarize", False)
         region = kwargs.get("region", None)
@@ -357,33 +310,26 @@ Based on global intelligence patterns, provide a realistic and professional advi
 
 Respond in professional English. Output in plain text.
 """
-    try:
-        response = client.chat(
-            model=MISTRAL_SUMMARY_MODEL,
-            messages=[ChatMessage(role="user", content=prompt)],
-            temperature=0.4
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        # Fallback: try Grok-3 then OpenAI
-        messages = [{"role": "user", "content": prompt}]
-        grok_summary = grok_chat(messages, max_tokens=300, temperature=0.4)
-        if grok_summary:
-            return grok_summary
-        if openai_client:
-            try:
-                response = openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=messages,
-                    temperature=0.4,
-                    max_tokens=300
-                )
-                return response.choices[0].message.content.strip()
-            except Exception as e2:
-                return f"⚠️ Fallback error: {str(e2)}"
-        return f"⚠️ Fallback error: {str(e)}"
+    messages = [{"role": "user", "content": prompt}]
+    # 1. Try Grok-3-mini
+    grok_summary = grok_chat(messages, max_tokens=300, temperature=0.4)
+    if grok_summary:
+        return grok_summary
+    # 2. Try OpenAI fallback
+    if openai_client:
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0.4,
+                max_tokens=300
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e2:
+            return f"⚠️ Fallback error: {str(e2)}"
+    return f"⚠️ Fallback error: Could not generate summary."
 
-summarize_with_mistral = summarize_with_mistral_cached(summarize_with_fallback)
+summarize_with_grok = summarize_with_grok_cached(summarize_with_fallback)
 get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 
 if __name__ == "__main__":
