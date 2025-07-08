@@ -1,3 +1,12 @@
+import pkg_resources
+print("INSTALLED PACKAGES:", pkg_resources.working_set)
+
+try:
+    import mistralai
+    print("MISTRALAI VERSION:", getattr(mistralai, "__version__", "unknown"))
+except Exception as e:
+    print("MISTRALAI IMPORT ERROR:", e)
+
 import os
 import re
 import time
@@ -11,14 +20,12 @@ from dotenv import load_dotenv
 from hashlib import sha256
 from pathlib import Path
 
+load_dotenv()  # ✅ load before using env vars
+
 from telegram_scraper import scrape_telegram_messages
+from mistralai.client import MistralClient
 
-# --- Mistral AI (new client import) ---
-from mistralai.client import Client
-from mistralai.models.chat_completion import ChatMessage
-
-load_dotenv()
-client = Client(api_key=os.getenv("MISTRAL_API_KEY"))
+client = MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
 
 THREAT_KEYWORDS = [
     "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
