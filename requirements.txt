@@ -14,3 +14,4 @@ gunicorn==23.0.0
 pywebpush==1.14.0
 xai-sdk>=0.2.0
 unidecode
+pycountry
