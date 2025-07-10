@@ -67,9 +67,9 @@ def send_telegram_pdf(pdf_path):
             except requests.exceptions.RequestException as e:
                 print(f"❌ Telegram request error for {chat_id}: {e}")
 
-def send_alerts_to_telegram(email="anonymous"):
+def send_alerts_to_telegram(email="anonymous", limit=10):
     unsubscribed = load_unsubscribed()
-    alerts = get_clean_alerts(limit=10)
+    alerts = get_clean_alerts(limit=limit)
     print(f"🔍 Alerts fetched: {len(alerts)}")
 
     if not alerts:
@@ -78,10 +78,15 @@ def send_alerts_to_telegram(email="anonymous"):
 
     qualified_alerts = []
     for alert in alerts:
-        text = f"{alert['title']}: {alert['summary']}"
-        level = assess_threat_level(text)
-        if level in SEVERITY_FILTER:
-            alert["level"] = level
+        # Combine title and summary for risk assessment
+        text = f"{alert.get('title', '')}: {alert.get('summary', '')}"
+        threat = assess_threat_level(text)
+        # Logic fix: threat is a dict, use threat_label field
+        threat_label = threat.get("threat_label", "Low")
+        if threat_label in SEVERITY_FILTER:
+            alert["level"] = threat_label
+            alert["threat_score"] = threat.get("score")
+            alert["reasoning"] = threat.get("reasoning", "")
             qualified_alerts.append(alert)
 
     if not qualified_alerts:
@@ -96,7 +101,9 @@ def send_alerts_to_telegram(email="anonymous"):
             f"*Sentinel AI High-Risk Alert* — {date.today().isoformat()}\n\n"
             f"*Title:* {alert.get('title', '')}\n"
             f"*Source:* {alert.get('source', '')}\n"
-            f"*Threat Level:* {alert.get('level', '')}\n\n"
+            f"*Threat Level:* {alert.get('level', '')}\n"
+            f"*Threat Score:* {alert.get('threat_score', '')}\n"
+            f"*Reasoning:* {alert.get('reasoning', '')}\n\n"
             f"{alert.get('summary', '')}\n"
             f"[Read more]({alert.get('link', '')})"
         )
@@ -110,7 +117,8 @@ def send_alerts_to_telegram(email="anonymous"):
             payload = {
                 "chat_id": chat_id,
                 "text": message,
-                "parse_mode": "Markdown"
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True
             }
 
             try:

@@ -18,16 +18,19 @@ def email_job():
 
     for client in clients:
         email = client.get("email", "")
-        plan = client.get("plan", "FREE").upper()
-
-        if plan in ["PRO", "VIP"]:
-            try:
-                send_pdf_report(email=email, plan=plan)
-                print(f"✅ Report sent to {email}")
-            except Exception as e:
-                print(f"❌ Error for {email}: {e}")
+        plan = client.get("plan", "FREE")
+        region = client.get("region", None)
+        result = send_pdf_report(email=email, plan=plan, region=region)
+        status = result.get("status", "unknown")
+        reason = result.get("reason", "")
+        if status == "sent":
+            print(f"✅ Report sent to {email} ({plan})")
+        elif status == "skipped":
+            print(f"⏩ Skipped {email} ({plan}) — {reason}")
+        elif status == "error":
+            print(f"❌ Error for {email} ({plan}): {reason}")
         else:
-            print(f"⏩ Skipped {email} (Plan: {plan}) — No PDF access")
+            print(f"❓ Unknown status for {email} ({plan}): {result}")
 
 def telegram_job():
     print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running Telegram dispatch...")

@@ -1,6 +1,5 @@
 from email_dispatcher import send_pdf_report
 from dotenv import load_dotenv
-from plan_rules import PLAN_RULES
 import json
 
 load_dotenv()
@@ -15,16 +14,19 @@ def send_daily_summaries():
 
     for client in clients:
         email = client.get("email", "unknown")
-        plan = client.get("plan", "FREE").upper()
-
-        if PLAN_RULES.get(plan, {}).get("pdf", False):
-            try:
-                send_pdf_report(email=email, plan=plan)
-                print(f"✅ Sent daily PDF to {email} ({plan})")
-            except Exception as e:
-                print(f"❌ Error for {email}: {e}")
+        plan = client.get("plan", "FREE")
+        region = client.get("region", None)
+        result = send_pdf_report(email=email, plan=plan, region=region)
+        status = result.get("status", "unknown")
+        reason = result.get("reason", "")
+        if status == "sent":
+            print(f"✅ Sent daily PDF to {email} ({plan})")
+        elif status == "skipped":
+            print(f"⏩ Skipped {email} ({plan}) — {reason}")
+        elif status == "error":
+            print(f"❌ Error for {email} ({plan}): {reason}")
         else:
-            print(f"⏩ Skipped {email} — No PDF access for {plan}")
+            print(f"❓ Unknown status for {email} ({plan}): {result}")
 
 if __name__ == "__main__":
     print("📤 Sending scheduled daily PDF summaries...")

@@ -10,15 +10,21 @@ from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from hashlib import sha256
 from pathlib import Path
+from unidecode import unidecode
+import difflib
 
-# Import feed catalogs from external file
 from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 
-load_dotenv()  # Load environment variables
+with open('fcdo_country_feeds.json', 'r', encoding='utf-8') as f:
+    FCDO_FEEDS = json.load(f)
+
+load_dotenv()
 
 from telegram_scraper import scrape_telegram_messages
 from xai_client import grok_chat
 from openai import OpenAI
+from threat_scorer import assess_threat_level
+from prompts import SYSTEM_PROMPT, TYPE_PROMPT, FALLBACK_PROMPT
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -45,28 +51,45 @@ KEYWORD_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-system_prompt = """
-You are Sentinel AI — an intelligent threat analyst created by Zika Rakita, founder of Zika Risk.
-You deliver concise, professional threat summaries and actionable advice. Speak with clarity and authority.
-If the user is not a subscriber, end with:
-“To receive personalized alerts, intelligence briefings, and emergency support, upgrade your access at zikarisk.com.”
-"""
-
 SUMMARY_LIMIT = 5
 
-def get_feeds_for_location(region=None, city=None):
-    """Return the most specific feed(s) for the query."""
-    city_key = city.lower().strip() if city else None
-    region_key = region.lower().strip() if region else None
-    if city_key and city_key in LOCAL_FEEDS:
-        return LOCAL_FEEDS[city_key]
-    if region_key and region_key in COUNTRY_FEEDS:
-        return COUNTRY_FEEDS[region_key]
+# --- City normalization and fuzzy matching logic ---
+
+# Normalize LOCAL_FEEDS at load time
+NORMALIZED_LOCAL_FEEDS = {unidecode(city).lower().strip(): v for city, v in LOCAL_FEEDS.items()}
+
+def get_feed_for_city(city):
+    if not city:
+        return None
+    city_key = unidecode(city).lower().strip()
+    # Fuzzy match with a reasonable cutoff for typos/variants
+    match = difflib.get_close_matches(city_key, NORMALIZED_LOCAL_FEEDS.keys(), n=1, cutoff=0.8)
+    if match:
+        return NORMALIZED_LOCAL_FEEDS[match[0]]
+    return None
+
+def get_feed_for_location(region=None, city=None, topic=None):
+    region_key = region.strip().title() if region else None
+    if region_key and region_key in FCDO_FEEDS:
+        return [FCDO_FEEDS[region_key]]
+    # Use improved city matching here!
+    city_feeds = get_feed_for_city(city)
+    if city_feeds:
+        return city_feeds
+    if topic and topic.lower() == "cyber":
+        try:
+            from feeds_catalog import CYBER_FEEDS
+            return CYBER_FEEDS
+        except ImportError:
+            pass
+    region_key_lower = region.lower().strip() if region else None
+    if region_key_lower and region_key_lower in COUNTRY_FEEDS:
+        return COUNTRY_FEEDS[region_key_lower]
     return GLOBAL_FEEDS
 
 def summarize_with_fallback(text):
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Summarize this for a traveler:\n\n{text}"}
     ]
     grok_summary = grok_chat(messages)
@@ -77,8 +100,7 @@ def summarize_with_fallback(text):
             response = openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
-                temperature=0.3,
-                max_tokens=300
+                temperature=0.3
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -106,64 +128,76 @@ def summarize_with_grok_cached(summarize_fn):
 
     return wrapper
 
-TYPE_PROMPT = """
-Classify the threat type based on the following news headline and summary. Choose only ONE of the following categories:
-- Terrorism
-- Protest
-- Crime
-- Kidnapping
-- Cyber
-- Natural Disaster
-- Political
-- Infrastructure
-- Health
-- Unclassified
-Respond with only the category name.
-"""
-
 THREAT_CATEGORIES = [
     "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
     "Natural Disaster", "Political", "Infrastructure", "Health", "Unclassified"
 ]
 
 def classify_threat_type(text):
+    import json as pyjson
     messages = [
-        {"role": "system", "content": "You are a threat classifier. Respond only with one category."},
+        {"role": "system", "content": "You are a threat classifier. Respond with a JSON as: {\"label\": ..., \"confidence\": ...}"},
         {"role": "user", "content": TYPE_PROMPT + "\n\n" + text}
     ]
-    grok_label = grok_chat(messages, max_tokens=10, temperature=0)
-    if grok_label and grok_label in THREAT_CATEGORIES:
-        return grok_label
+    try:
+        grok_label = grok_chat(messages, temperature=0)
+        if grok_label:
+            try:
+                parsed = pyjson.loads(grok_label)
+                label = parsed.get("label", "Unclassified")
+                confidence = float(parsed.get("confidence", 0.85))
+            except Exception:
+                label = grok_label.strip()
+                confidence = 0.88 if label in THREAT_CATEGORIES else 0.5
+            if label not in THREAT_CATEGORIES:
+                label = "Unclassified"
+                confidence = 0.5
+            return {"label": label, "confidence": confidence}
+    except Exception as e:
+        print(f"[classify_threat_type][Grok error] {e}")
+
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
-                temperature=0,
-                max_tokens=10
+                temperature=0
             )
-            label = response.choices[0].message.content.strip()
+            try:
+                parsed = pyjson.loads(response.choices[0].message.content)
+                label = parsed.get("label", "Unclassified")
+                confidence = float(parsed.get("confidence", 0.85))
+            except Exception:
+                label = response.choices[0].message.content.strip()
+                confidence = 0.85 if label in THREAT_CATEGORIES else 0.5
             if label not in THREAT_CATEGORIES:
-                return "Unclassified"
-            return label
+                label = "Unclassified"
+                confidence = 0.5
+            return {"label": label, "confidence": confidence}
         except Exception as e:
-            print(f"[OpenAI fallback error] {e}")
-    return "Unclassified"
+            print(f"[classify_threat_type][OpenAI error] {e}")
 
-def fetch_feed(url, timeout=7, retries=3, backoff=1.5):
+    return {"label": "Unclassified", "confidence": 0.5}
+
+def fetch_feed(url, timeout=7, retries=3, backoff=1.5, max_backoff=60):
     attempt = 0
+    current_backoff = backoff
     while attempt < retries:
         try:
             response = httpx.get(url, timeout=timeout)
             if response.status_code == 200:
                 print(f"✅ Fetched: {url}")
                 return feedparser.parse(response.content.decode('utf-8', errors='ignore')), url
+            elif response.status_code in [429, 503]:
+                current_backoff = min(current_backoff * 2, max_backoff)
+                print(f"⚠️ Throttled ({response.status_code}) by {url}; backing off for {current_backoff} seconds")
+                time.sleep(current_backoff)
             else:
                 print(f"⚠️ Feed returned {response.status_code}: {url}")
         except Exception as e:
             print(f"❌ Attempt {attempt + 1} failed for {url} — {e}")
         attempt += 1
-        time.sleep(backoff ** attempt)
+        time.sleep(current_backoff)
     print(f"❌ Failed to fetch after {retries} retries: {url}")
     return None, url
 
@@ -197,7 +231,7 @@ def llm_is_alert_relevant(alert, region=None, city=None):
         "Reply with only Yes or No."
     )
     messages = [{"role": "user", "content": prompt}]
-    answer = grok_chat(messages, max_tokens=3, temperature=0)
+    answer = grok_chat(messages, temperature=0)
     if answer:
         answer = answer.strip().lower()
         if answer.startswith("yes"):
@@ -209,8 +243,7 @@ def llm_is_alert_relevant(alert, region=None, city=None):
             response = openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
-                temperature=0,
-                max_tokens=3
+                temperature=0
             )
             txt = response.choices[0].message.content.strip().lower()
             if txt.startswith("yes"):
@@ -231,6 +264,15 @@ def filter_alerts_llm(alerts, region=None, city=None, max_workers=4):
             filtered.append(alerts[i])
     return filtered
 
+def map_severity(score):
+    if score is None:
+        return "Unknown"
+    if score >= 0.75:
+        return "High"
+    if score >= 0.45:
+        return "Medium"
+    return "Low"
+
 def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=False, llm_location_filter=True):
     alerts = []
     seen = set()
@@ -238,7 +280,10 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
     topic_str = str(topic).lower() if isinstance(topic, str) and topic else "all"
     city_str = str(city).strip() if city else None
 
-    feeds = get_feeds_for_location(region=region_str, city=city_str)
+    feeds = get_feed_for_location(region=region_str, city=city_str, topic=topic_str)
+    if not feeds:
+        print("⚠️ No feeds found for the given location/topic.")
+        return []
 
     with ThreadPoolExecutor(max_workers=len(feeds)) as executor:
         results = list(executor.map(fetch_feed, feeds))
@@ -252,6 +297,7 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
             title = entry.get("title", "").strip()
             summary = entry.get("summary", "").strip()
             link = entry.get("link", "").strip()
+            published = entry.get("published", "")
             full_text = f"{title}: {summary}".lower()
 
             if topic_str != "all" and topic_str not in full_text:
@@ -259,17 +305,66 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
             if not KEYWORD_PATTERN.search(full_text):
                 continue
 
-            key = f"{title}:{summary}"
-            if key in seen:
+            dedupe_key = sha256(f"{title}:{summary}".encode("utf-8")).hexdigest()
+            if dedupe_key in seen:
                 continue
-            seen.add(key)
+            seen.add(dedupe_key)
 
-            alerts.append({
+            alert = {
+                "uuid": dedupe_key,
                 "title": title,
                 "summary": summary,
+                "gpt_summary": "",
                 "link": link,
-                "source": source_domain
-            })
+                "source": source_domain,
+                "published": published,
+                "region": region_str,
+                "city": city_str,
+                "type": "",
+                "type_confidence": None,
+                "severity": "",
+                "threat_label": "",
+                "score": None,
+                "confidence": None,
+                "reasoning": "",
+                "review_flag": False,
+                "review_notes": "",
+                "timestamp": datetime.utcnow().isoformat(),
+                "model_used": "",
+            }
+            try:
+                alert_text = f"{title}: {summary}"
+                threat_result = assess_threat_level(
+                    alert_text=alert_text,
+                    triggers=[],  # Could parse triggers from summary/title if needed
+                    location=city or region or "",
+                    alert_uuid=dedupe_key
+                )
+                for k, v in threat_result.items():
+                    alert[k] = v
+                alert["severity"] = map_severity(alert.get("score"))
+                alert["model_used"] = threat_result.get("model_used", "")
+            except Exception as e:
+                print(f"[RSS_PROCESSOR_ERROR][THREAT_SCORER] {e} | Alert: {title}")
+                alert["threat_label"] = "Unrated"
+                alert["score"] = 0
+                alert["reasoning"] = f"Threat scorer failed: {e}"
+                alert["confidence"] = 0.0
+                alert["review_flag"] = True
+                alert["review_notes"] = "Could not auto-score threat; requires analyst review."
+                alert["timestamp"] = datetime.utcnow().isoformat()
+                alert["severity"] = "Unknown"
+
+            try:
+                threat_type = classify_threat_type(summary)
+                alert["type"] = threat_type["label"]
+                alert["type_confidence"] = threat_type["confidence"]
+            except Exception as e:
+                print(f"[RSS_PROCESSOR_ERROR][ThreatType] {e} | Alert: {title}")
+                alert["type"] = "Unclassified"
+                alert["type_confidence"] = 0.5
+
+            alerts.append(alert)
 
             if len(alerts) >= limit:
                 print(f"✅ Parsed {len(alerts)} alerts.")
@@ -277,7 +372,6 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
         if len(alerts) >= limit:
             break
 
-    # LLM Location Filtering
     filtered_alerts = []
     if llm_location_filter and (city_str or region_str):
         print("🔍 Running LLM-based location relevance filtering...")
@@ -290,14 +384,10 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
         return []
 
     if summarize and filtered_alerts:
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            threat_types = list(executor.map(lambda alert: classify_threat_type(alert["summary"]), filtered_alerts))
-        for i, alert in enumerate(filtered_alerts):
-            alert["type"] = threat_types[i]
         filtered_alerts = parallel_summarize_alerts(filtered_alerts, summarize_with_grok)
     else:
         for alert in filtered_alerts:
-            alert["type"] = classify_threat_type(alert["summary"])
+            alert.setdefault("gpt_summary", "")
 
     print(f"✅ Parsed {len(filtered_alerts)} location-relevant alerts.")
     return filtered_alerts[:limit]
@@ -332,19 +422,9 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
 
 def generate_fallback_summary(region, threat_type, city=None):
     location = f"{city}, {region}" if city and region else (city or region or "your location")
-    prompt = f"""
-You are Sentinel AI, an elite threat analyst created by Zika Rakita at Zika Risk.
-
-No current threat alerts were found for:
-- Location: {location}
-- Threat Type: {threat_type}
-
-Based on global intelligence patterns, provide a realistic and professional advisory summary (150–250 words) for travelers or security professionals. Mention relevant threats, operational considerations, and situational awareness — even if generalized. This should sound like real field intelligence, not generic advice.
-
-Respond in professional English. Output in plain text.
-"""
+    prompt = FALLBACK_PROMPT.format(location=location, threat_type=threat_type)
     messages = [{"role": "user", "content": prompt}]
-    grok_summary = grok_chat(messages, max_tokens=300, temperature=0.4)
+    grok_summary = grok_chat(messages, temperature=0.4)
     if grok_summary:
         return grok_summary
     if openai_client:
@@ -352,8 +432,7 @@ Respond in professional English. Output in plain text.
             response = openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
-                temperature=0.4,
-                max_tokens=300
+                temperature=0.4
             )
             return response.choices[0].message.content.strip()
         except Exception as e2:
@@ -365,11 +444,10 @@ get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 
 if __name__ == "__main__":
     print("🔍 Running standalone RSS processor...")
-    # Example: get_clean_alerts(region="uk", city="london", limit=5, summarize=True)
-    alerts = get_clean_alerts(region="uk", city="london", limit=5, summarize=True)
+    alerts = get_clean_alerts(region="Afghanistan", limit=5, summarize=True)
     if not alerts:
         print("No relevant alerts found. Generating fallback advisory...")
-        print(generate_fallback_summary(region="uk", threat_type="All", city="london"))
+        print(generate_fallback_summary(region="Afghanistan", threat_type="All"))
     else:
         for alert in alerts:
             print(json.dumps(alert, indent=2))

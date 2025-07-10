@@ -1,5 +1,3 @@
-# plan_rules.py
-
 PLAN_RULES = {
     "FREE": {
         "chat_limit": 3,

@@ -7,7 +7,7 @@ XAI_API_HOST = "api.x.ai"
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
 TEMPERATURE = float(os.getenv("GROK_TEMPERATURE", 0.3))
 
-def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, max_tokens=300):
+def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE):
     if not XAI_API_KEY:
         print("[Grok-3-mini] API key missing.")
         return None
@@ -19,7 +19,7 @@ def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, max_tokens=30
                 chat.append(system(m["content"]))
             elif m["role"] == "user":
                 chat.append(user(m["content"]))
-        response = chat.sample(max_tokens=max_tokens)
+        response = chat.sample()
         return response.content.strip()
     except Exception as e:
         print(f"[Grok-3-mini error] {e}")

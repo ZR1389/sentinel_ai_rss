@@ -1,4 +1,3 @@
-```gitignore
 # Python compiled files and logs
 __pycache__/
 *.py[cod]
@@ -7,6 +6,7 @@ __pycache__/
 # Environment files and secrets
 .env
 .env.*
+*.env
 venv/
 .venv/
 
@@ -51,4 +51,12 @@ htmlcov/
 # Key/secret dumps (precaution)
 *key*.txt
 *secret*.txt
-```
+
+# Type checker and test cache (optional)
+.mypy_cache/
+.pytest_cache/
+
+# SQLite and local DBs (optional)
+*.sqlite3
+*.db
+*.csv

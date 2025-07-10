@@ -1,23 +1,50 @@
 import json
 import os
 import time
+import logging
 from dotenv import load_dotenv
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha1
 
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
 from threat_engine import summarize_alerts
 from advisor import generate_advice
 from clients import get_plan
+# Import your city/country normalization utility if present
+try:
+    from city_utils import fuzzy_match_city, normalize_city
+except ImportError:
+    fuzzy_match_city = None
+    normalize_city = None
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger(__name__)
 
 USAGE_FILE = "usage_log.json"
+
+CACHE_TTL = 3600  # seconds (1 hour)
 RESPONSE_CACHE = {}
 
-load_dotenv()
+def set_cache(key, value):
+    RESPONSE_CACHE[key] = (value, time.time())
 
-with open("risk_profiles.json", "r") as f:
-    risk_profiles = json.load(f)
+def get_cache(key):
+    entry = RESPONSE_CACHE.get(key)
+    if not entry:
+        return None
+    value, timestamp = entry
+    if time.time() - timestamp > CACHE_TTL:
+        del RESPONSE_CACHE[key]
+        return None
+    return value
+
+load_dotenv()
 
 PLAN_LIMITS = {
     "FREE": {"chat_limit": 3},
@@ -65,48 +92,42 @@ def normalize_value(val, default="All"):
         return val
     return default
 
-def smart_risk_profile_fallback(region, original_query=None):
-    """
-    Try to find a region profile, fallback to 'All', fallback to English, fallback to generic.
-    """
-    # Try exact match
-    region_data = risk_profiles.get(region)
-    if not region_data:
-        # Try case-insensitive match
-        for r in risk_profiles:
-            if r.lower() == region.lower():
-                region_data = risk_profiles[r]
-                break
-    if not region_data:
-        region_data = risk_profiles.get("All", {})
-    # Try English, then generic
-    return (
-        region_data.get("en")
-        or "No alerts right now. Stay aware and consult regional sources."
-    )
+def normalize_region(region, city_list=None):
+    """Optional: Use fuzzy matching for region/city normalization if list is provided."""
+    if not region or region.lower() in ["all", "all regions"]:
+        return None
+    if fuzzy_match_city and city_list:
+        match = fuzzy_match_city(region, city_list)
+        return match if match else region
+    if normalize_city:
+        return normalize_city(region)
+    return region
 
-def handle_user_query(message, email, region=None, threat_type=None, plan=None):
-    print(f"Received query: {message} | Email: {email}")
+def handle_user_query(message, email, region=None, threat_type=None, plan=None, city_list=None):
+    log.info(f"Received query: {message} | Email: {email}")
 
     plan_raw = get_plan(email) or plan or "Free"
     plan = plan_raw.upper() if isinstance(plan_raw, str) else "FREE"
-    print(f"Plan: {plan}")
+    log.info(f"Plan: {plan}")
 
     query = message.get("query", "") if isinstance(message, dict) else str(message)
-    print(f"Query content: {query}")
+    log.info(f"Query content: {query}")
 
-    # PATCH: region and threat_type set to None if blank/All for advisor.py compatibility
+    # Normalize region and threat_type
     region = normalize_value(region)
     threat_type = normalize_value(threat_type)
     region = None if region.lower() == "all" else region
     threat_type = None if threat_type.lower() == "all" else threat_type
-    print(f"[DEBUG] region={region!r}, threat_type={threat_type!r}")
+    # Optionally normalize region/city
+    if region and city_list:
+        region = normalize_region(region, city_list)
+    log.debug(f"region={region!r}, threat_type={threat_type!r}")
 
     if isinstance(query, str) and query.lower().strip() in ["status", "plan"]:
         return {"plan": plan}
 
     if not check_usage_allowed(email, plan):
-        print("Usage limit reached")
+        log.warning("Usage limit reached")
         return {
             "reply": "You reached your monthly message quota. Please upgrade to get more access.",
             "plan": plan,
@@ -114,60 +135,117 @@ def handle_user_query(message, email, region=None, threat_type=None, plan=None):
         }
 
     increment_usage(email)
-    print("Usage incremented")
+    log.info("Usage incremented")
 
-    cache_key = f"{query}_{region}_{threat_type}_{plan}"
-    if cache_key in RESPONSE_CACHE:
-        print("Returning cached response")
-        return RESPONSE_CACHE[cache_key]
+    # Use a robust cache key
+    cache_key = sha1(json.dumps({
+        "query": query,
+        "region": region,
+        "threat_type": threat_type,
+        "plan": plan
+    }, sort_keys=True).encode("utf-8")).hexdigest()
 
-    # Fetch alerts
-    raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
-    print(f"Alerts fetched: {len(raw_alerts)}")
+    cached = get_cache(cache_key)
+    if cached is not None:
+        log.info("Returning cached response")
+        return cached
+
+    # Fetch alerts with error handling
+    try:
+        raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True)
+        log.info(f"Alerts fetched: {len(raw_alerts)}")
+    except Exception as e:
+        log.error(f"Failed to fetch alerts: {e}")
+        return {
+            "reply": f"System error fetching alerts: {e}",
+            "plan": plan,
+            "alerts": []
+        }
 
     # SMART FALLBACK: handle all cases when no alerts exist
     if not raw_alerts:
-        # Use advisor.py's logic for all plans, including static and GPT fallback
-        fallback = generate_advice(query, [], email=email, region=region, threat_type=threat_type)
+        try:
+            fallback = generate_advice(query, [], email=email, region=region, threat_type=threat_type)
+        except Exception as e:
+            log.error(f"Failed to generate advice: {e}")
+            fallback = f"System error generating advice: {e}"
         result = {
             "reply": fallback,
             "plan": plan,
             "alerts": []
         }
-        RESPONSE_CACHE[cache_key] = result
+        set_cache(cache_key, result)
         return result
 
-    # Threat scoring in parallel
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        threat_scores = list(executor.map(assess_threat_level, raw_alerts))
+    # Threat scoring in parallel (score summaries for best context)
+    try:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            threat_scores = list(executor.map(lambda a: assess_threat_level(a.get("summary", "")), raw_alerts))
+    except Exception as e:
+        log.error(f"Failed to score threats: {e}")
+        return {
+            "reply": f"System error scoring threats: {e}",
+            "plan": plan,
+            "alerts": []
+        }
 
-    # Summarize alerts (no lang argument)
-    summarized = summarize_alerts(raw_alerts)
-    print("Summaries generated")
+    # Summarize alerts
+    try:
+        summarized = summarize_alerts(raw_alerts)
+        log.info("Summaries generated")
+    except Exception as e:
+        log.error(f"Failed to summarize alerts: {e}")
+        return {
+            "reply": f"System error summarizing alerts: {e}",
+            "plan": plan,
+            "alerts": []
+        }
 
     results = []
     for i, alert in enumerate(summarized):
         alert_type = alert.get("type", "")
         if not isinstance(alert_type, str):
             alert_type = str(alert_type)
+        threat = threat_scores[i] if i < len(threat_scores) else {}
+        # Add GPT summary fallback
+        summary = alert.get("gpt_summary") or alert.get("summary", "")
         results.append({
             "title": alert.get("title", ""),
-            "summary": alert.get("summary", ""),
+            "summary": summary,
             "link": alert.get("link", ""),
             "source": alert.get("source", ""),
             "type": alert_type,
-            "level": threat_scores[i] if i < len(threat_scores) else None,
-            "gpt_summary": alert.get("gpt_summary", "")
+            "threat_label": threat.get("threat_label", ""),
+            "threat_score": threat.get("score", ""),
+            "confidence": threat.get("confidence", ""),
+            "reasoning": threat.get("reasoning", ""),
+            "category": alert.get("category", ""),
+            "subcategory": alert.get("subcategory", ""),
+            "gpt_summary": alert.get("gpt_summary", ""),
+            "severity": alert.get("severity", ""),
+            "country": alert.get("country", ""),
+            "city": alert.get("city", "")
         })
 
-    # Always generate advice for the UI (for sidebar, etc)
-    fallback = generate_advice(query, raw_alerts, email=email, region=region, threat_type=threat_type)
-    print("Fallback advice generated")
+    # Log Threat Label Distribution (for backend metrics)
+    label_counts = {}
+    for a in results:
+        label = a.get("threat_label", "Unknown")
+        label_counts[label] = label_counts.get(label, 0) + 1
+    log.info(f"[METRICS] Alert counts by label: {label_counts}")
+
+    # Always generate advice for the UI (sidebar, etc)
+    try:
+        fallback = generate_advice(query, raw_alerts, email=email, region=region, threat_type=threat_type)
+        log.info("Fallback advice generated")
+    except Exception as e:
+        log.error(f"Failed to generate fallback advice: {e}")
+        fallback = f"System error generating advice: {e}"
 
     result = {
         "reply": fallback,
         "plan": plan,
         "alerts": results
     }
-    RESPONSE_CACHE[cache_key] = result
+    set_cache(cache_key, result)
     return result

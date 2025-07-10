@@ -28,5 +28,50 @@
   },
   "Haiti": {
     "en": "Haiti is affected by political unrest, gang violence, and frequent natural disasters."
+  },
+  "Yemen": {
+    "en": "Yemen remains in a state of conflict with active hostilities, humanitarian crises, and widespread displacement."
+  },
+  "Venezuela": {
+    "en": "Venezuela faces economic collapse, political repression, and high levels of violent crime and kidnapping."
+  },
+  "Sudan": {
+    "en": "Sudan is experiencing civil war, ethnic conflict, and large-scale displacement amid state collapse."
+  },
+  "Myanmar": {
+    "en": "Myanmar faces civil unrest, military crackdowns, and armed ethnic resistance across multiple regions."
+  },
+  "Afghanistan": {
+    "en": "Afghanistan remains under Taliban control with threats from terrorism, limited freedoms, and humanitarian risk."
+  },
+  "Lebanon": {
+    "en": "Lebanon suffers from economic collapse, political paralysis, and the risk of spillover from regional conflicts."
+  },
+  "Somalia": {
+    "en": "Somalia deals with Al-Shabaab insurgency, piracy, clan conflict, and extreme infrastructure breakdowns."
+  },
+  "North Korea": {
+    "en": "North Korea remains isolated with high geopolitical tension, surveillance, and travel restrictions."
+  },
+  "Iran": {
+    "en": "Iran faces political unrest, sanctions-related instability, and the risk of regional escalation."
+  },
+  "Ethiopia": {
+    "en": "Ethiopia faces tensions from ethnic violence, recent conflict in Tigray, and fragile national unity."
+  },
+  "Libya": {
+    "en": "Libya remains divided between rival governments, militias, and foreign interference, making it highly unstable."
+  },
+  "Pakistan": {
+    "en": "Pakistan faces militant threats, regional tensions with India, and internal political instability."
+  },
+  "Nigeria": {
+    "en": "Nigeria struggles with Boko Haram insurgency, banditry, and ethnic-religious conflict, especially in the north."
+  },
+  "Colombia": {
+    "en": "Colombia faces ongoing threats from armed groups, narco-trafficking, and residual FARC-related violence."
+  },
+  "South Sudan": {
+    "en": "South Sudan remains highly fragile with ethnic violence, humanitarian crises, and poor governance structures."
   }
 }

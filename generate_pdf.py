@@ -4,6 +4,7 @@ from datetime import date
 from threat_scorer import assess_threat_level
 from rss_processor import get_clean_alerts
 import os
+from pathlib import Path
 
 def get_threat_color(level):
     if level == "Low":
@@ -70,13 +71,14 @@ def generate_pdf(output_path=None):
                 self.ln(6)
 
     pdf = PDF()
-    pdf.add_font("NotoSans", "", "fonts/NotoSans-Regular.ttf", uni=True)
+    font_path = Path(__file__).parent / "fonts" / "NotoSans-Regular.ttf"
+    pdf.add_font("NotoSans", "", str(font_path), uni=True)
     pdf.set_font("NotoSans", "", 12)
     pdf.add_page()
     pdf.chapter_body(scored_alerts)
 
     if output_path is None:
-        output_path = os.path.expanduser(f"~/Desktop/daily-brief-{date.today().isoformat()}.pdf")
+        output_path = str(Path.home() / f"Desktop/daily-brief-{date.today().isoformat()}.pdf")
     pdf.output(output_path)
     print(f"PDF created: {output_path}")
     return output_path

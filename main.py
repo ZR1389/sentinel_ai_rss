@@ -1,10 +1,26 @@
 import json
 import os
+import logging
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
+from werkzeug.exceptions import BadRequest, MethodNotAllowed, UnsupportedMediaType
 from chat_handler import handle_user_query
 from email_dispatcher import generate_pdf  # ✅ Renamed version without translation
 from flask_cors import CORS
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger(__name__)
+
+TOKEN_TO_PLAN = {
+    "sentinel_free_2025": "FREE",
+    "sentinel_basic_2025": "BASIC",
+    "sentinel_pro_2025": "PRO",
+    "sentinel_vip_2025": "VIP"
+}
 
 # Flask app
 app = Flask(__name__)
@@ -20,20 +36,18 @@ def chat():
 
     try:
         data = request.get_json(force=True)
-        print("Incoming /chat request...")
+        log.info("Incoming /chat request...")
 
         query = data.get("query", "")
         email = data.get("email", "anonymous")
-        # PATCH: accept null or 'All' as None for region/type
         region = data.get("region")
         threat_type = data.get("type")
         plan = str(data.get("plan", "Free")).upper()
 
-        # Normalize "All" or empty to None for advisor fallback logic
-        region = None if not region or region.lower() == "all" else str(region)
-        threat_type = None if not threat_type or threat_type.lower() == "all" else str(threat_type)
+        region = None if not region or str(region).lower() == "all" else str(region)
+        threat_type = None if not threat_type or str(threat_type).lower() == "all" else str(threat_type)
 
-        print(f"Processing chat: plan={plan}, region={region}, type={threat_type}")
+        log.info(f"Processing chat: plan={plan}, region={region}, type={threat_type}")
 
         result = handle_user_query(
             {"query": query},
@@ -45,12 +59,19 @@ def chat():
 
         return _build_cors_response(jsonify(result))
 
+    except BadRequest as e:
+        log.error(f"Bad request: {e}")
+        return _build_cors_response(jsonify({"error": "Malformed input"})), 400
+    except MethodNotAllowed as e:
+        log.error(f"Method not allowed: {e}")
+        return _build_cors_response(jsonify({"error": "Method not allowed"})), 405
+    except UnsupportedMediaType as e:
+        log.error(f"Unsupported media type: {e}")
+        return _build_cors_response(jsonify({"error": "Unsupported media type"})), 415
     except Exception as e:
-        print(f"Error in /chat handler: {e}")
+        log.error(f"Unhandled error in /chat handler: {e}")
         return _build_cors_response(jsonify({
-            "reply": f"❌ Advisory engine error: {str(e)}",
-            "plan": "Unknown",
-            "alerts": []
+            "error": "Internal server error"
         })), 500
 
 @app.route("/request_report", methods=["POST"])
@@ -62,10 +83,10 @@ def request_report():
         threat_type = data.get("type")
         plan = str(data.get("plan", "Free")).upper()
 
-        region = None if not region or region.lower() == "all" else str(region)
-        threat_type = None if not threat_type or threat_type.lower() == "all" else str(threat_type)
+        region = None if not region or str(region).lower() == "all" else str(region)
+        threat_type = None if not threat_type or str(threat_type).lower() == "all" else str(threat_type)
 
-        print(f"📄 Generating report for {email} | Region={region}, Type={threat_type}, Plan={plan}")
+        log.info(f"📄 Generating report for {email} | Region={region}, Type={threat_type}, Plan={plan}")
         alerts = handle_user_query(
             {"query": "Generate my report"},
             email=email,
@@ -81,15 +102,41 @@ def request_report():
             "alerts_included": len(alerts)
         }))
 
+    except BadRequest as e:
+        log.error(f"Bad request: {e}")
+        return _build_cors_response(jsonify({"error": "Malformed input"})), 400
+    except MethodNotAllowed as e:
+        log.error(f"Method not allowed: {e}")
+        return _build_cors_response(jsonify({"error": "Method not allowed"})), 405
+    except UnsupportedMediaType as e:
+        log.error(f"Unsupported media type: {e}")
+        return _build_cors_response(jsonify({"error": "Unsupported media type"})), 415
     except Exception as e:
-        print(f"💥 Report generation error: {e}")
-        return _build_cors_response(jsonify({
-            "status": f"Failed to generate report: {str(e)}"
-        })), 500
+        log.error(f"💥 Unhandled error in report generation: {e}")
+        return _build_cors_response(jsonify({"error": "Internal server error"})), 500
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "version": "1.0", "plan_map": TOKEN_TO_PLAN}), 200
+
+@app.errorhandler(404)
+def not_found_error(error):
+    log.warning(f"404 Not Found: {error}")
+    return _build_cors_response(jsonify({"error": "Not found"})), 404
+
+@app.errorhandler(405)
+def method_not_allowed_error(error):
+    log.warning(f"405 Method Not Allowed: {error}")
+    return _build_cors_response(jsonify({"error": "Method not allowed"})), 405
+
+@app.errorhandler(500)
+def internal_error(error):
+    log.error(f"500 Internal Server Error: {error}")
+    return _build_cors_response(jsonify({"error": "Internal server error"})), 500
 
 def _build_cors_response(response=None):
     headers = {
-        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Origin": "https://zikarisk.com",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type"
     }
@@ -99,6 +146,7 @@ def _build_cors_response(response=None):
     return response
 
 if __name__ == "__main__":
-    print(f"Loaded TOKEN_TO_PLAN map: {{'sentinel_free_2025': 'FREE', 'sentinel_basic_2025': 'BASIC', 'sentinel_pro_2025': 'PRO', 'sentinel_vip_2025': 'VIP'}}")
-    print(f"Sentinel AI server running on port {PORT}")
-    # app.run(host="0.0.0.0", port=PORT)
+    log.info(f"Loaded TOKEN_TO_PLAN map: {TOKEN_TO_PLAN}")
+    log.info(f"Sentinel AI server running on port {PORT}")
+    if os.getenv("ENV") != "production":
+        app.run(host="0.0.0.0", port=PORT)

@@ -4,8 +4,9 @@ import json
 # Import your feeds from the catalog
 from feeds_catalog import LOCAL_FEEDS, GLOBAL_FEEDS  # Add CYBER_FEEDS, COUNTRY_FEEDS if you wish
 
-# Load FCDO feeds from the JSON file
+# Load FCDO feeds from the JSON file produced by fetch_fcdo_feeds.py
 with open('fcdo_country_feeds.json', 'r', encoding='utf-8') as f:
+    # The structure is assumed to be: { "Country Name": "feed_url", ... }
     FCDO_FEEDS = json.load(f)
 
 def check_feed(url):
