@@ -55,14 +55,12 @@ SUMMARY_LIMIT = 5
 
 # --- City normalization and fuzzy matching logic ---
 
-# Normalize LOCAL_FEEDS at load time
 NORMALIZED_LOCAL_FEEDS = {unidecode(city).lower().strip(): v for city, v in LOCAL_FEEDS.items()}
 
 def get_feed_for_city(city):
     if not city:
         return None
     city_key = unidecode(city).lower().strip()
-    # Fuzzy match with a reasonable cutoff for typos/variants
     match = difflib.get_close_matches(city_key, NORMALIZED_LOCAL_FEEDS.keys(), n=1, cutoff=0.8)
     if match:
         return NORMALIZED_LOCAL_FEEDS[match[0]]
@@ -72,7 +70,6 @@ def get_feed_for_location(region=None, city=None, topic=None):
     region_key = region.strip().title() if region else None
     if region_key and region_key in FCDO_FEEDS:
         return [FCDO_FEEDS[region_key]]
-    # Use improved city matching here!
     city_feeds = get_feed_for_city(city)
     if city_feeds:
         return city_feeds
@@ -221,7 +218,6 @@ def llm_is_alert_relevant(alert, region=None, city=None):
         location = region
     else:
         return False
-
     text = (alert.get("title", "") + " " + alert.get("summary", ""))
     prompt = (
         f"Is the following security alert directly relevant to {location}? "
@@ -273,7 +269,7 @@ def map_severity(score):
         return "Medium"
     return "Low"
 
-def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=False, llm_location_filter=True):
+def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=False, llm_location_filter=True, plan="FREE"):
     alerts = []
     seen = set()
     region_str = str(region).strip() if region else None
@@ -322,7 +318,7 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
                 "city": city_str,
                 "type": "",
                 "type_confidence": None,
-                "severity": "",
+                "level": "",
                 "threat_label": "",
                 "score": None,
                 "confidence": None,
@@ -338,12 +334,12 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
                     alert_text=alert_text,
                     triggers=[],  # Could parse triggers from summary/title if needed
                     location=city or region or "",
-                    alert_uuid=dedupe_key
+                    alert_uuid=dedupe_key,
+                    plan=plan
                 )
                 for k, v in threat_result.items():
                     alert[k] = v
-                alert["severity"] = map_severity(alert.get("score"))
-                alert["model_used"] = threat_result.get("model_used", "")
+                alert["level"] = alert.get("threat_label", "")
             except Exception as e:
                 print(f"[RSS_PROCESSOR_ERROR][THREAT_SCORER] {e} | Alert: {title}")
                 alert["threat_label"] = "Unrated"
@@ -353,7 +349,7 @@ def get_clean_alerts(region=None, topic=None, city=None, limit=20, summarize=Fal
                 alert["review_flag"] = True
                 alert["review_notes"] = "Could not auto-score threat; requires analyst review."
                 alert["timestamp"] = datetime.utcnow().isoformat()
-                alert["severity"] = "Unknown"
+                alert["level"] = "Unknown"
 
             try:
                 threat_type = classify_threat_type(summary)

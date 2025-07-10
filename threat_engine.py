@@ -7,7 +7,6 @@ import threading
 import pycountry
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
-from threat_scorer import assess_threat_level
 from xai_client import grok_chat
 from openai import OpenAI
 import numpy as np
@@ -221,11 +220,9 @@ def detect_city(text):
                 return reply
         except Exception as e:
             print(f"[City extraction error, OpenAI] {e}")
-    # Fuzzy match using city_utils:
     match = fuzzy_match_city(text, CITY_LIST, cutoff=0.8)
     if match:
         return match
-    # Fallback to basic regex search:
     for city in CITY_LIST:
         if re.search(r"\b" + re.escape(city) + r"\b", text, re.IGNORECASE):
             return city
@@ -343,11 +340,11 @@ def summarize_single_alert(alert):
         print(f"[Subcategory extraction error] {e}")
         subcategory = "Unspecified"
 
-    try:
-        severity = assess_threat_level(combined_text)
-    except Exception as e:
-        print(f"[Severity scoring error] {e}")
-        severity = "Moderate"
+    # Use threat scoring fields as set by RSS processor (no re-score)
+    threat_label = alert.get("threat_label", "Moderate")
+    threat_score = alert.get("score", 60)
+    threat_confidence = alert.get("confidence", 0.5)
+    threat_reasoning = alert.get("reasoning", "")
 
     try:
         country = detect_country(combined_text)
@@ -368,28 +365,30 @@ def summarize_single_alert(alert):
 
     save_threat_log(
         alert, summary_out, category=category, category_confidence=confidence,
-        severity=severity, country=country, city=city, triggers=triggers,
+        severity=threat_label, country=country, city=city, triggers=triggers,
         source=source_used, error=g_error
     )
 
-    # Reasoning field for explainability
     reasoning = (
         f"Category: {category} ({confidence:.2f}), "
         f"Subcategory: {subcategory}, "
-        f"Severity: {severity}, "
+        f"Threat Label: {threat_label}, "
+        f"Score: {threat_score}, "
         f"Detected Triggers: {', '.join(triggers) if triggers else 'None'}"
     )
 
-    # Human review flag logic
     review_flag = False
-    if confidence < 0.5:
+    if threat_confidence < 0.5:
         review_flag = True
-    if severity.lower() == "high" and (not country or not city):
+    if threat_label.lower() == "high" and (not country or not city):
         review_flag = True
     if summary_out.startswith("⚠️"):
         review_flag = True
 
-    return summary_out, category, subcategory, confidence, severity, country, city, triggers, reasoning, review_flag
+    return (
+        summary_out, category, subcategory, confidence, threat_label, threat_score,
+        threat_confidence, reasoning, country, city, triggers, review_flag
+    )
 
 def summarize_single_alert_with_retries(alert, max_retries=3):
     attempt = 0
@@ -437,17 +436,22 @@ def summarize_alerts(
             with failed_alerts_lock:
                 failed_alerts.append(alert)
             return None
-        summary, category, subcategory, confidence, severity, country, city, triggers, reasoning, review_flag = result
+        (
+            summary, category, subcategory, confidence, threat_label, threat_score,
+            threat_confidence, reasoning, country, city, triggers, review_flag
+        ) = result
         alert_copy = alert.copy()
         alert_copy["gpt_summary"] = summary
         alert_copy["category"] = category
         alert_copy["subcategory"] = subcategory
         alert_copy["category_confidence"] = confidence
-        alert_copy["severity"] = severity
+        alert_copy["threat_label"] = threat_label
+        alert_copy["score"] = threat_score
+        alert_copy["confidence"] = threat_confidence
+        alert_copy["reasoning"] = reasoning
         alert_copy["country"] = country
         alert_copy["city"] = city
         alert_copy["triggers"] = triggers
-        alert_copy["reasoning"] = reasoning
         alert_copy["review_flag"] = review_flag
         alert_copy["analyst_review"] = alert.get("analyst_review", "")
         alert_copy["hash"] = alert_hash(alert)
@@ -471,7 +475,9 @@ def summarize_alerts(
         alert_copy["category"] = None
         alert_copy["subcategory"] = None
         alert_copy["category_confidence"] = None
-        alert_copy["severity"] = None
+        alert_copy["threat_label"] = None
+        alert_copy["score"] = None
+        alert_copy["confidence"] = None
         alert_copy["country"] = None
         alert_copy["city"] = None
         alert_copy["triggers"] = []

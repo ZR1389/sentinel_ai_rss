@@ -45,7 +45,10 @@ THREAT_SCORER_SYSTEM_PROMPT = (
     "Classify this alert using ONLY one of: Low, Moderate, High, Critical. "
     "Also provide a risk score (0-100, where 100=Critical). "
     "Estimate your confidence (0.0-1.0, where 1.0=very certain). "
-    "Return a JSON like: {\"label\": \"High\", \"score\": 85, \"reasoning\": \"Reason for score...\", \"confidence\": 0.92}\n"
+    "Return ONLY a single line of valid parsable JSON, like: "
+    '{"label": "High", "score": 85, "reasoning": "Reason for score...", "confidence": 0.92} '
+    "with NO prose, explanations, or extra text before or after the JSON. "
+    "If you are unsure, fill fields with 'Unrated', 0, or null as appropriate."
     "\nGuidelines:\n"
     "- Critical: catastrophic impact or immediate danger to life/safety/national security\n"
     "- High: serious and urgent threat requiring immediate action or avoidance\n"
