@@ -1,5 +1,10 @@
 # Prompts for LLM and scoring logic in ZikaRisk platform
 
+# --- Required for rss_processor and others ---
+SYSTEM_PROMPT = "You are a helpful security assistant. Answer questions about threats, incidents, and risks in clear, concise language."
+TYPE_PROMPT = "Classify this incident into one of the known threat types. Return the type as a string."
+FALLBACK_PROMPT = "I'm unable to answer in detail. Please rephrase your query or try again later."
+
 # --- Threat Engine Prompts ---
 
 THREAT_CATEGORY_PROMPT = (
