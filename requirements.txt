@@ -16,3 +16,6 @@ xai-sdk>=0.2.0
 unidecode
 pycountry
 numpy
+langdetect
+googletrans==4.0.0rc1
+redis>=5.0.0

@@ -4,6 +4,11 @@
 SYSTEM_PROMPT = "You are a helpful security assistant. Answer questions about threats, incidents, and risks in clear, concise language."
 TYPE_PROMPT = "Classify this incident into one of the known threat types. Return the type as a string."
 FALLBACK_PROMPT = "I'm unable to answer in detail. Please rephrase your query or try again later."
+SECURITY_SUMMARIZE_PROMPT = (
+    "Translate and summarize this news article snippet into English with focus on security implications for travelers. "
+    "Be concise, objective, and highlight any risks to personal safety, public order, or significant security concerns. "
+    "If there are no security implications, explicitly state 'No significant security risk detected.'"
+)
 
 # --- Threat Engine Prompts ---
 

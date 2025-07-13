@@ -1,5 +1,7 @@
 # Major cities/local news feeds (100+ cities globally)
 LOCAL_FEEDS = {
+    "belgrade": ["https://www.blic.rs/rss/Vesti/Drustvo"],
+    "hong kong": ["https://www.scmp.com/rss/2/feed/"],
     "paris": ["https://www.lemonde.fr/rss/une.xml"],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
     "los angeles": ["https://www.latimes.com/local/rss2.0.xml"],
@@ -10,7 +12,6 @@ LOCAL_FEEDS = {
     "delhi": ["https://timesofindia.indiatimes.com/rssfeeds/-2128839596.cms"],
     "saopaulo": ["https://g1.globo.com/rss/g1/saopaulo/"],
     "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
-    "hong kong": ["https://www.scmp.com/rss/91/feed"],
     "buenos aires": ["https://www.clarin.com/rss/lo-ultimo/"],
     "karachi": ["https://www.dawn.com/feeds/home"],
     "manila": ["https://www.philstar.com/rss/nation"],
