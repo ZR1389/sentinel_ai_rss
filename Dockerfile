@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y build-essential gcc libffi-dev libssl-d
 COPY requirements.txt .
 RUN python -m venv $VIRTUAL_ENV && \
     $VIRTUAL_ENV/bin/pip install --upgrade pip && \
-    $VIRTUAL_ENV/bin/pip install -r requirements.txt
+    $VIRTUAL_ENV/bin/pip install -r requirements.txt && \
+    $VIRTUAL_ENV/bin/pip install xai-sdk --extra-index-url=https://pypi.xai.io/simple
 
 # Copy app code
 COPY . .
