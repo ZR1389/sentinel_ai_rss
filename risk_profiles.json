@@ -1,4 +1,526 @@
 {
+  "Albania": {
+    "en": "Albania remains stable but struggles with organized crime, corruption, and weak rural policing."
+  },
+  "Algeria": {
+    "en": "Algeria faces sporadic terrorist threats, government surveillance, and regional unrest near its borders."
+  },
+  "Argentina": {
+    "en": "Argentina deals with economic instability, periodic protests, and urban crime in major cities like Buenos Aires."
+  },
+  "Armenia": {
+    "en": "Armenia faces geopolitical risk from border tensions with Azerbaijan and post-conflict instability."
+  },
+  "Australia": {
+    "en": "Australia is low-risk but faces environmental hazards, cyber threats, and occasional domestic extremism."
+  },
+  "Austria": {
+    "en": "Austria is generally safe, though terror threats and espionage risks persist in Vienna's diplomatic circles."
+  },
+  "Azerbaijan": {
+    "en": "Azerbaijan faces authoritarian controls, regional tension with Armenia, and cyber surveillance concerns."
+  },
+  "Bahrain": {
+    "en": "Bahrain has tight state control, regional tensions with Iran, and internal sectarian friction."
+  },
+  "Bangladesh": {
+    "en": "Bangladesh experiences political violence, industrial hazards, and vulnerability to natural disasters."
+  },
+  "Barbados": {
+    "en": "Barbados is relatively safe but faces occasional petty crime and hurricane-related disruption."
+  },
+  "Belarus": {
+    "en": "Belarus operates under authoritarian rule with civil liberties restrictions, surveillance, and risk of regional spillover."
+  },
+  "Belgium": {
+    "en": "Belgium faces elevated terror risk in urban centers and is a hub for transnational criminal networks."
+  },
+  "Belize": {
+    "en": "Belize faces gang violence, drug trafficking, and weak institutional response in rural zones."
+  },
+  "Benin": {
+    "en": "Benin remains stable but faces emerging jihadist threats in its northern regions."
+  },
+  "Bhutan": {
+    "en": "Bhutan is low-risk but has limited emergency infrastructure and remains sensitive to regional geopolitics."
+  },
+  "Bolivia": {
+    "en": "Bolivia faces civil unrest, weak rule of law, and periodic anti-government demonstrations."
+  },
+  "Bosnia and Herzegovina": {
+    "en": "Bosnia faces political fragmentation, ethnic divisions, and the risk of nationalist unrest."
+  },
+  "Botswana": {
+    "en": "Botswana is considered stable but remains exposed to regional criminal trafficking routes and drought risk."
+  },
+  "Brazil": {
+    "en": "Brazil faces widespread urban crime, political instability, and environmental degradation affecting indigenous zones."
+  },
+  "Brunei": {
+    "en": "Brunei is stable but restricts freedoms under strict Sharia law, with opaque state controls."
+  },
+  "Bulgaria": {
+    "en": "Bulgaria faces corruption, organized crime, and tensions at its external EU borders."
+  },
+  "Cambodia": {
+    "en": "Cambodia has authoritarian governance, limited civil freedoms, and high corruption in the legal system."
+  },
+  "Cameroon": {
+    "en": "Cameroon faces separatist violence, Boko Haram activity in the north, and government repression."
+  },
+  "Canada": {
+    "en": "Canada is low-risk but sees cyber threats, organized crime in border areas, and indigenous land disputes."
+  },
+  "Chile": {
+    "en": "Chile is stable but experiences social protests, Mapuche conflict in the south, and cybercrime growth."
+  },
+  "China": {
+    "en": "China poses surveillance risks, tight information controls, and geopolitical tensions affecting travelers and businesses."
+  },
+  "Costa Rica": {
+    "en": "Costa Rica is relatively stable but sees rising gang violence, drug trafficking, and earthquake risk."
+  },
+  "Croatia": {
+    "en": "Croatia is generally safe, though organized crime persists and border tensions can affect migrants and tourists."
+  },
+  "Cuba": {
+    "en": "Cuba has state surveillance, political repression, economic hardship, and limited freedom of movement."
+  },
+  "Cyprus": {
+    "en": "Cyprus remains divided, with unresolved tensions in the north and regional instability in the Eastern Mediterranean."
+  },
+  "Czech Republic": {
+    "en": "Czech Republic is stable but faces cyber threats and political polarization, especially around migration issues."
+  },
+  "Denmark": {
+    "en": "Denmark is low-risk, though it remains a symbolic target for extremists and cyber actors."
+  },
+  "Dominican Republic": {
+    "en": "The Dominican Republic faces high levels of violent crime, especially in tourist zones and urban areas."
+  },
+  "Ecuador": {
+    "en": "Ecuador has seen a sharp rise in narco-violence, political instability, and targeted assassinations."
+  },
+  "Egypt": {
+    "en": "Egypt faces terrorist risks in Sinai, heavy surveillance, political repression, and occasional unrest in urban areas."
+  },
+  "El Salvador": {
+    "en": "El Salvador's gang violence is extreme despite recent crackdowns; state authoritarianism is increasing."
+  },
+  "Equatorial Guinea": {
+    "en": "Equatorial Guinea is authoritarian with opaque governance, corruption, and limited medical infrastructure."
+  },
+  "Eritrea": {
+    "en": "Eritrea remains closed off, with indefinite conscription, forced labor, and tight state control over citizens."
+  },
+  "Estonia": {
+    "en": "Estonia is stable but remains a high-value target for cyberattacks due to its digital infrastructure and NATO alignment."
+  },
+  "Eswatini": {
+    "en": "Eswatini faces political unrest, poverty, and heavy-handed security responses to protests."
+  },
+  "Fiji": {
+    "en": "Fiji is relatively low-risk but vulnerable to cyclones, political tension, and weak emergency response."
+  },
+  "Finland": {
+    "en": "Finland is very stable but experiences hybrid threats including cyber espionage and disinformation campaigns from Russia."
+  },
+  "France": {
+    "en": "France faces persistent terror threats, urban unrest, and anti-government protests with periodic violence."
+  },
+  "Gabon": {
+    "en": "Gabon has political instability, recent coups, and weak public services outside urban centers."
+  },
+  "Georgia": {
+    "en": "Georgia faces Russian pressure in breakaway regions, political polarization, and protest-driven unrest."
+  },
+  "Germany": {
+    "en": "Germany is generally secure but faces rising extremism, espionage, and threats from radicalized individuals."
+  },
+  "Ghana": {
+    "en": "Ghana is stable but vulnerable to spillover threats from the Sahel and internal political tensions."
+  },
+  "Greece": {
+    "en": "Greece sees organized crime, anti-migrant violence, and occasional anarchist unrest in urban zones."
+  },
+  "Guatemala": {
+    "en": "Guatemala suffers from narco-violence, police corruption, and risks for journalists and activists."
+  },
+  "Guinea": {
+    "en": "Guinea faces political instability, mining-related protests, and weak healthcare infrastructure."
+  },
+  "Guinea-Bissau": {
+    "en": "Guinea-Bissau is unstable, plagued by political coups, narco-trafficking routes, and institutional weakness."
+  },
+  "Guyana": {
+    "en": "Guyana faces rapid economic changes, border disputes with Venezuela, and limited medical capacity."
+  },
+  "Honduras": {
+    "en": "Honduras has extreme gang violence, extortion, and corruption deeply embedded in security institutions."
+  },
+  "Hungary": {
+    "en": "Hungary is politically polarized, with declining press freedom and rising nationalism under centralized leadership."
+  },
+  "Iceland": {
+    "en": "Iceland is low-risk but isolated, with limited emergency capacity during natural disasters."
+  },
+  "India": {
+    "en": "India faces religious tensions, insurgency risks in Kashmir, and infrastructure stress in urban and rural zones."
+  },
+  "Indonesia": {
+    "en": "Indonesia deals with terrorism risks, sectarian tensions, and natural disasters like tsunamis and volcanoes."
+  },
+  "Iraq": {
+    "en": "Iraq remains volatile with militia control, terrorist activity, and deep political instability."
+  },
+  "Ireland": {
+    "en": "Ireland is stable but experiences cyber threats, and Brexit-related frictions still affect the border region."
+  },
+  "Israel": {
+    "en": "Israel faces high-security risks from terrorism, missile attacks, and regional conflict with surrounding actors."
+  },
+  "Italy": {
+    "en": "Italy deals with organized crime in the south, protest unrest, and migration-related tensions."
+  },
+  "Ivory Coast": {
+    "en": "Ivory Coast is relatively stable but faces political rivalries and the threat of Sahelian militant spillover."
+  },
+  "Jamaica": {
+    "en": "Jamaica experiences high levels of violent crime, gang control in certain areas, and limited policing capacity."
+  },
+  "Japan": {
+    "en": "Japan is low-risk but exposed to major natural disasters including earthquakes, tsunamis, and typhoons."
+  },
+  "Jordan": {
+    "en": "Jordan is stable but pressured by refugee influx, regional conflict, and occasional unrest over economic issues."
+  },
+  "Kazakhstan": {
+    "en": "Kazakhstan faces authoritarian governance, protest suppression, and geopolitical friction with Russia and China."
+  },
+  "Kenya": {
+    "en": "Kenya faces terror threats from Al-Shabaab, political unrest, and ethnic violence during election periods."
+  },
+  "Kiribati": {
+    "en": "Kiribati faces minimal human threats but is severely vulnerable to climate change and rising sea levels."
+  },
+  "Kosovo": {
+    "en": "Kosovo faces unresolved ethnic tensions, limited recognition, and periodic flare-ups in the north."
+  },
+  "Kuwait": {
+    "en": "Kuwait is stable but sensitive to regional tensions with Iran and vulnerable to cyber and missile threats."
+  },
+  "Kyrgyzstan": {
+    "en": "Kyrgyzstan deals with political volatility, border tensions, and limited governance capacity in rural regions."
+  },
+  "Laos": {
+    "en": "Laos is politically repressive, with limited infrastructure and underdeveloped emergency response systems."
+  },
+  "Latvia": {
+    "en": "Latvia is stable but faces hybrid threats from Russia including cyberattacks and disinformation campaigns."
+  },
+  "Lebanon": {
+    "en": "Lebanon suffers from economic collapse, political paralysis, and the risk of spillover from regional conflicts."
+  },
+  "Lesotho": {
+    "en": "Lesotho deals with political instability, high crime, and weak institutional controls over rural regions."
+  },
+  "Liberia": {
+    "en": "Liberia faces high poverty, weak institutions, and vulnerability to health crises and post-conflict instability."
+  },
+  "Liechtenstein": {
+    "en": "Liechtenstein is secure but may face cyber threats due to its financial sector and digital exposure."
+  },
+  "Lithuania": {
+    "en": "Lithuania is stable but faces persistent Russian cyber threats and hybrid warfare risk as a NATO frontline state."
+  },
+  "Luxembourg": {
+    "en": "Luxembourg is low-risk but a strategic financial hub vulnerable to cyberattacks and information warfare."
+  },
+  "Madagascar": {
+    "en": "Madagascar experiences political instability, weak healthcare, and recurring environmental disasters like cyclones."
+  },
+  "Malawi": {
+    "en": "Malawi is relatively peaceful but suffers from food insecurity, limited infrastructure, and border vulnerabilities."
+  },
+  "Malaysia": {
+    "en": "Malaysia faces political unpredictability, cybercrime growth, and maritime tensions in the South China Sea."
+  },
+  "Maldives": {
+    "en": "The Maldives is tourism-dependent, with risks from climate change, extremist recruitment, and economic shocks."
+  },
+  "Malta": {
+    "en": "Malta is stable but faces organized crime, corruption concerns, and pressure from Mediterranean migration routes."
+  },
+  "Mauritania": {
+    "en": "Mauritania faces jihadist threats along its eastern border and remains under tight state control."
+  },
+  "Mauritius": {
+    "en": "Mauritius is low-risk but faces rising drug trafficking and vulnerability to cyclones and regional instability."
+  },
+  "Mexico": {
+    "en": "Mexico faces extreme cartel violence, corruption, and targeted attacks on journalists, police, and officials."
+  },
+  "Moldova": {
+    "en": "Moldova faces Russian influence campaigns, separatist tensions in Transnistria, and institutional fragility."
+  },
+  "Monaco": {
+    "en": "Monaco is secure but remains exposed to financial crime, cyberattacks, and regional instability spillover."
+  },
+  "Mongolia": {
+    "en": "Mongolia is stable but landlocked between major powers, facing climate shocks and infrastructure limitations."
+  },
+  "Montenegro": {
+    "en": "Montenegro faces political corruption, organized crime, and social tension over national identity."
+  },
+  "Morocco": {
+    "en": "Morocco is relatively stable but faces terrorism risks, Western Sahara conflict, and authoritarian policing."
+  },
+  "Namibia": {
+    "en": "Namibia is low-risk but has high inequality, drought exposure, and limited rural medical support."
+  },
+  "Nepal": {
+    "en": "Nepal faces earthquake risk, political fragmentation, and infrastructure gaps in remote regions."
+  },
+  "Netherlands": {
+    "en": "The Netherlands is secure but exposed to narco-terror networks, cyber threats, and social unrest in cities."
+  },
+  "New Zealand": {
+    "en": "New Zealand is low-risk but faces earthquake threats, cyber incidents, and increasing geopolitical attention in the Pacific."
+  },
+  "Nicaragua": {
+    "en": "Nicaragua is under authoritarian rule with heavy surveillance, political repression, and civil rights violations."
+  },
+  "North Macedonia": {
+    "en": "North Macedonia faces political friction, ethnic division, and influence from rival regional powers."
+  },
+  "Norway": {
+    "en": "Norway is stable and low-risk, though cyberattacks and far-right extremism remain monitoring concerns."
+  },
+  "Oman": {
+    "en": "Oman is generally stable but located near regional conflict zones and exposed to cyber and maritime threats."
+  },
+  "Panama": {
+    "en": "Panama is a regional logistics hub facing money laundering, drug transit threats, and corruption vulnerabilities."
+  },
+  "Paraguay": {
+    "en": "Paraguay experiences smuggling, organized crime in border zones, and weak governance outside urban centers."
+  },
+  "Peru": {
+    "en": "Peru faces political unrest, illegal mining violence, and weak state control in remote jungle regions."
+  },
+  "Philippines": {
+    "en": "The Philippines faces terrorist threats in the south, political volatility, and typhoon-related natural disasters."
+  },
+  "Poland": {
+    "en": "Poland is secure but on NATO’s eastern flank, facing disinformation, cyber threats, and tension over migration."
+  },
+  "Portugal": {
+    "en": "Portugal is low-risk but vulnerable to cybercrime, economic fluctuations, and organized criminal infiltration."
+  },
+  "Qatar": {
+    "en": "Qatar is secure but under tight state control, with risks linked to regional hostility and labor rights concerns."
+  },
+  "Republic of the Congo": {
+    "en": "The Republic of the Congo has weak infrastructure, corruption, and potential for unrest tied to economic hardship."
+  },
+  "Romania": {
+    "en": "Romania faces corruption, border trafficking, and cyberattacks targeting critical infrastructure and institutions."
+  },
+  "Russia": {
+    "en": "Russia presents elevated geopolitical risk, authoritarian control, surveillance, and internal and external conflict exposure."
+  },
+  "Rwanda": {
+    "en": "Rwanda is stable but tightly controlled, with political repression and regional tensions along its borders."
+  },
+  "Saint Kitts and Nevis": {
+    "en": "Saint Kitts and Nevis is low-risk but vulnerable to hurricane impacts and financial sector abuse."
+  },
+  "Saint Lucia": {
+    "en": "Saint Lucia sees rising gang violence and drug activity, despite being a popular tourist destination."
+  },
+  "Saint Vincent and the Grenadines": {
+    "en": "Saint Vincent faces natural disaster risk from volcanic activity and limited emergency response capability."
+  },
+  "Samoa": {
+    "en": "Samoa is peaceful but isolated, with disaster vulnerability and reliance on external aid for crisis response."
+  },
+  "San Marino": {
+    "en": "San Marino is secure but small and economically dependent on neighboring Italy’s stability."
+  },
+  "São Tomé and Príncipe": {
+    "en": "São Tomé is peaceful but has limited resources, poor infrastructure, and maritime security concerns."
+  },
+  "Saudi Arabia": {
+    "en": "Saudi Arabia is high-security but faces threats from terrorism, regional missile strikes, and authoritarian repression."
+  },
+  "Senegal": {
+    "en": "Senegal is relatively stable but experiences protests, unrest in Casamance, and rising Sahel-related threats."
+  },
+  "Serbia": {
+    "en": "Serbia faces political tension, organized crime, and unresolved regional disputes in the Balkans."
+  },
+  "Seychelles": {
+    "en": "Seychelles is low-risk but exposed to piracy, maritime smuggling, and climate-driven coastal erosion."
+  },
+  "Sierra Leone": {
+    "en": "Sierra Leone is fragile, with weak healthcare, periodic unrest, and lingering post-conflict risks."
+  },
+  "Singapore": {
+    "en": "Singapore is highly secure but operates under strict legal controls and is a strategic cyber and espionage target."
+  },
+  "Slovakia": {
+    "en": "Slovakia is stable but faces organized crime, political corruption, and cyber threats from external actors."
+  },
+  "Slovenia": {
+    "en": "Slovenia is low-risk but part of EU migration corridors and exposed to disinformation and hybrid threats."
+  },
+  "Solomon Islands": {
+    "en": "Solomon Islands faces civil unrest, rising Chinese influence, and weak disaster response infrastructure."
+  },
+  "South Africa": {
+    "en": "South Africa struggles with violent crime, inequality, political unrest, and infrastructure sabotage."
+  },
+  "South Korea": {
+    "en": "South Korea is stable but faces persistent threats from North Korea, cyber espionage, and regional tension."
+  },
+  "Spain": {
+    "en": "Spain is generally safe but sees Catalan separatist tensions, Islamist threats, and border migration friction."
+  },
+  "Sri Lanka": {
+    "en": "Sri Lanka deals with political instability, economic crisis, and lingering ethnic tension and security crackdowns."
+  },
+  "Sweden": {
+    "en": "Sweden is low-risk but sees organized crime, far-right extremism, and targeted violent incidents in cities."
+  },
+  "Switzerland": {
+    "en": "Switzerland is secure but remains a global financial hub vulnerable to cyberattacks and intelligence operations."
+  },
+  "Syria": {
+    "en": "Syria is a high-risk conflict zone with active military operations, terrorist factions, and humanitarian collapse."
+  },
+  "Tajikistan": {
+    "en": "Tajikistan faces authoritarian control, border tensions with Afghanistan, and poor rural infrastructure."
+  },
+  "Tanzania": {
+    "en": "Tanzania is relatively stable but faces terrorism threats, border insecurity, and governance challenges."
+  },
+  "Thailand": {
+    "en": "Thailand faces political instability, insurgency in the south, and risks of protest violence in urban centers."
+  },
+  "Timor-Leste": {
+    "en": "Timor-Leste is peaceful but lacks robust infrastructure and emergency services, with economic fragility."
+  },
+  "Togo": {
+    "en": "Togo faces authoritarian governance, social unrest, and growing extremist threats in its northern regions."
+  },
+  "Tonga": {
+    "en": "Tonga is peaceful but highly vulnerable to tsunamis, cyclones, and lacks disaster recovery infrastructure."
+  },
+  "Trinidad and Tobago": {
+    "en": "Trinidad faces gang-related violence, arms trafficking, and corruption within its security apparatus."
+  },
+  "Tunisia": {
+    "en": "Tunisia sees political instability, terrorist threats, and social unrest linked to economic hardship."
+  },
+  "Turkey": {
+    "en": "Turkey faces domestic terrorism, authoritarian crackdowns, and high tension near borders with Syria and Iraq."
+  },
+  "Turkmenistan": {
+    "en": "Turkmenistan is highly repressive, isolated, and lacks transparency, with major surveillance and corruption."
+  },
+  "Tuvalu": {
+    "en": "Tuvalu is extremely vulnerable to climate change and lacks capacity to manage major emergencies or crises."
+  },
+  "Uganda": {
+    "en": "Uganda faces political repression, terrorism threats, and crackdowns on opposition and civil society."
+  },
+  "Ukraine": {
+    "en": "Ukraine remains a warzone due to Russian invasion, with ongoing military conflict and humanitarian catastrophe."
+  },
+  "United Arab Emirates": {
+    "en": "UAE is tightly controlled with strong surveillance, cyber threats, and regional risk from Gulf tensions."
+  },
+  "United Kingdom": {
+    "en": "The UK faces terror threats, espionage activity, and protest risk tied to political and economic unrest."
+  },
+  "United States": {
+    "en": "The U.S. faces mass shootings, civil unrest, cyber threats, and politically motivated violence in polarized environments."
+  },
+  "Uruguay": {
+    "en": "Uruguay is one of South America's safest nations, though it sees growing drug transit and cybercrime activity."
+  },
+  "Uzbekistan": {
+    "en": "Uzbekistan is stable under authoritarian rule but faces limited transparency, surveillance, and regional terror risks."
+  },
+  "Vanuatu": {
+    "en": "Vanuatu is peaceful but faces frequent cyclones, volcanic risk, and lacks rapid emergency response infrastructure."
+  },
+  "Vatican City": {
+    "en": "Vatican City is secure but a symbolic target, requiring elevated protection against lone actors or ideological threats."
+  },
+  "Vietnam": {
+    "en": "Vietnam is politically stable but tightly controlled, with rising cyber surveillance and state suppression of dissent."
+  },
+  "Western Sahara": {
+    "en": "Western Sahara remains disputed, with sporadic armed conflict, landmines, and unresolved sovereignty issues."
+  },
+  "Yemen": {
+    "en": "Yemen remains in a state of conflict with active hostilities, humanitarian crises, and widespread displacement."
+  },
+  "Zambia": {
+    "en": "Zambia is generally stable but experiences political tensions, health infrastructure gaps, and economic stress."
+  },
+  "Zimbabwe": {
+    "en": "Zimbabwe faces economic collapse, corruption, state violence, and suppression of political opposition."
+  },
+  "Andorra": {
+    "en": "Andorra is low-risk but dependent on neighboring states for crisis response and vulnerable to financial crime."
+  },
+  "Antigua and Barbuda": {
+    "en": "Antigua and Barbuda is peaceful but exposed to hurricane risk and small-island governance limitations."
+  },
+  "Bahamas": {
+    "en": "The Bahamas faces high levels of urban crime, hurricane threats, and limited response capacity in outer islands."
+  },
+  "Cape Verde": {
+    "en": "Cape Verde is stable but exposed to drug transit routes and infrastructure gaps in outer islands."
+  },
+  "Comoros": {
+    "en": "Comoros faces political instability, poverty, and weak emergency and healthcare infrastructure."
+  },
+  "Dominica": {
+    "en": "Dominica is low-risk but highly vulnerable to hurricanes and lacks large-scale emergency logistics."
+  },
+  "Grenada": {
+    "en": "Grenada is calm but exposed to natural disaster risk and has limited state capacity for sustained crises."
+  },
+  "Marshall Islands": {
+    "en": "Marshall Islands is exposed to severe climate risks, poor infrastructure, and external geopolitical leverage."
+  },
+  "Micronesia": {
+    "en": "Micronesia is peaceful but isolated, aid-dependent, and exposed to rising sea levels and strategic competition."
+  },
+  "Nauru": {
+    "en": "Nauru is geopolitically quiet but reliant on external support, with limited infrastructure and climate exposure."
+  },
+  "Palau": {
+    "en": "Palau is stable but vulnerable to environmental hazards and strategic friction in the Pacific."
+  },
+  "Saint Pierre and Miquelon": {
+    "en": "Saint Pierre and Miquelon is secure but remote, with limited infrastructure and logistical resilience."
+  },
+  "Barbuda": {
+    "en": "Barbuda shares risks with Antigua, facing hurricane exposure, infrastructure challenges, and small-island limitations."
+  },
+  "Niue": {
+    "en": "Niue is self-governing under New Zealand, extremely isolated, and highly exposed to climate threats."
+  },
+  "Cook Islands": {
+    "en": "The Cook Islands are politically stable but rely on external support and face extreme climate vulnerability."
+  },
+  "Greenland": {
+    "en": "Greenland is secure but isolated, with rising geopolitical interest, infrastructure gaps, and climate-related challenges."
+  },
   "Mozambique": {
     "en": "Mozambique faces ongoing threats from armed insurgency in Cabo Delgado, weak emergency infrastructure, and high levels of corruption."
   },

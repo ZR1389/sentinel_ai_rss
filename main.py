@@ -8,6 +8,10 @@ from chat_handler import handle_user_query
 from email_dispatcher import generate_pdf  # ✅ Renamed version without translation
 from flask_cors import CORS
 
+from plan_utils import get_plan_limits
+from datetime import datetime
+import redis
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] %(message)s",
@@ -21,6 +25,10 @@ TOKEN_TO_PLAN = {
     "sentinel_pro_2025": "PRO",
     "sentinel_vip_2025": "VIP"
 }
+
+# Redis client (ensure REDIS_URL is available in your .env)
+REDIS_URL = os.getenv("REDIS_URL")
+redis_client = redis.Redis.from_url(REDIS_URL) if REDIS_URL else None
 
 # Flask app
 app = Flask(__name__)
@@ -115,6 +123,69 @@ def request_report():
         log.error(f"💥 Unhandled error in report generation: {e}")
         return _build_cors_response(jsonify({"error": "Internal server error"})), 500
 
+@app.route("/user_plan", methods=["GET"])
+def user_plan():
+    email = request.args.get("email", "anonymous")
+    plan = "FREE"
+    for token, mapped_plan in TOKEN_TO_PLAN.items():
+        if token in email:
+            plan = mapped_plan
+            break
+    plan_limits = get_plan_limits(email)
+    features = {
+        "pdf": bool(plan_limits.get("pdf", False)),
+        "insights": bool(plan_limits.get("insights", False)),
+        "telegram": bool(plan_limits.get("telegram", False)),
+        "alerts": bool(plan_limits.get("rss_monthly", 0) > 0)
+    }
+    return jsonify({
+        "email": email,
+        "plan": plan,
+        "features": features,
+        "limits": plan_limits
+    })
+
+@app.route("/plan_features", methods=["GET"])
+def plan_features():
+    # Return features for all plans, for frontend pricing/feature matrix
+    all_plans = {}
+    for plan in set(TOKEN_TO_PLAN.values()):
+        limits = get_plan_limits(plan)
+        features = {
+            "pdf": bool(limits.get("pdf", False)),
+            "insights": bool(limits.get("insights", False)),
+            "telegram": bool(limits.get("telegram", False)),
+            "alerts": bool(limits.get("rss_monthly", 0) > 0)
+        }
+        all_plans[plan] = {
+            "features": features,
+            "limits": limits
+        }
+    return jsonify(all_plans)
+
+@app.route("/usage", methods=["GET"])
+def usage():
+    email = request.args.get("email", None)
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
+    plan_limits = get_plan_limits(email)
+    rss_monthly_limit = plan_limits.get("rss_monthly", 5)
+    month = datetime.utcnow().strftime("%Y-%m")
+    usage_key = f"user:{email}:rss_llm_alert_count:{month}"
+    usage_count = 0
+    try:
+        if redis_client:
+            usage_count = int(redis_client.get(usage_key) or 0)
+    except Exception as e:
+        log.error(f"Usage fetch error: {e}")
+        usage_count = 0
+    return jsonify({
+        "email": email,
+        "rss_used": usage_count,
+        "rss_limit": rss_monthly_limit,
+        "display": f"{usage_count}/{rss_monthly_limit} RSS reports used"
+    })
+
 @app.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "ok", "version": "1.0", "plan_map": TOKEN_TO_PLAN}), 200
@@ -137,7 +208,7 @@ def internal_error(error):
 def _build_cors_response(response=None):
     headers = {
         "Access-Control-Allow-Origin": "https://zikarisk.com",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
         "Access-Control-Allow-Headers": "Content-Type"
     }
     if response is None:
