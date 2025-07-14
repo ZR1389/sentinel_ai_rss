@@ -20,12 +20,15 @@ from prompts import (
 )
 from city_utils import fuzzy_match_city, normalize_city
 
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # ---- ENVIRONMENT & CONFIG ----
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-SUMMARY_LIMIT = 5
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
 TEMPERATURE = 0.4
 ENABLE_SEMANTIC_DEDUP = True
@@ -49,6 +52,62 @@ TRIGGER_KEYWORDS = [
     "shooting", "power outage", "IED", "riot", "hostage", "assault", "gunfire",
     "explosion", "looting", "roadblock", "arson", "sabotage"
 ]
+
+# ---- REDIS & PLAN LOGIC ----
+import redis
+from plan_utils import get_plan_limits
+
+REDIS_URL = os.getenv("REDIS_URL")
+redis_client = redis.Redis.from_url(REDIS_URL)
+
+try:
+    redis_client.ping()
+    logger.info("Redis connection established.")
+except Exception as e:
+    logger.error(f"Redis connection failed: {e}")
+
+from datetime import datetime
+
+def atomic_increment_and_check(redis_client, key, limit, expiry):
+    try:
+        count = redis_client.incr(key)
+        if count == 1 and expiry:
+            redis_client.expire(key, expiry)
+        return count <= limit
+    except Exception as e:
+        logger.error(f"[Redis][atomic_increment_and_check] {e}")
+        return False
+
+def can_user_summarize(redis_client, user_email, plan_limits, feature="threat_monthly"):
+    try:
+        month = datetime.utcnow().strftime("%Y-%m")
+        key = f"user:{user_email}:threat_llm_alert_count:{month}"
+        expiry = 60 * 60 * 24 * 45  # 45 days
+        limit = plan_limits.get(feature, 5)
+        if limit == float("inf"):
+            return True
+        return atomic_increment_and_check(redis_client, key, limit, expiry)
+    except Exception as e:
+        logger.error(f"[Redis][can_user_summarize] {e}")
+        return False
+
+def can_session_summarize(redis_client, session_id, plan_limits, feature="threat_per_session"):
+    try:
+        key = f"session:{session_id}:threat_llm_alert_count"
+        expiry = 60 * 60 * 24  # 24 hours
+        limit = plan_limits.get(feature, 2)
+        if limit == float("inf"):
+            return True
+        return atomic_increment_and_check(redis_client, key, limit, expiry)
+    except Exception as e:
+        logger.error(f"[Redis][can_session_summarize] {e}")
+        return False
+
+def should_summarize_alert(alert, plan_limits):
+    # You can put further logic here if you want to restrict summarization to "high risk" only
+    return True
+
+# ---- THREAT ENGINE CORE LOGIC ----
 
 def extract_source_from_url(url):
     try:
@@ -113,7 +172,7 @@ def classify_threat_category(text):
                 cat = "Other"
             return cat, conf
     except Exception as e:
-        print(f"[Grok classify error] {e}")
+        logger.error(f"[Grok classify error] {e}")
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -130,7 +189,7 @@ def classify_threat_category(text):
                 cat = "Other"
             return cat, conf
         except Exception as e:
-            print(f"[OpenAI classify error] {e}")
+            logger.error(f"[OpenAI classify error] {e}")
     return "Other", 0.5
 
 def extract_subcategory(text, category):
@@ -146,7 +205,7 @@ def extract_subcategory(text, category):
             return "Unspecified"
         return subcat
     except Exception as e:
-        print(f"[Grok subcategory error] {e}")
+        logger.error(f"[Grok subcategory error] {e}")
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -160,7 +219,7 @@ def extract_subcategory(text, category):
                 return "Unspecified"
             return subcat
         except Exception as e:
-            print(f"[OpenAI subcategory error] {e}")
+            logger.error(f"[OpenAI subcategory error] {e}")
     return "Unspecified"
 
 def detect_country(text):
@@ -175,7 +234,7 @@ def detect_country(text):
         if result and result.lower() != "none":
             return result
     except Exception as e:
-        print(f"[Country extraction error, Grok] {e}")
+        logger.error(f"[Country extraction error, Grok] {e}")
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -188,7 +247,7 @@ def detect_country(text):
             if reply and reply.lower() != "none":
                 return reply
         except Exception as e:
-            print(f"[Country extraction error, OpenAI] {e}")
+            logger.error(f"[Country extraction error, OpenAI] {e}")
     for country in COUNTRY_LIST:
         if re.search(r"\b" + re.escape(country) + r"\b", text, re.IGNORECASE):
             return country
@@ -206,7 +265,7 @@ def detect_city(text):
         if result and result.lower() != "none":
             return result
     except Exception as e:
-        print(f"[City extraction error, Grok] {e}")
+        logger.error(f"[City extraction error, Grok] {e}")
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -219,7 +278,7 @@ def detect_city(text):
             if reply and reply.lower() != "none":
                 return reply
         except Exception as e:
-            print(f"[City extraction error, OpenAI] {e}")
+            logger.error(f"[City extraction error, OpenAI] {e}")
     match = fuzzy_match_city(text, CITY_LIST, cutoff=0.8)
     if match:
         return match
@@ -306,7 +365,7 @@ def summarize_single_alert(alert):
         g_summary = grok_chat(messages, temperature=TEMPERATURE)
     except Exception as e:
         g_error = str(e)
-        print(f"[Grok summary error] {e}")
+        logger.error(f"[Grok summary error] {e}")
 
     summary_out = g_summary
     source_used = "grok-3-mini"
@@ -320,7 +379,7 @@ def summarize_single_alert(alert):
             summary_out = response.choices[0].message.content.strip()
             source_used = "openai"
         except Exception as e:
-            print(f"[OpenAI fallback error] {e}")
+            logger.error(f"[OpenAI fallback error] {e}")
             summary_out = "⚠️ Failed to generate summary"
             source_used = "final-fail"
 
@@ -331,13 +390,13 @@ def summarize_single_alert(alert):
     try:
         category, confidence = classify_threat_category(combined_text)
     except Exception as e:
-        print(f"[Categorization error] {e}")
+        logger.error(f"[Categorization error] {e}")
         category, confidence = "Other", 0.5
 
     try:
         subcategory = extract_subcategory(combined_text, category)
     except Exception as e:
-        print(f"[Subcategory extraction error] {e}")
+        logger.error(f"[Subcategory extraction error] {e}")
         subcategory = "Unspecified"
 
     # Use threat scoring fields as set by RSS processor (no re-score)
@@ -349,18 +408,18 @@ def summarize_single_alert(alert):
     try:
         country = detect_country(combined_text)
     except Exception as e:
-        print(f"[Country extraction failure] {e}")
+        logger.error(f"[Country extraction failure] {e}")
         country = None
     try:
         city = detect_city(combined_text)
     except Exception as e:
-        print(f"[City extraction failure] {e}")
+        logger.error(f"[City extraction failure] {e}")
         city = None
 
     try:
         triggers = extract_triggers([alert])
     except Exception as e:
-        print(f"[Trigger extraction failure] {e}")
+        logger.error(f"[Trigger extraction failure] {e}")
         triggers = []
 
     save_threat_log(
@@ -397,15 +456,24 @@ def summarize_single_alert_with_retries(alert, max_retries=3):
             return summarize_single_alert(alert)
         except Exception as e:
             attempt += 1
-            print(f"[summarize_single_alert] Retry {attempt} failed: {e}")
+            logger.error(f"[summarize_single_alert] Retry {attempt} failed: {e}")
     return None
 
 def summarize_alerts(
     alerts,
+    user_email,  # user_email is now required
+    session_id,
     cache_path="cache/enriched_alerts.json",
     enable_semantic=ENABLE_SEMANTIC_DEDUP,
     failed_cache_path="cache/alerts_failed.json"
 ):
+    """
+    Summarize alerts up to user's plan quota (per user and per session quotas).
+    If quota exceeded, mark alert for analyst review instead of generating summary.
+    """
+    if not user_email:
+        raise ValueError("user_email is required for plan-based logic.")
+    plan_limits = get_plan_limits(user_email)
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     if os.path.exists(cache_path):
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -428,71 +496,79 @@ def summarize_alerts(
     failed_alerts = []
     failed_alerts_lock = threading.Lock()
 
-    to_summarize = new_alerts[:SUMMARY_LIMIT]
-
     def process(alert):
-        result = summarize_single_alert_with_retries(alert, max_retries=3)
-        if result is None:
-            with failed_alerts_lock:
-                failed_alerts.append(alert)
-            return None
-        (
-            summary, category, subcategory, confidence, threat_label, threat_score,
-            threat_confidence, reasoning, country, city, triggers, review_flag
-        ) = result
-        alert_copy = alert.copy()
-        alert_copy["gpt_summary"] = summary
-        alert_copy["category"] = category
-        alert_copy["subcategory"] = subcategory
-        alert_copy["category_confidence"] = confidence
-        alert_copy["threat_label"] = threat_label
-        alert_copy["score"] = threat_score
-        alert_copy["confidence"] = threat_confidence
-        alert_copy["reasoning"] = reasoning
-        alert_copy["country"] = country
-        alert_copy["city"] = city
-        alert_copy["triggers"] = triggers
-        alert_copy["review_flag"] = review_flag
-        alert_copy["analyst_review"] = alert.get("analyst_review", "")
-        alert_copy["hash"] = alert_hash(alert)
-        alert_copy["source_name"] = (
-            alert.get("source_name")
-            or alert.get("source")
-            or extract_source_from_url(alert.get("link", ""))
-            or "Unknown"
-        )
-        alert_copy["version"] = alert.get("version", 1)
-        return alert_copy
+        if should_summarize_alert(alert, plan_limits):
+            user_ok = can_user_summarize(redis_client, user_email, plan_limits)
+            session_ok = can_session_summarize(redis_client, session_id, plan_limits)
+            if user_ok and session_ok:
+                result = summarize_single_alert_with_retries(alert, max_retries=3)
+                if result is None:
+                    with failed_alerts_lock:
+                        failed_alerts.append(alert)
+                    return None
+                (
+                    summary, category, subcategory, confidence, threat_label, threat_score,
+                    threat_confidence, reasoning, country, city, triggers, review_flag
+                ) = result
+                alert_copy = alert.copy()
+                alert_copy["gpt_summary"] = summary
+                alert_copy["category"] = category
+                alert_copy["subcategory"] = subcategory
+                alert_copy["category_confidence"] = confidence
+                alert_copy["threat_label"] = threat_label
+                alert_copy["score"] = threat_score
+                alert_copy["confidence"] = threat_confidence
+                alert_copy["reasoning"] = reasoning
+                alert_copy["country"] = country
+                alert_copy["city"] = city
+                alert_copy["triggers"] = triggers
+                alert_copy["review_flag"] = review_flag
+                alert_copy["analyst_review"] = alert.get("analyst_review", "")
+                alert_copy["hash"] = alert_hash(alert)
+                alert_copy["source_name"] = (
+                    alert.get("source_name")
+                    or alert.get("source")
+                    or extract_source_from_url(alert.get("link", ""))
+                    or "Unknown"
+                )
+                alert_copy["version"] = alert.get("version", 1)
+                return alert_copy
+            else:
+                alert_copy = alert.copy()
+                alert_copy["gpt_summary"] = "Quota exceeded for this user or session."
+                alert_copy["review_flag"] = True
+                alert_copy["reasoning"] = "Quota exceeded for user/session."
+                alert_copy["analyst_review"] = alert.get("analyst_review", "")
+                alert_copy["hash"] = alert_hash(alert)
+                alert_copy["source_name"] = (
+                    alert.get("source_name")
+                    or alert.get("source")
+                    or extract_source_from_url(alert.get("link", ""))
+                    or "Unknown"
+                )
+                alert_copy["version"] = alert.get("version", 1)
+                logger.info(f"Quota exceeded for {user_email=} or {session_id=}")
+                return alert_copy
+        else:
+            alert_copy = alert.copy()
+            alert_copy["gpt_summary"] = ""
+            alert_copy["review_flag"] = False
+            alert_copy["analyst_review"] = alert.get("analyst_review", "")
+            alert_copy["hash"] = alert_hash(alert)
+            alert_copy["source_name"] = (
+                alert.get("source_name")
+                or alert.get("source")
+                or extract_source_from_url(alert.get("link", ""))
+                or "Unknown"
+            )
+            alert_copy["version"] = alert.get("version", 1)
+            return alert_copy
 
-    with ThreadPoolExecutor(max_workers=min(5, len(to_summarize))) as executor:
-        processed = list(executor.map(process, to_summarize))
+    # Process all new_alerts in parallel with quota checking
+    with ThreadPoolExecutor(max_workers=min(5, len(new_alerts))) as executor:
+        processed = list(executor.map(process, new_alerts))
 
     summarized.extend([res for res in processed if res is not None])
-
-    for alert in new_alerts[SUMMARY_LIMIT:]:
-        alert_copy = alert.copy()
-        alert_copy["gpt_summary"] = f"Summary not generated (limit {SUMMARY_LIMIT} reached)"
-        alert_copy["category"] = None
-        alert_copy["subcategory"] = None
-        alert_copy["category_confidence"] = None
-        alert_copy["threat_label"] = None
-        alert_copy["score"] = None
-        alert_copy["confidence"] = None
-        alert_copy["country"] = None
-        alert_copy["city"] = None
-        alert_copy["triggers"] = []
-        alert_copy["reasoning"] = "Summary not generated; review needed."
-        alert_copy["review_flag"] = True
-        alert_copy["analyst_review"] = alert.get("analyst_review", "")
-        alert_copy["hash"] = alert_hash(alert)
-        alert_copy["source_name"] = (
-            alert.get("source_name")
-            or alert.get("source")
-            or extract_source_from_url(alert.get("link", ""))
-            or "Unknown"
-        )
-        alert_copy["version"] = alert.get("version", 1)
-        summarized.append(alert_copy)
 
     all_alerts = cached_alerts + summarized
     seen = set()
@@ -523,6 +599,6 @@ def summarize_alerts(
             with open(failed_cache_path, "w", encoding="utf-8") as f:
                 json.dump(old_failed, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"[Failed alert backup error] {e}")
+            logger.error(f"[Failed alert backup error] {e}")
 
     return unique_alerts

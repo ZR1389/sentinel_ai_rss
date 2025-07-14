@@ -1,9 +1,5 @@
 import os
 import redis
-
-REDIS_URL = os.getenv("REDIS_URL")
-redis_client = redis.Redis.from_url(REDIS_URL)
-
 import re
 import time
 import json
@@ -19,7 +15,6 @@ from unidecode import unidecode
 import difflib
 from langdetect import detect
 import requests
-from googletrans import Translator
 from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 
 with open('fcdo_country_feeds.json', 'r', encoding='utf-8') as f:
@@ -33,12 +28,24 @@ from openai import OpenAI
 from threat_scorer import assess_threat_level
 from prompts import SYSTEM_PROMPT, TYPE_PROMPT, FALLBACK_PROMPT, SECURITY_SUMMARIZE_PROMPT
 
+from plan_utils import get_plan_limits
+from translation_utils import translate_snippet  # <-- Use your util here
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+REDIS_URL = os.getenv("REDIS_URL")
+redis_client = redis.Redis.from_url(REDIS_URL)
+
+try:
+    redis_client.ping()
+    logger.info("Redis connection established.")
+except Exception as e:
+    logger.error(f"Redis connection failed: {e}")
 
 THREAT_KEYWORDS = [
     "assassination", "murder", "homicide", "killing", "slaughter", "massacre", 
@@ -63,7 +70,7 @@ THREAT_KEYWORDS = [
     "travel scam", "armed robbery", "assault on a foreigner", "assault on a tourist",
     "extremist activity", "radicalization", "jihadist", "pirate attack",
     "extremism", "armed groups", "militia attacks", "armed militants", "separatists",
-    "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire",
+    "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire", 
     "police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion"
 ]
 
@@ -72,7 +79,6 @@ KEYWORD_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# --- Multilingual Keyword Map (expand as needed) ---
 TRANSLATED_KEYWORDS = {
     "assassination": {
         "en": ["assassination", "murder", "homicide", "killing", "slaughter", "massacre", "mass shooting", "active shooter", "gunfire"],
@@ -262,8 +268,7 @@ TRANSLATED_KEYWORDS = {
         "ru": ["жестокость полиции", "жестокое нападение", "незаконное лишение свободы", "шантаж", "вымогательство"],
         "hi": ["पुलिस की बर्बरता", "क्रूर हमला", "झूठा कारावास", "ब्लैकमेल", "जबरन वसूली"],
         "sr": ["полицијска бруталност", "бруталан напад", "незаконито затварање", "уцена", "изнуда", "рекетирање"],
-    },                                 
-
+    },    
 }
 
 def first_sentence(text):
@@ -317,7 +322,6 @@ def get_feed_for_location(region=None, city=None, topic=None):
         return COUNTRY_FEEDS[region_key_lower]
     return GLOBAL_FEEDS
 
-# --- Security-focused summarizer with caching ---
 def summarize_with_security_focus(text):
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -358,49 +362,6 @@ def summarize_with_security_focus_cached(summarize_fn):
     return wrapper
 
 summarize_with_security_grok = summarize_with_security_focus_cached(summarize_with_security_focus)
-
-# --- Plan limits for LLM summaries ---
-PLAN_LIMITS = {
-    "FREE": {"monthly": 5, "per_session": 2},
-    "BASIC": {"monthly": 20, "per_session": 5},
-    "PRO": {"monthly": 50, "per_session": 10},
-    "VIP": {"monthly": float("inf"), "per_session": float("inf")},
-}
-
-def should_summarize_alert(alert, plan, used_count=0, session_count=0):
-    if plan.upper() == "VIP":
-        return True
-    is_high_risk = (alert.get("score", 0) >= 0.75 or alert.get("level", "").lower() in ("high", "critical"))
-    limits = PLAN_LIMITS.get(plan.upper(), PLAN_LIMITS["FREE"])
-    if is_high_risk and used_count < limits["monthly"] and session_count < limits["per_session"]:
-        return True
-    return False
-
-# Usage tracking functions
-from datetime import datetime
-
-def atomic_increment_and_check(redis_client, key, limit, expiry):
-    try:
-        # Atomically increment the count
-        count = redis_client.incr(key)
-        # Set expiry only if the key is new
-        if count == 1 and expiry:
-            redis_client.expire(key, expiry)
-        return count <= limit
-    except Exception as e:
-        logger.error(f"[Redis][atomic_increment_and_check] {e}")
-        return False
-
-def can_user_summarize(redis_client, user_id, plan_limits):
-    month = datetime.utcnow().strftime("%Y-%m")
-    key = f"user:{user_id}:llm_alert_count:{month}"
-    expiry = 60 * 60 * 24 * 45  # 45 days
-    return atomic_increment_and_check(redis_client, key, plan_limits["monthly"], expiry)
-
-def can_session_summarize(redis_client, session_id, plan_limits):
-    key = f"session:{session_id}:llm_alert_count"
-    expiry = 60 * 60 * 24  # 24 hours
-    return atomic_increment_and_check(redis_client, key, plan_limits["per_session"], expiry)
 
 THREAT_CATEGORIES = [
     "Terrorism", "Protest", "Crime", "Kidnapping", "Cyber",
@@ -536,44 +497,52 @@ def map_severity(score):
         return "Medium"
     return "Low"
 
-# --- Translation logic (LibreTranslate & googletrans fallback) ---
-translator = Translator()
-translation_cache = {}
+def should_summarize_alert(alert, plan_limits, used_count=0, session_count=0):
+    is_high_risk = (alert.get("score", 0) >= 0.75 or alert.get("level", "").lower() in ("high", "critical"))
+    if plan_limits.get("chat_monthly") == float("inf"):
+        return True
+    if is_high_risk and used_count < plan_limits.get("rss_monthly", 5) and session_count < plan_limits.get("rss_per_session", 2):
+        return True
+    return False
 
-def translate_snippet(snippet, lang):
-    if len(snippet.strip()) < 10 or lang == "en":
-        return snippet
-    key = sha256((snippet + lang).encode("utf-8")).hexdigest()
-    if key in translation_cache:
-        return translation_cache[key]
-    # Try LibreTranslate first
+def atomic_increment_and_check(redis_client, key, limit, expiry):
     try:
-        response = requests.post(
-            "https://libretranslate.com/translate",
-            data={"q": snippet, "source": lang, "target": "en", "format": "text"},
-            timeout=10
-        )
-        response.raise_for_status()
-        translated = response.json().get("translatedText", None)
-        if translated:
-            translation_cache[key] = translated
-            return translated
+        count = redis_client.incr(key)
+        if count == 1 and expiry:
+            redis_client.expire(key, expiry)
+        return count <= limit
     except Exception as e:
-        logger.error(f"[LibreTranslate error] {e}")
-    # Fallback to googletrans
+        logger.error(f"[Redis][atomic_increment_and_check] {e}")
+        return False
+
+def can_user_summarize(redis_client, user_email, plan_limits):
     try:
-        result = translator.translate(snippet, src=lang, dest='en')
-        translated = result.text
-        translation_cache[key] = translated
-        return translated
+        month = datetime.utcnow().strftime("%Y-%m")
+        key = f"user:{user_email}:rss_llm_alert_count:{month}"
+        expiry = 60 * 60 * 24 * 45
+        limit = plan_limits.get("rss_monthly", 5)
+        if limit == float("inf"):
+            return True
+        return atomic_increment_and_check(redis_client, key, limit, expiry)
     except Exception as e:
-        logger.error(f"[googletrans error] {e}")
-    translation_cache[key] = snippet
-    return snippet
+        logger.error(f"[Redis][can_user_summarize] {e}")
+        return False
+
+def can_session_summarize(redis_client, session_id, plan_limits):
+    try:
+        key = f"session:{session_id}:rss_llm_alert_count"
+        expiry = 60 * 60 * 24
+        limit = plan_limits.get("rss_per_session", 2)
+        if limit == float("inf"):
+            return True
+        return atomic_increment_and_check(redis_client, key, limit, expiry)
+    except Exception as e:
+        logger.error(f"[Redis][can_session_summarize] {e}")
+        return False
 
 def get_clean_alerts(
     region=None, topic=None, city=None, limit=20, summarize=False,
-    llm_location_filter=True, plan="FREE", user_id=None, session_id=None
+    llm_location_filter=True, user_email=None, session_id=None
 ):
     alerts = []
     seen = set()
@@ -602,17 +571,12 @@ def get_clean_alerts(
             link = entry.get("link", "").strip()
             published = entry.get("published", "")
 
-            # Detect language
             lang = safe_detect_lang(search_text)
-
-            # Multilingual and English keyword matching
             threat_match = any_multilingual_keyword(search_text, lang, TRANSLATED_KEYWORDS)
             english_match = KEYWORD_PATTERN.search(search_text)
-
             if not (threat_match or english_match):
                 continue
 
-            # Only translate if not English
             snippet = f"{title}. {summary}".strip()
             if lang != "en":
                 en_snippet = translate_snippet(snippet, lang)
@@ -654,7 +618,7 @@ def get_clean_alerts(
                     triggers=[],
                     location=city or region or "",
                     alert_uuid=dedupe_key,
-                    plan=plan
+                    plan="FREE"
                 )
                 for k, v in threat_result.items():
                     alert[k] = v
@@ -698,24 +662,24 @@ def get_clean_alerts(
         logger.error("⚠️ No relevant alerts found for city/region. Will use fallback advisory.")
         return []
 
-    # ---- PLAN-AWARE, SECURITY-FOCUSED LLM SUMMARY LOGIC ----
-    if summarize and filtered_alerts:
-       plan_limits = PLAN_LIMITS.get(plan.upper(), PLAN_LIMITS["FREE"])
-       for alert in filtered_alerts:
-           if should_summarize_alert(alert, plan):  # No more batch quota params
-               user_ok = can_user_summarize(redis_client, user_id, plan_limits)
-               session_ok = can_session_summarize(redis_client, session_id, plan_limits)
-               if user_ok and session_ok:
-                   summary = summarize_with_security_grok(alert["en_snippet"])
-                   alert["gpt_summary"] = summary
-               else:
-                   alert["gpt_summary"] = ""
-                   logger.info(f"Quota exceeded for {user_id=} or {session_id=}")
-           else:
+    if user_email is None:
+        raise ValueError("user_email is required for plan-based logic.")
+    plan_limits = get_plan_limits(user_email)
+    for alert in filtered_alerts:
+        if summarize:
+            if should_summarize_alert(alert, plan_limits):
+                user_ok = can_user_summarize(redis_client, user_email, plan_limits)
+                session_ok = can_session_summarize(redis_client, session_id or "demo_session", plan_limits)
+                if user_ok and session_ok:
+                    summary = summarize_with_security_grok(alert["en_snippet"])
+                    alert["gpt_summary"] = summary
+                else:
+                    alert["gpt_summary"] = ""
+                    logger.info(f"Quota exceeded for {user_email=} or {session_id=}")
+            else:
                 alert["gpt_summary"] = ""
-    else:
-       for alert in filtered_alerts:
-           alert.setdefault("gpt_summary", "")     
+        else:
+            alert.setdefault("gpt_summary", "")
 
     logger.info(f"✅ Parsed {len(filtered_alerts)} location-relevant alerts.")
     return filtered_alerts[:limit]
@@ -726,6 +690,7 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
         region = kwargs.get("region", None)
         city = kwargs.get("city", None)
         topic = kwargs.get("topic", None)
+        user_email = kwargs.get("user_email", None)
 
         if summarize or region or city or topic:
             return get_clean_alerts_fn(*args, **kwargs)
@@ -771,7 +736,8 @@ get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
 
 if __name__ == "__main__":
     logger.info("🔍 Running standalone RSS processor...")
-    alerts = get_clean_alerts(region="Afghanistan", limit=5, summarize=True, plan="VIP", user_id="demo", session_id="demo")
+    test_email = "zika.rakita@gmail.com"
+    alerts = get_clean_alerts(region="Afghanistan", limit=5, summarize=True, user_email=test_email, session_id="demo")
     if not alerts:
         logger.info("No relevant alerts found. Generating fallback advisory...")
         logger.info(generate_fallback_summary(region="Afghanistan", threat_type="All"))

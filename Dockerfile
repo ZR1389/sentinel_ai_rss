@@ -13,18 +13,19 @@ RUN apt-get update && apt-get install -y \
     libxslt1-dev zlib1g-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy and install base requirements
+# Copy and install Python dependencies
 COPY requirements.txt .
 RUN python -m venv $VIRTUAL_ENV && \
-    $VIRTUAL_ENV/bin/pip install --upgrade pip && \
+    $VIRTUAL_ENV/bin/pip install --upgrade pip setuptools wheel && \
     $VIRTUAL_ENV/bin/pip install -r requirements.txt
 
-# Install xai-sdk separately
+# Install xai-sdk from xAI's index
 RUN $VIRTUAL_ENV/bin/pip install xai-sdk --extra-index-url=https://pypi.xai.io/simple
 
-# Copy source
+# Copy application code
 COPY . .
 
 EXPOSE 8080
 
+# Adjust this only if needed (default assumes main.py and app = Flask(...))
 CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:8080"]

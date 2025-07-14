@@ -1,6 +1,23 @@
+"""
+Centralized plan rules for all product features.
+Update here to change plan quotas or feature flags site-wide.
+"""
+
 PLAN_RULES = {
     "FREE": {
-        "chat_limit": 3,
+        # Chat/Advisor/Handler limits
+        "chat_monthly": 3,
+        "chat_per_session": 2,
+
+        # RSS processor (travel alerts)
+        "rss_monthly": 5,
+        "rss_per_session": 2,
+
+        # Threat engine
+        "threat_monthly": 5,
+        "threat_per_session": 2,
+
+        # Feature flags
         "pdf": False,
         "priority": "Standard",
         "insights": False,
@@ -8,7 +25,12 @@ PLAN_RULES = {
         "support": False
     },
     "BASIC": {
-        "chat_limit": 100,
+        "chat_monthly": 100,
+        "chat_per_session": 5,
+        "rss_monthly": 20,
+        "rss_per_session": 5,
+        "threat_monthly": 20,
+        "threat_per_session": 5,
         "pdf": False,
         "priority": "Standard",
         "insights": "Monthly",
@@ -16,7 +38,12 @@ PLAN_RULES = {
         "support": False
     },
     "PRO": {
-        "chat_limit": 500,
+        "chat_monthly": 500,
+        "chat_per_session": 10,
+        "rss_monthly": 50,
+        "rss_per_session": 10,
+        "threat_monthly": 50,
+        "threat_per_session": 10,
         "pdf": "Monthly",
         "priority": "Fast",
         "insights": "Weekly",
@@ -24,7 +51,12 @@ PLAN_RULES = {
         "support": False
     },
     "VIP": {
-        "chat_limit": None,
+        "chat_monthly": float("inf"),
+        "chat_per_session": float("inf"),
+        "rss_monthly": float("inf"),
+        "rss_per_session": float("inf"),
+        "threat_monthly": float("inf"),
+        "threat_per_session": float("inf"),
         "pdf": "On-request",
         "priority": "Fastest",
         "insights": "On-demand",

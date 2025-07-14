@@ -1,18 +1,23 @@
 import requests
-from googletrans import Translator
 import hashlib
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
 
-translator = Translator()
+load_dotenv()
+client = OpenAI()
+
 translation_cache = {}
 
 def translate_snippet(snippet, lang):
     """
-    Translates a text snippet into English, using LibreTranslate first, then falling back to googletrans.
-    Returns the translated string or the original snippet if both fail.
+    Translates a text snippet into English. Tries LibreTranslate first,
+    then falls back to OpenAI.
     """
     key = hashlib.sha256((snippet + lang).encode("utf-8")).hexdigest()
     if key in translation_cache:
         return translation_cache[key]
+
     # Try LibreTranslate first
     try:
         response = requests.post(
@@ -27,14 +32,24 @@ def translate_snippet(snippet, lang):
             return translated
     except Exception as e:
         print(f"[LibreTranslate error] {e}")
-    # Fallback to googletrans
+
+    # Fallback: OpenAI translation
     try:
-        result = translator.translate(snippet, src=lang, dest='en')
-        translated = result.text
+        system = "Translate the following text to English as accurately as possible."
+        completion = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": snippet}
+            ],
+            temperature=0.3
+        )
+        translated = completion.choices[0].message.content.strip()
         translation_cache[key] = translated
         return translated
     except Exception as e:
-        print(f"[googletrans error] {e}")
-    # Final fallback: return original
+        print(f"[OpenAI fallback error] {e}")
+
+    # Final fallback
     translation_cache[key] = snippet
     return snippet

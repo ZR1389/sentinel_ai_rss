@@ -143,7 +143,8 @@ def handle_user_query(message, email, region=None, threat_type=None, plan=None, 
         return cached
 
     try:
-        raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True, plan=plan)
+        # Plan logic: always use user_email for clean_alerts
+        raw_alerts = get_clean_alerts(region=region, topic=threat_type, summarize=True, user_email=email)
         log.info(f"Alerts fetched: {len(raw_alerts)}")
     except Exception as e:
         log.error(f"Failed to fetch alerts: {e}")
@@ -168,7 +169,8 @@ def handle_user_query(message, email, region=None, threat_type=None, plan=None, 
         return result
 
     try:
-        summarized = summarize_alerts(raw_alerts)
+        # Plan logic: always use user_email for summarize_alerts
+        summarized = summarize_alerts(raw_alerts, user_email=email, session_id=email)
         log.info("Summaries generated")
     except Exception as e:
         log.error(f"Failed to summarize alerts: {e}")
