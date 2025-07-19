@@ -1,53 +1,31 @@
-import schedule
-import time
-import json
+import os
 from datetime import datetime
-from email_dispatcher import send_pdf_report
-from telegram_dispatcher import send_alerts_to_telegram
+from dotenv import load_dotenv
+from rss_processor import get_clean_alerts
 
-print(f"📅 Sentinel AI Scheduler started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+load_dotenv()
+print(f"📅 Sentinel AI Ingestion (Railway Service) started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-def email_job():
-    print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running email dispatch...")
+def ingestion_job():
+    print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running RSS ingestion job (hourly)...")
     try:
-        with open("clients.json", "r") as f:
-            clients = json.load(f)
+        alerts = get_clean_alerts(
+            region=None,
+            topic=None,
+            city=None,
+            limit=100,  # adjust as needed
+            summarize=True,
+            user_email="system-ingest@sentinel",
+            session_id="scheduler-ingest",
+            use_telegram=True,
+            write_to_db=True
+        )
+        print(f"✅ Ingestion completed, alerts processed: {len(alerts)}")
     except Exception as e:
-        print(f"❌ Failed to load clients.json: {e}")
-        return
+        print(f"❌ Ingestion job failed: {e}")
 
-    for client in clients:
-        email = client.get("email", "")
-        plan = client.get("plan", "FREE")
-        region = client.get("region", None)
-        result = send_pdf_report(email=email, plan=plan, region=region)
-        status = result.get("status", "unknown")
-        reason = result.get("reason", "")
-        if status == "sent":
-            print(f"✅ Report sent to {email} ({plan})")
-        elif status == "skipped":
-            print(f"⏩ Skipped {email} ({plan}) — {reason}")
-        elif status == "error":
-            print(f"❌ Error for {email} ({plan}): {reason}")
-        else:
-            print(f"❓ Unknown status for {email} ({plan}): {result}")
-
-def telegram_job():
-    print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running Telegram dispatch...")
-    try:
-        count = send_alerts_to_telegram()
-        print(f"📨 Sent {count} Telegram alerts.")
-    except Exception as e:
-        print(f"❌ Telegram dispatch failed: {e}")
-
-# Schedule jobs daily at 08:00
-schedule.every().day.at("08:00").do(email_job)
-schedule.every().day.at("08:00").do(telegram_job)
-
-# Main loop
-try:
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
-except KeyboardInterrupt:
-    print("\n🛑 Scheduler stopped by user.")
+if __name__ == "__main__":
+    # Optional: warn if not running in Railway/service context
+    if not os.getenv("RAILWAY_ENVIRONMENT"):
+        print("⚠️  Not running in a Railway environment! Make sure environment variables are set.")
+    ingestion_job()

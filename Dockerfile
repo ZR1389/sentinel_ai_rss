@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     libxslt1-dev zlib1g-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN python -m venv $VIRTUAL_ENV && \
     $VIRTUAL_ENV/bin/pip install --upgrade pip setuptools wheel && \
@@ -27,5 +27,5 @@ COPY . .
 
 EXPOSE 8080
 
-# Adjust this only if needed (default assumes main.py and app = Flask(...))
+# Default: Gunicorn for web, can override in Railway for scheduler
 CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:8080"]

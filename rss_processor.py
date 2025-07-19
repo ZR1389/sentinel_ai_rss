@@ -1,24 +1,41 @@
 import os
-import redis
 import re
 import time
 import json
+import asyncio
 import httpx
 import feedparser
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from hashlib import sha256
 from pathlib import Path
 from unidecode import unidecode
 import difflib
 from langdetect import detect
-import requests
+
+from db_utils import save_alerts_to_db
 from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+
+# --- SHARED ENRICHMENT IMPORTS ---
+from risk_shared import (
+    compute_keyword_weight,
+    enrich_log,
+    run_sentiment_analysis,
+    run_forecast,
+    run_legal_risk,
+    run_cyber_ot_risk,
+    run_environmental_epidemic_risk,
+    KEYWORD_WEIGHTS
+)
 
 with open('fcdo_country_feeds.json', 'r', encoding='utf-8') as f:
     FCDO_FEEDS = json.load(f)
+
+with open('threat_keywords.json', 'r', encoding='utf-8') as f:
+    keywords_data = json.load(f)
+    THREAT_KEYWORDS = keywords_data["keywords"]
+    TRANSLATED_KEYWORDS = keywords_data["translated"]
 
 load_dotenv()
 
@@ -26,10 +43,13 @@ from telegram_scraper import scrape_telegram_messages
 from xai_client import grok_chat
 from openai import OpenAI
 from threat_scorer import assess_threat_level
-from prompts import SYSTEM_PROMPT, TYPE_PROMPT, FALLBACK_PROMPT, SECURITY_SUMMARIZE_PROMPT
-
-from plan_utils import get_plan_limits
-from translation_utils import translate_snippet  # <-- Use your util here
+from prompts import (
+    SYSTEM_PROMPT, TYPE_PROMPT, FALLBACK_PROMPT, SECURITY_SUMMARIZE_PROMPT, THREAT_SCORER_SYSTEM_PROMPT,
+    SENTIMENT_ANALYSIS_PROMPT, PROACTIVE_FORECAST_PROMPT, LEGAL_REGULATORY_RISK_PROMPT,
+    CYBER_OT_RISK_PROMPT, ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT
+)
+from plan_utils import get_plan_limits, check_user_rss_quota, increment_user_rss_usage
+from translation_utils import translate_snippet
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -38,241 +58,25 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL")
-redis_client = redis.Redis.from_url(REDIS_URL)
+RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+if RAILWAY_ENV:
+    logger.info(f"Running in Railway environment: {RAILWAY_ENV}")
+else:
+    logger.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
-try:
-    redis_client.ping()
-    logger.info("Redis connection established.")
-except Exception as e:
-    logger.error(f"Redis connection failed: {e}")
+if not OPENAI_API_KEY:
+    logger.warning("OPENAI_API_KEY not set! LLM features will be disabled.")
 
-THREAT_KEYWORDS = [
-    "assassination", "murder", "homicide", "killing", "slaughter", "massacre", 
-    "mass shooting", "active shooter", "gunfire",
-    "kidnapping", "abduction", "hijacking", "hostage situation", 
-    "human trafficking", "sex trafficking", "rape", "sexual assault", "violent crime",
-    "bombing", "improvised explosive device", "IED", "terrorist attack", "terrorism", 
-    "suicide bombing", "drone attack", "explosion", "road ambush",
-    "military coup", "military raid", "coup d'etat", "regime change", "military takeover", 
-    "state of emergency", "martial law", "curfew", "roadblock", "police raid",
-    "civil unrest", "riot", "protest", "political unrest", "uprising", "insurrection",
-    "political turmoil", "political crisis", "demonstration", 
-    "border closure", "flight cancellation", "airport closure", "lockdown",
-    "embassy alert", "travel advisory", "travel ban", "security alert",
-    "emergency situation", "evacuation", "government crisis", "war", "armed conflict",
-    "pandemic", "viral outbreak", "disease spread", "contamination", "quarantine",
-    "public health emergency", "infectious disease", "epidemic", "biological threat", "health alert",
-    "data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing",
-    "malware", "cyber espionage", "identity theft", "network breach", "online scam",
-    "digital kidnapping", "virtual kidnapping", "cyber kidnapping", "honey trap", "hacking attack",
-    "cyber fraud", "crypto fraud", "financial scam", "organized crime",  
-    "travel scam", "armed robbery", "assault on a foreigner", "assault on a tourist",
-    "extremist activity", "radicalization", "jihadist", "pirate attack",
-    "extremism", "armed groups", "militia attacks", "armed militants", "separatists",
-    "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire", 
-    "police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion"
-]
+SUMMARY_CACHE_FILE = "summary_cache.json"
+SUMMARY_CACHE_MAX_ENTRIES = 10000
+SUMMARY_CACHE_EXPIRY_DAYS = 30
 
 KEYWORD_PATTERN = re.compile(
     r'\b(' + '|'.join(re.escape(k) for k in THREAT_KEYWORDS) + r')\b',
     re.IGNORECASE
 )
 
-TRANSLATED_KEYWORDS = {
-    "assassination": {
-        "en": ["assassination", "murder", "homicide", "killing", "slaughter", "massacre", "mass shooting", "active shooter", "gunfire"],
-        "es": ["asesinato", "matar", "homicidio", "matanza", "masacre", "tiroteo masivo", "asesinato en masa", "tirador activo", "tiradora activa", "tiroteo"],
-        "fr": ["assassinat", "meurtre", "homicide", "massacre", "fusillade de masse", "massacre de masse", "tireur actif", "fusillade"],
-        "zh": ["暗殺", "謀殺", "殺人", "殺害", "屠殺", "大屠殺", "大規模槍擊", "大規模殺戮", "活躍槍手"],
-        "ru": ["убийство", "умерщвление", "бойня", "резня", "массовый расстрел", "массовое убийство"],
-        "hi": ["हत्या", "वध", "नरसंहार", "सामूहिक गोलीबारी", "सामूहिक हत्या", "सक्रिय शूटर"],
-        "sr": ["атентат", "убиство", "покољ", "масакр", "масовна пуцњава", "масовно пуцање"],
-    },
-    "kidnapping": {
-        "en": ["kidnapping", "abduction", "hijacking", "hostage situation"],
-        "es": ["secuestro", "rapto", "secuestro forzoso", "toma de rehenes"],
-        "fr": ["enlèvement", "rapt", "détournement", "prise d'otages"],
-        "zh": ["綁架", "誘拐", "劫持", "人質事件"],
-        "ru": ["похищение, угон", "захват заложников"],
-        "hi": ["अपहरण", "बंधक स्थिति"],
-        "sr": ["отмица", "киднаповање", "талачка ситуација"],
-    },
-    "human trafficking": {
-        "en": ["human trafficking", "sex trafficking", "rape", "sexual assault", "violent crime"],
-        "es": ["trata de personas", "tráfico sexual", "violación", "agresión sexual", "delitos violentos"],
-        "fr": ["traite des êtres humains", "trafic sexuel", "viol", "agression sexuelle", "crime violent"],
-        "zh": ["人口販賣", "性交易", "強暴", "性侵害", "暴力犯罪"],
-        "ru": ["торговля людьми", "торговля людьми в целях сексуальной эксплуатации", "изнасилование", "сексуальное насилие", "насильственные преступления"],
-        "hi": ["मानव तस्करी", "यौन तस्करी", "बलात्कार", "यौन उत्पीड़न", "हिंसक अपराध"],
-        "sr": ["трговина људима", "силовање", "сексуални напад", "насилни злочин", "насиље"],
-    },
-     "terrorism": {
-        "en": ["bombing", "improvised explosive device", "IED", "terrorist attack", "terrorism", "suicide bombing", "drone attack", "explosion", "road ambush"],
-        "es": ["bombardeo", "artefacto explosivo improvisado", "ataque terrorista", "terrorismo", "atentado suicida", "ataque con drones", "explosión", "emboscada en la carretera"],
-        "fr": ["attentat à la bombe", "engin explosif improvisé", "attaque terroriste", "terrorisme", "attentat suicide", "attaque de drone", "explosion", "embuscade routière"],
-        "zh": ["轟炸", "簡易爆炸裝置", "恐怖攻擊", "恐怖主義", "自殺式爆炸", "無人機攻擊", "爆炸", "公路伏擊"],
-        "ru": ["бомбардировка", "самодельное взрывное устройство", "теракт", "терроризм, теракт-смертник", "атака с использованием дронов", "взрыв", "дорожная засада"],
-        "hi": ["बमबारी", "तात्कालिक विस्फोटक उपकरण", "आतंकवादी हमला", "आतंकवाद", "आत्मघाती बम विस्फोट", "ड्रोन हमला", "विस्फोट", "सड़क पर घात लगाकर हमला"],
-        "sr": ["бомбардовање", "сачекуша", "импровизована експлозивна направа", "терористички напад", "тероризам", "самоубилачки бомбашки напад", "напад дроном", "експлозија", "заседа на путу", "бомбаш самоубица", "бомба"],
-    },
-    "military coup": {
-        "en": ["military coup", "military raid", "coup d'etat", "regime change", "military takeover"],
-        "es": ["golpe militar", "incursión militar", "golpe de estado", "cambio de régimen", "toma del poder militar"],
-        "fr": ["coup d'État militaire", "raid militaire", "changement de régime", "prise de pouvoir militaire"],
-        "zh": ["軍事政變", "軍事攻擊", "政變", "政權更迭", "軍事接管"],
-        "ru": ["военный переворот", "военный рейд", "государственный переворот", "смена режима"],
-        "hi": ["सैन्य तख्तापलट", "सैन्य छापा", "तख्तापलट", "शासन परिवर्तन", "सैन्य अधिग्रहण"],
-        "sr": ["војни пуч", "војна рација", "државни удар", "промена власти", "војно преузимање власти"],
-    },
-     "state of emergency": {
-        "en": ["state of emergency", "martial law", "curfew", "roadblock", "police raid"],
-        "es": ["estado de emergencia", "ley marcial", "toque de queda", "bloqueo de carreteras", "redada policial"],
-        "fr": ["état d'urgence", "loi martiale", "couvre-feu", "barrage routier", "descente de police"],
-        "zh": ["緊急狀態", "戒嚴", "宵禁", "路障", "警察突襲"],
-        "ru": ["чрезвычайное положение", "военное положение", "комендантский час", "блокирование дорог", "полицейский рейд"],
-        "hi": ["आपातकालीन स्थिति", "मार्शल लॉ", "कर्फ्यू", "सड़क अवरोध", "पुलिस छापा"],
-        "sr": ["ванредно стање", "војно стање", "полицијски час", "блокада пута", "полицијска рација"],
-    },
-    "protest": {
-        "en": ["civil unrest", "riot", "protest", "political unrest", "uprising", "insurrection", "political turmoil", "political crisis", "demonstration"],
-        "es": ["disturbios civiles", "disturbios", "protestas", "disturbios políticos", "levantamientos", "insurrecciones", "agitación política", "crisis política"],
-        "fr": ["troubles civils", "émeute", "protestation", "soulèvement", "insurrection", "troubles politiques", "crise politique"],
-        "zh": ["國內暴動", "暴動", "抗議", "政治動亂", "起義", "叛亂", "政治動盪", "政治危機", "示威"],
-        "ru": ["гражданские беспорядки", "бунт", "протест", "политические беспорядки", "восстание, мятеж", "политические волнения", "политический кризис", "демонстрация"],
-        "hi": ["नागरिक अशांति", "दंगा", "विरोध", "राजनीतिक अशांति", "विद्रोह", "बगावत", "राजनीतिक उथल-पुथल", "राजनीतिक संकट", "प्रदर्शन"],
-        "sr": ["грађански немири", "протест", "политички немири", "демонстрације", "политичко превирање", "политичка криза"],
-    },
-    "border closure": {
-        "en": ["border closure", "flight cancellation", "airport closure", "lockdown"],
-        "es": ["cierre de fronteras", "cancelación de vuelos", "cierre de aeropuertos"],
-        "fr": ["fermeture des frontières", "annulation de vol", "fermeture de l'aéroport"],
-        "zh": ["邊境關閉", "航班取消", "機場關閉", "封鎖"],
-        "ru": ["закрытие границ", "отмена рейсов", "закрытие аэропортов", "локдаун"],
-        "hi": ["सीमा बंद", "उड़ान रद्द", "हवाई अड्डा बंद", "लॉकडाउन"],
-        "sr": ["затварање границе", "отказивање лета", "затварање аеродрома"],
-    },
-     "embassy alert": {
-        "en": ["embassy alert", "travel advisory", "travel ban", "security alert"],
-        "es": ["alerta de embajada", "aviso de viaje", "prohibición de viajar", "alerta de seguridad"],
-        "fr": ["alerte de l'ambassade", "avis aux voyageurs", "interdiction de voyager", "alerte de sécurité"],
-        "zh": ["大使館警報", "旅行警告", "旅行禁令", "安全警報"],
-        "ru": ["оповещение посольства", "рекомендация по поездкам", "запрет на поездки", "предупреждение о безопасности"],
-        "hi": ["दूतावास अलर्ट", "यात्रा सलाह", "यात्रा प्रतिबंध", "सुरक्षा अलर्ट"],
-        "sr": ["упозорење амбасаде", "савет за путовања", "забрана путовања", "безбедносно упозорење"],
-    },
-    "evacuation": {
-        "en": ["emergency situation", "evacuation", "government crisis", "war", "armed conflict"],
-        "es": ["situación de emergencia", "evacuación", "crisis gubernamental", "guerra", "conflicto armado"],
-        "fr": ["situation d'urgence", "évacuation", "crise gouvernementale", "guerre", "conflit armé"],
-        "zh": ["緊急情況", "疏散", "政府危機", "戰爭", "武裝衝突"],
-        "ru": ["чрезвычайная ситуация", "эвакуация", "правительственный кризис", "война", "вооруженный конфликт"],
-        "hi": ["आपातकालीन स्थिति", "निकासी", "सरकारी संकट", "युद्ध", "सशस्त्र संघर्ष"],
-        "sr": ["ванредна ситуација", "евакуација", "криза владе", "криза режима", "криза власти", "рат", "оружани сукоб"],
-    },
-    "pandemic": {
-        "en": ["pandemic", "viral outbreak", "disease spread", "contamination", "quarantine"],
-        "es": ["pandemia", "brote viral", "propagación de enfermedades", "contaminación", "cuarentena"],
-        "fr": ["pandémie", "épidémie virale", "propagation de maladie", "contamination", "quarantaine"],
-        "zh": ["大流行", "病毒爆發", "疾病傳播", "污染", "隔離"],
-        "ru": ["пандемия", "вирусная вспышка", "распространение болезни", "заражение", "карантин"],
-        "hi": ["महामारी", "वायरल प्रकोप", "रोग प्रसार", "संदूषण", "संगरोध"],
-        "sr": ["пандемија", "контаминација", "карантин", "ширење вируса", "ширење заразе", "ширење болести"],
-    },
-    "epidemic": {
-        "en": ["public health emergency", "infectious disease", "epidemic", "biological threat", "health alert"],
-        "es": ["emergencia de salud pública", "enfermedad infecciosa", "epidemia", "amenaza biológica", "alerta sanitaria"],
-        "fr": ["urgence de santé publique", "maladie infectieuse", "épidémie", "menace biologique", "alerte sanitaire"],
-        "zh": ["突發公共衛生事件", "傳染病", "流行病", "生物威脅", "健康警報"],
-        "ru": ["чрезвычайная ситуация в области общественного здравоохранения", "инфекционное заболевание", "эпидемия", "биологическая угроза", "оповещение о состоянии здоровья"],
-        "hi": ["सार्वजनिक स्वास्थ्य आपातकाल", "संक्रामक रोग", "महामारी", "जैविक खतरा", "स्वास्थ्य चेतावनी"],
-        "sr": ["епидемија", "заразне болести", "инфективне болести", "медицинска ванредна ситуација", "биолошка претња", "здравствено упозорење"],
-    },
-    "cyberattack": {
-        "en": ["data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing"],
-        "es": ["violación de datos", "ransomware", "ciberataque", "hacktivismo", "deepfake", "phishing"],
-        "fr": ["violation de données", "rançongiciel", "cyberattaque", "hacktivisme", "deepfake", "phishing"],
-        "zh": ["資料外洩", "勒索軟體", "網路攻擊", "駭客行動主義", "深度偽造", "網路釣魚"],
-        "ru": ["утечка данных", "программы-вымогатели", "кибератака", "хактивизм", "дипфейк", "фишинг"],
-        "hi": ["डेटा उल्लंघन", "रैंसमवेयर", "साइबर हमला", "हैकटिविज़्म", "डीपफेक", "फ़िशिंग"],
-        "sr": ["крађа података", "рансомвер", "сајбер напад", "хактивизам", "дипфејк", "фишинг", "нарушавање приватности"],
-    },
-    "cyber espionage": {
-        "en": ["malware", "cyber espionage", "identity theft", "network breach", "online scam"],
-        "es": ["malware", "ciberespionaje", "robo de identidad", "violación de la red", "estafa en línea"],
-        "fr": ["logiciels malveillants", "cyberespionnage", "vol d'identité", "violation de réseau", "escroquerie en ligne"],
-        "zh": ["惡意軟體", "網路間諜", "身分盜竊", "網路入侵", "網路詐騙"],
-        "ru": ["вредоносное ПО", "кибершпионаж", "кража личных данных", "взлом сети", "интернет-мошенничество"],
-        "hi": ["मैलवेयर", "साइबर जासूसी", "पहचान की चोरी", "नेटवर्क उल्लंघन", "ऑनलाइन घोटाला"],
-        "sr": ["злонамерни софтвер", "сајбер шпијунажа", "крађа идентитета", "хаковање мреже", "онлајн превара"],
-    },
-     "digital kidnapping": {
-        "en": ["digital kidnapping", "virtual kidnapping", "cyber kidnapping", "honey trap", "hacking attack"],
-        "es": ["secuestro digital", "secuestro virtual", "secuestro cibernético", "trampa de miel", "ataque de hackers"],
-        "fr": ["enlèvement numérique", "enlèvement virtuel", "cyber-enlèvement", "piège à miel", "attaque de piratage"],
-        "zh": ["大流行", "病毒爆發", "疾病傳播", "污染", "隔離"],
-        "ru": ["пандемия", "вирусная вспышка", "распространение болезни", "заражение", "карантин"],
-        "hi": ["महामारी", "वायरल प्रकोप", "रोग प्रसार", "संदूषण", "संगरोध"],
-        "sr": ["дигитална отмица", "виртуелна отмица", "сајбер отмица", "хакерски напад", "хаковање"],
-    },
-     "cyber fraud": {
-        "en": ["cyber fraud", "crypto fraud", "financial scam", "organized crime"],
-        "es": ["fraude cibernético", "fraude de criptomonedas", "estafa financiera", "crimen organizado"],
-        "fr": ["cyberfraude", "fraude cryptographique", "escroquerie financière", "crime organisé"],
-        "zh": ["網路詐騙", "加密貨幣詐騙", "金融詐騙", "組織犯罪"],
-        "ru": ["кибермошенничество", "криптомошенничество", "финансовое мошенничество", "организованная преступность"],
-        "hi": ["साइबर धोखाधड़ी", "क्रिप्टो धोखाधड़ी", "वित्तीय घोटाला", "संगठित अपराध"],
-        "sr": ["сајбер превара", "крипто превара", "финансијска превара", "организовани криминал"],
-    },
-    "travel scam": {
-        "en": ["travel scam", "armed robbery", "assault on a foreigner", "assault on a tourist"],
-        "es": ["estafa de viaje", "robo a mano armada", "asalto a un extranjero", "asalto a un turista"],
-        "fr": ["arnaque au voyage", "vol à main armée", "agression d'un étranger", "agression d'un touriste"],
-        "zh": ["旅行詐騙", "武裝搶劫", "襲擊外國人", "襲擊遊客"],
-        "ru": ["Мошенничество в сфере туризма", "вооруженные ограбления", "нападения на иностранцев", "нападения на туристов"],
-        "hi": ["यात्रा घोटाला", "सशस्त्र डकैती", "विदेशी पर हमला", "पर्यटक पर हमला"],
-        "sr": ["превара у путовању", "оружана пљачка", "напад на странца", "напад на туристу", "масовна туча", "насиље на улици", "туча навијача", "насилничко понашање", "претучена", "претучен", "покушај убиства", "претукао"],
-    },
-    "jihadist": {
-        "en": ["extremist activity", "radicalization", "jihadist", "pirate attack"],
-        "es": ["actividad extremista", "radicalización", "yihadista", "ataque pirata"],
-        "fr": ["activité extrémiste", "radicalisation", "djihadiste", "attaque de pirates"],
-        "zh": ["極端主義活動", "激進主義", "聖戰士", "海盜襲擊"],
-        "ru": ["экстремистская деятельность", "радикализация", "джихад", "пиратская атака"],
-        "hi": ["चरमपंथी गतिविधि", "कट्टरपंथ", "जिहादी", "समुद्री डाकू हमला"],
-        "sr": ["екстремистички напад", "радикализација", "џихадисти", "пиратски напад", "исламисти"],
-    },
-    "extremism": {
-        "en": ["extremism", "armed groups", "militia attacks", "armed militants", "separatists"],
-        "es": ["extremismo", "grupos armados", "ataques de milicias", "militantes armados", "separatistas"],
-        "fr": ["extrémisme", "groupes armés", "attaques de milices", "militants armés", "séparatistes"],
-        "zh": ["極端主義", "武裝團體", "民兵襲擊", "武裝份子", "分離主義者"],
-        "ru": ["экстремизм", "вооруженные группы", "нападения ополченцев", "вооруженные боевики", "сепаратисты"],
-        "hi": ["उग्रवाद, सशस्त्र समूह", "मिलिशिया हमले", "सशस्त्र आतंकवादी", "अलगाववादी"],
-        "sr": ["екстремизам", "наоружане групе", "напади милиције", "наоружани милитанти", "сепаратисти"],
-    },
-    "natural disaster": {
-        "en": ["natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire"],
-        "es": ["desastre natural", "terremoto", "tsunami", "tornado", "huracán", "inundación", "incendio forestal"],
-        "fr": ["catastrophe naturelle", "tremblement de terre", "tsunami", "tornade", "ouragan", "inondation", "feu de forêt"],
-        "zh": ["自然災害, 地震, 海嘯, 龍捲風, 颶風, 洪水, 野火"],
-        "ru": ["стихийное бедствие", "землетрясение", "цунами", "торнадо", "ураган", "наводнение", "лесной пожар"],
-        "hi": ["प्राकृतिक आपदा", "भूकंप", "सुनामी", "बवंडर", "तूफान", "बाढ़", "जंगली आग"],
-        "sr": ["природна катастрофа", "земљотрес", "цунами", "торнадо", "ураган", "поплава", "поплаве", "шумски пожар"],
-    },
-    "police brutality": {
-        "en": ["police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion"],
-        "es": ["brutalidad policial", "ataque brutal", "encarcelamiento injusto", "chantaje", "extorsión"],
-        "fr": ["brutalité policière", "attaque brutale", "séquestration", "chantage", "extorsion"],
-        "zh": ["警察暴力", "野蠻攻擊", "非法監禁", "敲詐勒索", "勒索"],
-        "ru": ["жестокость полиции", "жестокое нападение", "незаконное лишение свободы", "шантаж", "вымогательство"],
-        "hi": ["पुलिस की बर्बरता", "क्रूर हमला", "झूठा कारावास", "ब्लैकमेल", "जबरन वसूली"],
-        "sr": ["полицијска бруталност", "бруталан напад", "незаконито затварање", "уцена", "изнуда", "рекетирање"],
-    },    
-}
-
 def first_sentence(text):
-    import re
     sentences = re.split(r'(?<=[.!?。！？\n])\s+', text.strip())
     return sentences[0] if sentences else text
 
@@ -306,11 +110,13 @@ def get_feed_for_city(city):
 
 def get_feed_for_location(region=None, city=None, topic=None):
     region_key = region.strip().title() if region else None
-    if region_key and region_key in FCDO_FEEDS:
-        return [FCDO_FEEDS[region_key]]
     city_feeds = get_feed_for_city(city)
     if city_feeds:
+        logger.info("Using LOCAL feed(s) for city match.")
         return city_feeds
+    if region_key and region_key in FCDO_FEEDS:
+        logger.info("Using FCDO region feed.")
+        return [FCDO_FEEDS[region_key]]
     if topic and topic.lower() == "cyber":
         try:
             from feeds_catalog import CYBER_FEEDS
@@ -319,7 +125,9 @@ def get_feed_for_location(region=None, city=None, topic=None):
             pass
     region_key_lower = region.lower().strip() if region else None
     if region_key_lower and region_key_lower in COUNTRY_FEEDS:
+        logger.info("Using COUNTRY feed.")
         return COUNTRY_FEEDS[region_key_lower]
+    logger.info("Using GLOBAL feed(s) as fallback.")
     return GLOBAL_FEEDS
 
 def summarize_with_security_focus(text):
@@ -342,22 +150,40 @@ def summarize_with_security_focus(text):
             logger.info(f"[OpenAI fallback error] {e}")
     return "No summary available due to an error."
 
-def summarize_with_security_focus_cached(summarize_fn):
-    cache_file = "summary_cache.json"
-    Path(cache_file).touch(exist_ok=True)
+def load_summary_cache():
+    Path(SUMMARY_CACHE_FILE).touch(exist_ok=True)
     try:
-        with open(cache_file, "r") as f:
+        with open(SUMMARY_CACHE_FILE, "r") as f:
             cache = json.load(f)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, FileNotFoundError):
         cache = {}
+    now = time.time()
+    cutoff = now - SUMMARY_CACHE_EXPIRY_DAYS * 86400
+    # PATCH: Only call .get on dicts, skip any str/invalid entry
+    filtered = {k: v for k, v in cache.items() if isinstance(v, dict) and v.get("timestamp", now) >= cutoff}
+    if len(filtered) > SUMMARY_CACHE_MAX_ENTRIES:
+        sorted_items = sorted(filtered.items(), key=lambda item: item[1].get("timestamp", 0), reverse=True)
+        filtered = dict(sorted_items[:SUMMARY_CACHE_MAX_ENTRIES])
+    return filtered
+
+def save_summary_cache(cache):
+    with open(SUMMARY_CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
+
+def summarize_with_security_focus_cached(summarize_fn):
+    cache = load_summary_cache()
     def wrapper(text):
         key = sha256(text.encode("utf-8")).hexdigest()
-        if key in cache:
-            return cache[key]
+        now = time.time()
+        if key in cache and cache[key].get("timestamp", 0) >= now - SUMMARY_CACHE_EXPIRY_DAYS * 86400:
+            return cache[key]["summary"]
         summary = summarize_fn(text)
-        cache[key] = summary
-        with open(cache_file, "w") as f:
-            json.dump(cache, f, indent=2)
+        cache[key] = {"summary": summary, "timestamp": now}
+        if len(cache) > SUMMARY_CACHE_MAX_ENTRIES:
+            oldest = sorted(cache.items(), key=lambda item: item[1].get("timestamp", 0))[:len(cache)-SUMMARY_CACHE_MAX_ENTRIES]
+            for k, _ in oldest:
+                del cache[k]
+        save_summary_cache(cache)
         return summary
     return wrapper
 
@@ -414,29 +240,44 @@ def classify_threat_type(text):
 
     return {"label": "Unclassified", "confidence": 0.5}
 
-def fetch_feed(url, timeout=7, retries=3, backoff=1.5, max_backoff=60):
+async def fetch_feed_async(url, timeout=7, retries=3, backoff=1.5, max_backoff=60):
     attempt = 0
     current_backoff = backoff
     while attempt < retries:
         try:
-            response = httpx.get(url, timeout=timeout)
-            if response.status_code == 200:
-                logger.info(f"✅ Fetched: {url}")
-                return feedparser.parse(response.content.decode('utf-8', errors='ignore')), url
-            elif response.status_code in [429, 503]:
-                current_backoff = min(current_backoff * 2, max_backoff)
-                logger.warning(f"⚠️ Throttled ({response.status_code}) by {url}; backing off for {current_backoff} seconds")
-                time.sleep(current_backoff)
-            else:
-                logger.warning(f"⚠️ Feed returned {response.status_code}: {url}")
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=timeout)
+                if response.status_code == 200:
+                    logger.info(f"✅ Fetched: {url}")
+                    return feedparser.parse(response.text), url
+                elif response.status_code in [429, 503]:
+                    current_backoff = min(current_backoff * 2, max_backoff)
+                    logger.warning(f"⚠️ Throttled ({response.status_code}) by {url}; backing off for {current_backoff} seconds")
+                    await asyncio.sleep(current_backoff)
+                else:
+                    logger.warning(f"⚠️ Feed returned {response.status_code}: {url}")
         except Exception as e:
             logger.warning(f"❌ Attempt {attempt + 1} failed for {url} — {e}")
         attempt += 1
-        time.sleep(current_backoff)
+        await asyncio.sleep(current_backoff)
     logger.warning(f"❌ Failed to fetch after {retries} retries: {url}")
     return None, url
 
-def llm_is_alert_relevant(alert, region=None, city=None):
+def parse_relevance_score(llm_response):
+    import re
+    match = re.search(r"([01](?:\.\d+)?)", llm_response)
+    if match:
+        score = float(match.group(1))
+        if 0.0 <= score <= 1.0:
+            return score
+    llm_response = llm_response.strip().lower()
+    if llm_response.startswith("yes"):
+        return 1.0
+    elif llm_response.startswith("no"):
+        return 0.0
+    return 0.5
+
+def llm_relevance_score(alert, region=None, city=None):
     location = ""
     if city and region:
         location = f"{city}, {region}"
@@ -445,23 +286,16 @@ def llm_is_alert_relevant(alert, region=None, city=None):
     elif region:
         location = region
     else:
-        return False
+        return 0.0
     text = (alert.get("title", "") + " " + alert.get("summary", ""))
     prompt = (
-        f"Is the following security alert directly relevant to {location}? "
-        "Be strict: Only answer Yes if the alert concerns events happening in, targeting, or otherwise mentioning this location. "
-        "If it's general, about another country/region, or does not mention this location, answer No.\n\n"
-        f"Alert:\n{text}\n\n"
-        "Reply with only Yes or No."
+        f"How relevant is this security alert to {location}? Respond ONLY with a relevance confidence score from 0 (not relevant) to 1 (highly relevant). If you must answer yes/no, say Yes=1, No=0.\n\n"
+        f"Alert:\n{text}\n"
     )
     messages = [{"role": "user", "content": prompt}]
-    answer = grok_chat(messages, temperature=0)
-    if answer:
-        answer = answer.strip().lower()
-        if answer.startswith("yes"):
-            return True
-        if answer.startswith("no"):
-            return False
+    llm_response = grok_chat(messages, temperature=0)
+    if llm_response:
+        return parse_relevance_score(llm_response)
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
@@ -469,23 +303,25 @@ def llm_is_alert_relevant(alert, region=None, city=None):
                 messages=messages,
                 temperature=0
             )
-            txt = response.choices[0].message.content.strip().lower()
-            if txt.startswith("yes"):
-                return True
-            if txt.startswith("no"):
-                return False
+            txt = response.choices[0].message.content.strip()
+            return parse_relevance_score(txt)
         except Exception as e:
             logger.error(f"[LLM relevance fallback error] {e}")
-    return False
+    return 0.5
 
-def filter_alerts_llm(alerts, region=None, city=None, max_workers=4):
+def filter_alerts_llm(alerts, region=None, city=None, threshold=0.7, max_workers=4):
+    if len(alerts) > 40:
+        logger.warning(f"LLM filtering {len(alerts)} alerts! Consider increasing pre-filter strictness.")
+    from concurrent.futures import ThreadPoolExecutor
     args = [(alert, region, city) for alert in alerts]
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        relevant_flags = list(executor.map(lambda ac: llm_is_alert_relevant(*ac), args))
+        scores = list(executor.map(lambda ac: llm_relevance_score(*ac), args))
     filtered = []
-    for i, flag in enumerate(relevant_flags):
-        if flag:
+    for i, score in enumerate(scores):
+        if score >= threshold:
             filtered.append(alerts[i])
+        else:
+            logger.info(f"Filtered out alert {alerts[i].get('title','')} with relevance score {score:.2f}")
     return filtered
 
 def map_severity(score):
@@ -497,53 +333,20 @@ def map_severity(score):
         return "Medium"
     return "Low"
 
-def should_summarize_alert(alert, plan_limits, used_count=0, session_count=0):
-    is_high_risk = (alert.get("score", 0) >= 0.75 or alert.get("level", "").lower() in ("high", "critical"))
-    if plan_limits.get("chat_monthly") == float("inf"):
-        return True
-    if is_high_risk and used_count < plan_limits.get("rss_monthly", 5) and session_count < plan_limits.get("rss_per_session", 2):
-        return True
-    return False
-
-def atomic_increment_and_check(redis_client, key, limit, expiry):
-    try:
-        count = redis_client.incr(key)
-        if count == 1 and expiry:
-            redis_client.expire(key, expiry)
-        return count <= limit
-    except Exception as e:
-        logger.error(f"[Redis][atomic_increment_and_check] {e}")
-        return False
-
-def can_user_summarize(redis_client, user_email, plan_limits):
-    try:
-        month = datetime.utcnow().strftime("%Y-%m")
-        key = f"user:{user_email}:rss_llm_alert_count:{month}"
-        expiry = 60 * 60 * 24 * 45
-        limit = plan_limits.get("rss_monthly", 5)
-        if limit == float("inf"):
-            return True
-        return atomic_increment_and_check(redis_client, key, limit, expiry)
-    except Exception as e:
-        logger.error(f"[Redis][can_user_summarize] {e}")
-        return False
-
-def can_session_summarize(redis_client, session_id, plan_limits):
-    try:
-        key = f"session:{session_id}:rss_llm_alert_count"
-        expiry = 60 * 60 * 24
-        limit = plan_limits.get("rss_per_session", 2)
-        if limit == float("inf"):
-            return True
-        return atomic_increment_and_check(redis_client, key, limit, expiry)
-    except Exception as e:
-        logger.error(f"[Redis][can_session_summarize] {e}")
-        return False
-
-def get_clean_alerts(
+async def get_clean_alerts_async(
     region=None, topic=None, city=None, limit=20, summarize=False,
-    llm_location_filter=True, user_email=None, session_id=None
+    llm_location_filter=True, user_email=None, session_id=None,
+    use_telegram=False,
+    write_to_db=False
 ):
+    if not user_email or not session_id:
+        raise Exception("user_email and session_id are required for plan quota enforcement.")
+    plan_limits = get_plan_limits(user_email)
+    ok, msg = check_user_rss_quota(user_email, session_id, plan_limits)
+    if not ok:
+        logger.error(f"Quota exceeded: {msg}")
+        return []
+    increment_user_rss_usage(user_email, session_id, plan_limits.get('plan'))
     alerts = []
     seen = set()
     region_str = str(region).strip() if region else None
@@ -555,8 +358,15 @@ def get_clean_alerts(
         logger.info("⚠️ No feeds found for the given location/topic.")
         return []
 
-    with ThreadPoolExecutor(max_workers=len(feeds)) as executor:
-        results = list(executor.map(fetch_feed, feeds))
+    results = await asyncio.gather(*(fetch_feed_async(url) for url in feeds))
+
+    telegram_alerts = []
+    if use_telegram:
+        try:
+            telegram_alerts = scrape_telegram_messages(region=region_str, city=city_str, topic=topic_str, limit=limit)
+            logger.info(f"Loaded {len(telegram_alerts)} alerts from Telegram OSINT.")
+        except Exception as e:
+            logger.warning(f"Telegram scraping failed: {e}")
 
     for feed, source_url in results:
         if not feed or 'entries' not in feed:
@@ -588,6 +398,8 @@ def get_clean_alerts(
                 continue
             seen.add(dedupe_key)
 
+            keyword_weight = compute_keyword_weight(snippet)
+
             alert = {
                 "uuid": dedupe_key,
                 "title": title,
@@ -598,9 +410,11 @@ def get_clean_alerts(
                 "source": source_domain,
                 "published": published,
                 "region": region_str,
+                "country": None,
                 "city": city_str,
                 "type": "",
                 "type_confidence": None,
+                "threat_level": "",
                 "level": "",
                 "threat_label": "",
                 "score": None,
@@ -608,9 +422,18 @@ def get_clean_alerts(
                 "reasoning": "",
                 "review_flag": False,
                 "review_notes": "",
+                "ingested_at": datetime.utcnow(),
                 "timestamp": datetime.utcnow().isoformat(),
                 "model_used": "",
+                "sentiment": "",
+                "forecast": "",
+                "legal_risk": "",
+                "cyber_ot_risk": "",
+                "environmental_epidemic_risk": "",
+                "keyword_weight": keyword_weight,
+                "tags": [],
             }
+
             try:
                 alert_text = f"{title}: {summary}"
                 threat_result = assess_threat_level(
@@ -618,11 +441,22 @@ def get_clean_alerts(
                     triggers=[],
                     location=city or region or "",
                     alert_uuid=dedupe_key,
-                    plan="FREE"
+                    plan="FREE",
+                    enrich=True
                 )
-                for k, v in threat_result.items():
-                    alert[k] = v
-                alert["level"] = alert.get("threat_label", "")
+                alert["threat_label"] = threat_result.get("threat_label", threat_result.get("label", "Unrated"))
+                alert["score"] = min(100, max(0, (threat_result.get("score", 0) or 0) + keyword_weight))
+                alert["confidence"] = threat_result.get("confidence", 0.0)
+                alert["reasoning"] = threat_result.get("reasoning", "")
+                alert["review_flag"] = threat_result.get("review_flag", False)
+                alert["level"] = alert.get("threat_label", "Unknown")
+                alert["sentiment"] = threat_result.get("sentiment", "")
+                alert["forecast"] = threat_result.get("forecast", "")
+                alert["legal_risk"] = threat_result.get("legal_risk", "")
+                alert["cyber_ot_risk"] = threat_result.get("cyber_ot_risk", "")
+                alert["environmental_epidemic_risk"] = threat_result.get("environmental_epidemic_risk", "")
+                alert["threat_level"] = alert["threat_label"]
+                enrich_log(alert)
             except Exception as e:
                 logger.error(f"[RSS_PROCESSOR_ERROR][THREAT_SCORER] {e} | Alert: {title}")
                 alert["threat_label"] = "Unrated"
@@ -633,6 +467,7 @@ def get_clean_alerts(
                 alert["review_notes"] = "Could not auto-score threat; requires analyst review."
                 alert["timestamp"] = datetime.utcnow().isoformat()
                 alert["level"] = "Unknown"
+                alert["threat_level"] = "Unknown"
 
             try:
                 threat_type = classify_threat_type(summary)
@@ -644,56 +479,56 @@ def get_clean_alerts(
                 alert["type_confidence"] = 0.5
 
             alerts.append(alert)
-
             if len(alerts) >= limit:
                 logger.info(f"✅ Parsed {len(alerts)} alerts.")
                 break
         if len(alerts) >= limit:
             break
 
-    filtered_alerts = []
+    if use_telegram:
+        for telegram_alert in telegram_alerts:
+            dedupe_key = sha256((telegram_alert.get("title", "") + ":" + telegram_alert.get("summary", "")).encode("utf-8")).hexdigest()
+            if dedupe_key in seen:
+                continue
+            telegram_alert['uuid'] = dedupe_key
+            telegram_alert['source'] = "telegram"
+            telegram_alert['keyword_weight'] = compute_keyword_weight(telegram_alert.get("title", "") + " " + telegram_alert.get("summary", ""))
+            telegram_alert['ingested_at'] = datetime.utcnow()
+            telegram_alert['tags'] = []
+            alerts.append(telegram_alert)
+            seen.add(dedupe_key)
+
     if llm_location_filter and (city_str or region_str):
         logger.info("🔍 Running LLM-based location relevance filtering...")
-        filtered_alerts = filter_alerts_llm(alerts, region=region_str, city=city_str)
-    else:
-        filtered_alerts = alerts
-
-    if not filtered_alerts:
+        alerts = filter_alerts_llm(alerts, region=region_str, city=city_str)
+    if not alerts:
         logger.error("⚠️ No relevant alerts found for city/region. Will use fallback advisory.")
         return []
 
-    if user_email is None:
-        raise ValueError("user_email is required for plan-based logic.")
-    plan_limits = get_plan_limits(user_email)
-    for alert in filtered_alerts:
-        if summarize:
-            if should_summarize_alert(alert, plan_limits):
-                user_ok = can_user_summarize(redis_client, user_email, plan_limits)
-                session_ok = can_session_summarize(redis_client, session_id or "demo_session", plan_limits)
-                if user_ok and session_ok:
-                    summary = summarize_with_security_grok(alert["en_snippet"])
-                    alert["gpt_summary"] = summary
-                else:
-                    alert["gpt_summary"] = ""
-                    logger.info(f"Quota exceeded for {user_email=} or {session_id=}")
-            else:
-                alert["gpt_summary"] = ""
-        else:
-            alert.setdefault("gpt_summary", "")
+    logger.info(f"✅ Parsed {len(alerts)} location-relevant alerts.")
 
-    logger.info(f"✅ Parsed {len(filtered_alerts)} location-relevant alerts.")
-    return filtered_alerts[:limit]
+    if write_to_db:
+        try:
+            logger.info(f"Writing {len(alerts)} alerts to DB...")
+            save_alerts_to_db(alerts)
+            logger.info("Alerts saved to DB successfully.")
+        except Exception as e:
+            logger.error(f"Failed to save alerts to DB: {e}")
 
-def get_clean_alerts_cached(get_clean_alerts_fn):
+    return alerts[:limit]
+
+def get_clean_alerts_cached(get_clean_alerts_fn_async):
     def wrapper(*args, **kwargs):
         summarize = kwargs.get("summarize", False)
         region = kwargs.get("region", None)
         city = kwargs.get("city", None)
         topic = kwargs.get("topic", None)
         user_email = kwargs.get("user_email", None)
+        use_telegram = kwargs.get("use_telegram", False)
+        write_to_db = kwargs.get("write_to_db", False)
 
-        if summarize or region or city or topic:
-            return get_clean_alerts_fn(*args, **kwargs)
+        if summarize or region or city or topic or use_telegram or write_to_db:
+            return asyncio.run(get_clean_alerts_fn_async(*args, **kwargs))
 
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
         cache_dir = "cache"
@@ -705,7 +540,7 @@ def get_clean_alerts_cached(get_clean_alerts_fn):
                 logger.info(f"[CACHE] Loaded alerts from cache: {cache_path}")
                 return json.load(f)
 
-        alerts = get_clean_alerts_fn(*args, **kwargs)
+        alerts = asyncio.run(get_clean_alerts_fn_async(*args, **kwargs))
         with open(cache_path, "w") as f:
             json.dump(alerts, f, indent=2)
         logger.info(f"✅ Saved {len(alerts)} alerts to cache: {cache_path}")
@@ -732,15 +567,16 @@ def generate_fallback_summary(region, threat_type, city=None):
             return f"⚠️ Fallback error: {str(e2)}"
     return f"⚠️ Fallback error: Could not generate summary."
 
-get_clean_alerts = get_clean_alerts_cached(get_clean_alerts)
+get_clean_alerts = get_clean_alerts_cached(get_clean_alerts_async)
 
 if __name__ == "__main__":
     logger.info("🔍 Running standalone RSS processor...")
     test_email = "zika.rakita@gmail.com"
-    alerts = get_clean_alerts(region="Afghanistan", limit=5, summarize=True, user_email=test_email, session_id="demo")
+    alerts = get_clean_alerts(region="Afghanistan", limit=5, summarize=True, user_email=test_email, session_id="demo", use_telegram=False, write_to_db=True)
     if not alerts:
         logger.info("No relevant alerts found. Generating fallback advisory...")
         logger.info(generate_fallback_summary(region="Afghanistan", threat_type="All"))
     else:
+        logger.info(f"Alerts processed: {len(alerts)}")
         for alert in alerts:
             logger.info(json.dumps(alert, indent=2))

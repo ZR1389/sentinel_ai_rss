@@ -4,30 +4,74 @@ import json
 import re
 import hashlib
 import threading
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+
 import pycountry
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 from xai_client import grok_chat
 from openai import OpenAI
-import numpy as np
 from prompts import (
     THREAT_CATEGORY_PROMPT,
     THREAT_CATEGORY_SYSTEM_PROMPT,
     THREAT_SUBCATEGORY_PROMPT,
     THREAT_DETECT_COUNTRY_PROMPT,
     THREAT_DETECT_CITY_PROMPT,
-    THREAT_SUMMARIZE_SYSTEM_PROMPT
+    THREAT_SUMMARIZE_SYSTEM_PROMPT,
+    PROACTIVE_FORECAST_PROMPT,
+    HISTORICAL_COMPARISON_PROMPT,
+    SENTIMENT_ANALYSIS_PROMPT,
+    LEGAL_REGULATORY_RISK_PROMPT,
+    ACCESSIBILITY_INCLUSION_PROMPT,
+    PROFESSION_AWARE_PROMPT,
+    USER_CONTEXT_PROMPT,
+    SYSTEM_PROMPT,
+    CYBER_OT_RISK_PROMPT,
+    ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT,
 )
-from city_utils import fuzzy_match_city, normalize_city
 
+from city_utils import fuzzy_match_city, normalize_city
+from plan_utils import (
+    get_plan_limits,
+    check_user_summary_quota,
+    increment_user_summary_usage,
+    check_session_summary_quota,
+    increment_session_summary_usage
+)
+import psycopg2
 import logging
+
+# === SHARED ENRICHMENT LOGIC IMPORTS ===
+from risk_shared import (
+    compute_keyword_weight,
+    enrich_log,
+    run_sentiment_analysis,
+    run_forecast,
+    run_legal_risk,
+    run_cyber_ot_risk,
+    run_environmental_epidemic_risk,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---- ENVIRONMENT & CONFIG ----
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+if RAILWAY_ENV:
+    logger.info(f"Running in Railway environment: {RAILWAY_ENV}")
+else:
+    logger.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
+
+if not OPENAI_API_KEY:
+    logger.warning("OPENAI_API_KEY not set! LLM features will be disabled.")
+if not DATABASE_URL:
+    logger.warning("DATABASE_URL not set! Database operations may fail.")
 
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
 TEMPERATURE = 0.4
@@ -36,7 +80,7 @@ SEMANTIC_DEDUP_THRESHOLD = float(os.getenv("SEMANTIC_DEDUP_THRESHOLD", 0.9))
 
 CATEGORIES = [
     "Crime", "Terrorism", "Civil Unrest", "Cyber",
-    "Infrastructure", "Environmental", "Other"
+    "Infrastructure", "Environmental", "Epidemic", "Other"
 ]
 
 COUNTRY_LIST = [country.name for country in pycountry.countries]
@@ -53,58 +97,47 @@ TRIGGER_KEYWORDS = [
     "explosion", "looting", "roadblock", "arson", "sabotage"
 ]
 
-# ---- REDIS & PLAN LOGIC ----
-import redis
-from plan_utils import get_plan_limits
-
-REDIS_URL = os.getenv("REDIS_URL")
-redis_client = redis.Redis.from_url(REDIS_URL)
-
-try:
-    redis_client.ping()
-    logger.info("Redis connection established.")
-except Exception as e:
-    logger.error(f"Redis connection failed: {e}")
-
-from datetime import datetime
-
-def atomic_increment_and_check(redis_client, key, limit, expiry):
+# ---- USAGE LOGGING ----
+def log_threat_engine_usage(email, plan, action_type, status, region=None, summary_text=None):
     try:
-        count = redis_client.incr(key)
-        if count == 1 and expiry:
-            redis_client.expire(key, expiry)
-        return count <= limit
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO threat_engine_usage
+            (email, region, plan, action_type, status, summary_excerpt)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            email,
+            region,
+            plan,
+            action_type,
+            status,
+            summary_text[:120] if summary_text else None
+        ))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
     except Exception as e:
-        logger.error(f"[Redis][atomic_increment_and_check] {e}")
-        return False
+        logger.error(f"[Threat engine usage logging error] {e}")
 
-def can_user_summarize(redis_client, user_email, plan_limits, feature="threat_monthly"):
-    try:
-        month = datetime.utcnow().strftime("%Y-%m")
-        key = f"user:{user_email}:threat_llm_alert_count:{month}"
-        expiry = 60 * 60 * 24 * 45  # 45 days
-        limit = plan_limits.get(feature, 5)
-        if limit == float("inf"):
-            return True
-        return atomic_increment_and_check(redis_client, key, limit, expiry)
-    except Exception as e:
-        logger.error(f"[Redis][can_user_summarize] {e}")
-        return False
+# ---- PLAN LOGIC ----
 
-def can_session_summarize(redis_client, session_id, plan_limits, feature="threat_per_session"):
-    try:
-        key = f"session:{session_id}:threat_llm_alert_count"
-        expiry = 60 * 60 * 24  # 24 hours
-        limit = plan_limits.get(feature, 2)
-        if limit == float("inf"):
-            return True
-        return atomic_increment_and_check(redis_client, key, limit, expiry)
-    except Exception as e:
-        logger.error(f"[Redis][can_session_summarize] {e}")
+def can_user_summarize(user_email, plan_limits, feature="custom_pdf_briefings_frequency"):
+    if not check_user_summary_quota(user_email, plan_limits, feature):
+        logger.info(f"[Quota] User {user_email} exceeded monthly summary quota")
         return False
+    increment_user_summary_usage(user_email)
+    return True
+
+def can_session_summarize(session_id, plan_limits, session_quota=2):
+    if not check_session_summary_quota(session_id, plan_limits, quota=session_quota):
+        logger.info(f"[Quota] Session {session_id} exceeded session summary quota")
+        return False
+    increment_session_summary_usage(session_id)
+    return True
 
 def should_summarize_alert(alert, plan_limits):
-    # You can put further logic here if you want to restrict summarization to "high risk" only
     return True
 
 # ---- THREAT ENGINE CORE LOGIC ----
@@ -151,9 +184,9 @@ def extract_triggers(alerts):
     for alert in alerts:
         for field in ['title', 'summary']:
             text = alert.get(field, "")
-            for trigger in TRIGGER_KEYWORDS:
-                if trigger.lower() in text.lower():
-                    keywords.add(trigger)
+            # Use shared keyword logic for precision and explainability
+            _, matched_keywords = compute_keyword_weight(text, return_detail=True)
+            keywords.update(matched_keywords)
     return list(keywords)
 
 def classify_threat_category(text):
@@ -338,7 +371,39 @@ def deduplicate_alerts(alerts, existing_alerts, openai_client=None, sim_threshol
         known_hashes[h] = alert
     return deduped_alerts
 
-def summarize_single_alert(alert):
+# --- New enrichment functions for advanced prompts ---
+# NOW USING SHARED ENRICHMENT FUNCTIONS via risk_shared.py
+# run_forecast, run_sentiment_analysis, run_legal_risk, run_cyber_ot_risk, run_environmental_epidemic_risk
+# Other advanced prompt enrichments left as-is for now
+
+def run_historical_comparison(incident, region):
+    prompt = HISTORICAL_COMPARISON_PROMPT.format(incident=incident, region=region)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=80)
+    except Exception as e:
+        logger.error(f"[run_historical_comparison error] {e}")
+        return "No historical comparison available."
+
+def run_accessibility_inclusion(region, threats, user_message):
+    prompt = ACCESSIBILITY_INCLUSION_PROMPT.format(region=region, threats=threats, user_message=user_message)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=100)
+    except Exception as e:
+        logger.error(f"[run_accessibility_inclusion error] {e}")
+        return "No accessibility/inclusion info available."
+
+def run_profession_aware(profession, region, threats, user_message):
+    prompt = PROFESSION_AWARE_PROMPT.format(profession=profession, region=region, threats=threats, user_message=user_message)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=100)
+    except Exception as e:
+        logger.error(f"[run_profession_aware error] {e}")
+        return "No profession-specific info available."
+
+def summarize_single_alert(alert, user_email=None, plan=None, region=None, user_message=None, profession=None):
     title = alert.get("title", "")
     summary = alert.get("summary", "")
     title = str(title) if not isinstance(title, str) else title
@@ -354,6 +419,11 @@ def summarize_single_alert(alert):
     )
     if "version" not in alert:
         alert["version"] = 1
+
+    # --- Compute keyword score and add to alert (shared logic) ---
+    kw_score, kw_matches = compute_keyword_weight(combined_text, return_detail=True)
+    alert["keyword_weight"] = kw_score
+    alert["matched_keywords"] = kw_matches
 
     messages = [
         {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
@@ -399,10 +469,9 @@ def summarize_single_alert(alert):
         logger.error(f"[Subcategory extraction error] {e}")
         subcategory = "Unspecified"
 
-    # Use threat scoring fields as set by RSS processor (no re-score)
-    threat_label = alert.get("threat_label", "Moderate")
-    threat_score = alert.get("score", 60)
-    threat_confidence = alert.get("confidence", 0.5)
+    threat_label = alert.get("threat_label") or "Moderate"
+    threat_score = alert.get("score") if alert.get("score") is not None else 60
+    threat_confidence = alert.get("confidence") if alert.get("confidence") is not None else 0.7
     threat_reasoning = alert.get("reasoning", "")
 
     try:
@@ -422,10 +491,31 @@ def summarize_single_alert(alert):
         logger.error(f"[Trigger extraction failure] {e}")
         triggers = []
 
+    # --- Advanced enrichment ---
+    forecast = run_forecast(region or country, alert, user_message or summary)
+    historical = run_historical_comparison(summary, region or country)
+    sentiment = run_sentiment_analysis(summary)
+    legal_risk = run_legal_risk(summary, region or country)
+    inclusion_info = run_accessibility_inclusion(region or country, triggers, user_message or summary)
+    profession_info = None
+    if profession:
+        profession_info = run_profession_aware(profession, region or country, triggers, user_message or summary)
+    cyber_ot_risk = run_cyber_ot_risk(summary, region or country)
+    environmental_epidemic_risk = run_environmental_epidemic_risk(summary, region or country)
+
     save_threat_log(
         alert, summary_out, category=category, category_confidence=confidence,
         severity=threat_label, country=country, city=city, triggers=triggers,
         source=source_used, error=g_error
+    )
+
+    # Unified enrichment logging (optional, for full audit):
+    enrich_log(
+        alert,
+        region=country,
+        city=city,
+        source=source_used,
+        user_email=user_email
     )
 
     reasoning = (
@@ -444,16 +534,28 @@ def summarize_single_alert(alert):
     if summary_out.startswith("⚠️"):
         review_flag = True
 
+    if user_email:
+        log_threat_engine_usage(
+            email=user_email,
+            plan=plan,
+            action_type="threat_summary",
+            status="success" if not summary_out.startswith("⚠️") else "error",
+            region=country or None,
+            summary_text=summary_out
+        )
+
     return (
         summary_out, category, subcategory, confidence, threat_label, threat_score,
-        threat_confidence, reasoning, country, city, triggers, review_flag
+        threat_confidence, reasoning, country, city, triggers, review_flag,
+        forecast, historical, sentiment, legal_risk, inclusion_info, profession_info,
+        cyber_ot_risk, environmental_epidemic_risk
     )
 
-def summarize_single_alert_with_retries(alert, max_retries=3):
+def summarize_single_alert_with_retries(alert, user_email=None, plan=None, region=None, user_message=None, profession=None, max_retries=3):
     attempt = 0
     while attempt < max_retries:
         try:
-            return summarize_single_alert(alert)
+            return summarize_single_alert(alert, user_email=user_email, plan=plan, region=region, user_message=user_message, profession=profession)
         except Exception as e:
             attempt += 1
             logger.error(f"[summarize_single_alert] Retry {attempt} failed: {e}")
@@ -461,19 +563,18 @@ def summarize_single_alert_with_retries(alert, max_retries=3):
 
 def summarize_alerts(
     alerts,
-    user_email,  # user_email is now required
+    user_email,
     session_id,
     cache_path="cache/enriched_alerts.json",
     enable_semantic=ENABLE_SEMANTIC_DEDUP,
-    failed_cache_path="cache/alerts_failed.json"
+    failed_cache_path="cache/alerts_failed.json",
+    user_message=None,
+    profession=None
 ):
-    """
-    Summarize alerts up to user's plan quota (per user and per session quotas).
-    If quota exceeded, mark alert for analyst review instead of generating summary.
-    """
     if not user_email:
         raise ValueError("user_email is required for plan-based logic.")
     plan_limits = get_plan_limits(user_email)
+    plan = plan_limits.get("plan", "FREE") if isinstance(plan_limits, dict) else "FREE"
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     if os.path.exists(cache_path):
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -498,26 +599,44 @@ def summarize_alerts(
 
     def process(alert):
         if should_summarize_alert(alert, plan_limits):
-            user_ok = can_user_summarize(redis_client, user_email, plan_limits)
-            session_ok = can_session_summarize(redis_client, session_id, plan_limits)
+            user_ok = can_user_summarize(user_email, plan_limits)
+            session_ok = can_session_summarize(session_id, plan_limits)
             if user_ok and session_ok:
-                result = summarize_single_alert_with_retries(alert, max_retries=3)
+                result = summarize_single_alert_with_retries(
+                    alert,
+                    user_email=user_email,
+                    plan=plan,
+                    region=alert.get("country"),
+                    user_message=user_message,
+                    profession=profession,
+                    max_retries=3
+                )
                 if result is None:
                     with failed_alerts_lock:
                         failed_alerts.append(alert)
+                    log_threat_engine_usage(
+                        email=user_email,
+                        plan=plan,
+                        action_type="threat_summary",
+                        status="error",
+                        region=alert.get("country"),
+                        summary_text=None
+                    )
                     return None
                 (
                     summary, category, subcategory, confidence, threat_label, threat_score,
-                    threat_confidence, reasoning, country, city, triggers, review_flag
+                    threat_confidence, reasoning, country, city, triggers, review_flag,
+                    forecast, historical, sentiment, legal_risk, inclusion_info, profession_info,
+                    cyber_ot_risk, environmental_epidemic_risk
                 ) = result
                 alert_copy = alert.copy()
                 alert_copy["gpt_summary"] = summary
                 alert_copy["category"] = category
                 alert_copy["subcategory"] = subcategory
                 alert_copy["category_confidence"] = confidence
-                alert_copy["threat_label"] = threat_label
-                alert_copy["score"] = threat_score
-                alert_copy["confidence"] = threat_confidence
+                alert_copy["threat_label"] = threat_label if threat_label else "Moderate"
+                alert_copy["score"] = threat_score if threat_score is not None else 60
+                alert_copy["confidence"] = threat_confidence if threat_confidence is not None else 0.7
                 alert_copy["reasoning"] = reasoning
                 alert_copy["country"] = country
                 alert_copy["city"] = city
@@ -532,6 +651,15 @@ def summarize_alerts(
                     or "Unknown"
                 )
                 alert_copy["version"] = alert.get("version", 1)
+                # New prompt enrichments
+                alert_copy["forecast"] = forecast
+                alert_copy["historical_context"] = historical
+                alert_copy["sentiment"] = sentiment
+                alert_copy["legal_risk"] = legal_risk
+                alert_copy["inclusion_info"] = inclusion_info
+                alert_copy["profession_info"] = profession_info
+                alert_copy["cyber_ot_risk"] = cyber_ot_risk
+                alert_copy["environmental_epidemic_risk"] = environmental_epidemic_risk
                 return alert_copy
             else:
                 alert_copy = alert.copy()
@@ -548,6 +676,14 @@ def summarize_alerts(
                 )
                 alert_copy["version"] = alert.get("version", 1)
                 logger.info(f"Quota exceeded for {user_email=} or {session_id=}")
+                log_threat_engine_usage(
+                    email=user_email,
+                    plan=plan,
+                    action_type="threat_summary",
+                    status="quota_exceeded",
+                    region=alert.get("country"),
+                    summary_text=None
+                )
                 return alert_copy
         else:
             alert_copy = alert.copy()
@@ -564,7 +700,6 @@ def summarize_alerts(
             alert_copy["version"] = alert.get("version", 1)
             return alert_copy
 
-    # Process all new_alerts in parallel with quota checking
     with ThreadPoolExecutor(max_workers=min(5, len(new_alerts))) as executor:
         processed = list(executor.map(process, new_alerts))
 

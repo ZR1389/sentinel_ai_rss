@@ -4,6 +4,15 @@ import json
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+import logging
+
+# --- Logging configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -13,13 +22,22 @@ api_hash = os.getenv("TELEGRAM_API_HASH")
 session_name = "sentinel_session"
 
 if not api_id_raw:
+    log.error("Environment variable TELEGRAM_API_ID is required but not set.")
     raise RuntimeError("Environment variable TELEGRAM_API_ID is required but not set.")
 if not api_hash:
+    log.error("Environment variable TELEGRAM_API_HASH is required but not set.")
     raise RuntimeError("Environment variable TELEGRAM_API_HASH is required but not set.")
 try:
     api_id = int(api_id_raw)
 except Exception:
+    log.error("TELEGRAM_API_ID must be a valid integer string.")
     raise RuntimeError("TELEGRAM_API_ID must be a valid integer string.")
+
+RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+if RAILWAY_ENV:
+    log.info(f"Running in Railway environment: {RAILWAY_ENV}")
+else:
+    log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
 channels = [
     "war_monitors", "sentdefender", "noelreports", "tacticalreport", "IntelRepublic",
@@ -50,13 +68,17 @@ def load_telegram_cache():
         with open(CACHE_FILE, "r") as f:
             try:
                 return json.load(f)
-            except Exception:
+            except Exception as e:
+                log.error(f"Failed to load telegram_cache.json: {e}")
                 return {}
     return {}
 
 def save_telegram_cache(cache):
-    with open(CACHE_FILE, "w") as f:
-        json.dump(cache, f, indent=2)
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        log.error(f"Failed to save telegram_cache.json: {e}")
 
 def detect_region(text):
     t = text.lower() if isinstance(text, str) else str(text).lower()
@@ -77,7 +99,7 @@ def scrape_telegram_messages():
 
     # Only proceed if session file exists (avoid interactive login)
     if not os.path.exists(session_name + ".session"):
-        print("⚠️ Telegram session file not found. Skipping Telegram scraping in production.")
+        log.warning("Telegram session file not found. Skipping Telegram scraping in production.")
         return []
 
     cache = load_telegram_cache()
@@ -86,7 +108,7 @@ def scrape_telegram_messages():
     try:
         with TelegramClient(session_name, api_id, api_hash) as client:
             for username in channels:
-                print(f"📡 Scraping: {username}")
+                log.info(f"Scraping: {username}")
 
                 # Get last seen post id for this channel, if any
                 last_seen_id = cache.get(username)
@@ -128,10 +150,10 @@ def scrape_telegram_messages():
                         cache_updated = True
 
                 except Exception as e:
-                    print(f"❌ Error scraping {username}: {e}")
+                    log.error(f"Error scraping {username}: {e}")
 
     except Exception as e:
-        print(f"❌ Telegram client setup failed: {e}")
+        log.error(f"Telegram client setup failed: {e}")
         return []
 
     if cache_updated:
@@ -142,8 +164,8 @@ def scrape_telegram_messages():
 if __name__ == "__main__":
     alerts = scrape_telegram_messages()
     if alerts:
-        print(f"✅ Found {len(alerts)} new alerts")
+        log.info(f"Found {len(alerts)} new alerts")
         for a in alerts[:5]:
             print(json.dumps(a, indent=2))
     else:
-        print("ℹ️ No new matching alerts found in the last 24 hours.")
+        log.info("No new matching alerts found in the last 24 hours.")

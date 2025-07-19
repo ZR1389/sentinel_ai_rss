@@ -1,10 +1,25 @@
+import os
+import logging
+from pathlib import Path
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from datetime import date
 from threat_scorer import assess_threat_level
 from rss_processor import get_clean_alerts
-import os
-from pathlib import Path
+
+# --- Logging configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger(__name__)
+
+RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+if RAILWAY_ENV:
+    log.info(f"Running in Railway environment: {RAILWAY_ENV}")
+else:
+    log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
 def get_threat_color(level):
     if level == "Low":
@@ -24,8 +39,13 @@ def generate_pdf(output_path=None):
 
     for alert in raw_alerts:
         try:
-            level = assess_threat_level(f"{alert['title']}: {alert['summary']}")
-        except Exception:
+            level_result = assess_threat_level(f"{alert['title']}: {alert['summary']}")
+            if isinstance(level_result, dict):
+                level = level_result.get("threat_label", "Unrated")
+            else:
+                level = str(level_result)
+        except Exception as e:
+            log.error(f"[generate_pdf][assess_threat_level Error] {e}")
             level = "Unrated"
 
         scored_alerts.append({
@@ -72,15 +92,24 @@ def generate_pdf(output_path=None):
 
     pdf = PDF()
     font_path = Path(__file__).parent / "fonts" / "NotoSans-Regular.ttf"
+    if not font_path.exists():
+        log.error(f"Font file not found: {font_path}")
+        raise FileNotFoundError(f"Font file not found: {font_path}")
     pdf.add_font("NotoSans", "", str(font_path), uni=True)
     pdf.set_font("NotoSans", "", 12)
     pdf.add_page()
     pdf.chapter_body(scored_alerts)
 
     if output_path is None:
-        output_path = str(Path.home() / f"Desktop/daily-brief-{date.today().isoformat()}.pdf")
+        # Use a safe temp dir in cloud, fallback to Desktop for local
+        try:
+            tmp_dir = Path("/tmp")
+            tmp_dir.mkdir(exist_ok=True)
+            output_path = str(tmp_dir / f"daily-brief-{date.today().isoformat()}.pdf")
+        except Exception:
+            output_path = str(Path.home() / f"Desktop/daily-brief-{date.today().isoformat()}.pdf")
     pdf.output(output_path)
-    print(f"PDF created: {output_path}")
+    log.info(f"PDF created: {output_path}")
     return output_path
 
 if __name__ == "__main__":

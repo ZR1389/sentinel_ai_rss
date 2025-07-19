@@ -3,10 +3,28 @@ import random
 import re
 import time
 import json
+import psycopg2
 from openai import OpenAI
 from dotenv import load_dotenv
-from plan_rules import PLAN_RULES
-from plan_utils import get_plan
+
+# ---- SHARED KEYWORD/ENRICHMENT IMPORTS ----
+from risk_shared import (
+    compute_keyword_weight,
+    enrich_log,
+    run_sentiment_analysis,
+    run_forecast,
+    run_legal_risk,
+    run_cyber_ot_risk,
+    run_environmental_epidemic_risk
+)
+
+from plan_utils import (
+    get_plan,
+    get_plan_feature,
+    get_plan_limits,
+    check_user_message_quota,
+    increment_user_message_usage
+)
 from xai_client import grok_chat
 from prompts import (
     ADVISOR_SYSTEM_PROMPT_PRO,
@@ -15,10 +33,41 @@ from prompts import (
     ADVISOR_USER_PROMPT_BASIC,
     ADVISOR_STRUCTURED_SYSTEM_PROMPT,
     ADVISOR_STRUCTURED_USER_PROMPT,
+    PROACTIVE_FORECAST_PROMPT,
+    HISTORICAL_COMPARISON_PROMPT,
+    SENTIMENT_ANALYSIS_PROMPT,
+    LEGAL_REGULATORY_RISK_PROMPT,
+    ACCESSIBILITY_INCLUSION_PROMPT,
+    PROFESSION_AWARE_PROMPT,
+    LOCALIZATION_TRANSLATION_PROMPT,
+    CYBER_OT_RISK_PROMPT,
+    ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT,
+    IMPROVE_FROM_FEEDBACK_PROMPT,
 )
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
+# --- Railway environment logging ---
+RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+if RAILWAY_ENV:
+    logger.info(f"Running in Railway environment: {RAILWAY_ENV}")
+else:
+    logger.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
+
 load_dotenv()
+if not os.getenv("OPENAI_API_KEY"):
+    logger.warning("OPENAI_API_KEY not set.")
+if not os.getenv("DATABASE_URL"):
+    logger.warning("DATABASE_URL not set.")
+
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 ZIKA_QUOTES = [
     "🧠 Analyst Insight: The true danger often lies in escalation and unpredictability. Overconfidence in 'low risk' areas has led to many avoidable emergencies.",
@@ -63,25 +112,15 @@ def get_static_profile(region, risk_profiles):
     return None
 
 def extract_triggers(alerts):
-    """Use cached triggers field if present, else extract from summary/title."""
     triggers_all = set()
     for alert in alerts:
-        if "triggers" in alert and alert["triggers"]:
-            triggers_all.update(alert["triggers"])
-        else:
-            for field in ['title', 'summary']:
-                text = alert.get(field, "")
-                for trigger in [
-                    "armed robbery", "civil unrest", "kidnapping", "protest", "evacuation",
-                    "martial law", "carjacking", "load shedding", "corruption", "terrorism",
-                    "shooting", "power outage"
-                ]:
-                    if trigger.lower() in text.lower():
-                        triggers_all.add(trigger)
+        for field in ['title', 'summary']:
+            text = alert.get(field, "")
+            _, matches = compute_keyword_weight(text, return_detail=True)
+            triggers_all.update(matches)
     return list(triggers_all)
 
 def summarize_sources(alerts):
-    """Use new source_name and link fields if present."""
     sources = []
     for alert in alerts:
         src = alert.get("source_name") or alert.get("source")
@@ -99,7 +138,6 @@ def summarize_sources(alerts):
     return unique_sources
 
 def summarize_categories(alerts):
-    """Summarize detected categories and subcategories from alerts."""
     categories = set()
     subcategories = set()
     for alert in alerts:
@@ -132,44 +170,138 @@ def save_advisory_log_json(email, region, query, result, risk_level, plan):
     log_path = "logs/advisory_log.json"
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+    # --- Optional: Log to shared enrichment log for full audit trail ---
+    enrich_log(
+        log_entry,
+        region=region,
+        city=None,
+        source="advisor",
+        user_email=email
+    )
 
-def gpt_primary_grok_fallback(
-    user_message, region, threat_type, plan, triggers=None, risk_profile=None, sources=None, reports_analyzed=None, email="anonymous", categories=None, subcategories=None
-):
+def log_advisory_usage(email, region, plan, action_type, status, message_excerpt=None):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO advisory_usage (email, region, plan, action_type, status, message_excerpt)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            email,
+            region,
+            plan,
+            action_type,
+            status,
+            message_excerpt[:120] if message_excerpt else None
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"[Advisory usage logging error] {e}")        
+
+# --- New prompt helpers ---
+def run_forecast(region, input_data, user_message):
+    return run_forecast(region, input_data, user_message)
+
+def run_sentiment_analysis(incident):
+    return run_sentiment_analysis(incident)
+
+def run_legal_regulatory_risk(incident, region):
+    return run_legal_risk(incident, region)
+
+def run_cyber_ot_risk(incident, region):
+    return run_cyber_ot_risk(incident, region)
+
+def run_environmental_epidemic_risk(incident, region):
+    return run_environmental_epidemic_risk(incident, region)
+
+def run_historical_comparison(incident, region):
+    prompt = HISTORICAL_COMPARISON_PROMPT.format(incident=incident, region=region)
+    messages = [{"role": "system", "content": ADVISOR_SYSTEM_PROMPT_PRO}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=100)
+    except Exception as e:
+        logger.error(f"[run_historical_comparison error] {e}")
+        return "No historical comparison available."
+
+def run_accessibility_inclusion(region, threats, user_message):
+    prompt = ACCESSIBILITY_INCLUSION_PROMPT.format(region=region, threats=threats, user_message=user_message)
+    messages = [{"role": "system", "content": ADVISOR_SYSTEM_PROMPT_PRO}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=120)
+    except Exception as e:
+        logger.error(f"[run_accessibility_inclusion error] {e}")
+        return "No accessibility/inclusion info available."
+
+def run_profession_aware(profession, region, threats, user_message):
+    prompt = PROFESSION_AWARE_PROMPT.format(profession=profession, region=region, threats=threats, user_message=user_message)
+    messages = [{"role": "system", "content": ADVISOR_SYSTEM_PROMPT_PRO}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=120)
+    except Exception as e:
+        logger.error(f"[run_profession_aware error] {e}")
+        return "No profession-specific info available."
+
+def run_localization_translation(advisory_text, target_language):
+    prompt = LOCALIZATION_TRANSLATION_PROMPT.format(target_language=target_language, advisory_text=advisory_text)
+    messages = [{"role": "system", "content": ADVISOR_SYSTEM_PROMPT_PRO}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.2, max_tokens=150)
+    except Exception as e:
+        logger.error(f"[run_localization_translation error] {e}")
+        return advisory_text  # fallback to original
+
+def run_improve_from_feedback(feedback_text, advisory_text):
+    prompt = IMPROVE_FROM_FEEDBACK_PROMPT.format(feedback_text=feedback_text, advisory_text=advisory_text)
+    messages = [{"role": "system", "content": ADVISOR_SYSTEM_PROMPT_PRO}, {"role": "user", "content": prompt}]
+    try:
+        return grok_chat(messages, temperature=0.1, max_tokens=180)
+    except Exception as e:
+        logger.error(f"[run_improve_from_feedback error] {e}")
+        return "No improvement recommendations available."
+
+# --- Advisory logic (updated) ---
+def gpt_primary_grok_fallback(user_message, region, threat_type, plan, triggers=None, risk_profile=None, sources=None, reports_analyzed=None, email="anonymous", categories=None, subcategories=None, profession=None, target_language=None):
     region_display = region or "Unspecified Region"
     risk_display = get_risk_level_from_profile(risk_profile)
     heading = f"Sentinel AI Advisory – {region_display} | Risk Level: {risk_display}\n\n"
+
+    plan_limits = get_plan_limits(email)
+    if not check_user_message_quota(email, plan_limits):
+        logger.info(f"[Quota] User {email} exceeded monthly message quota")
+        analyst_insight = random.choice(ZIKA_QUOTES)
+        result = (
+            f"{heading}"
+            "⚠️ You have reached your monthly message quota for advisory requests. "
+            "Upgrade your plan or wait until next month for more access."
+            f"\n\n{analyst_insight}\n\n{format_cta(plan)}"
+        )
+        save_advisory_log_json(email, region, user_message, result, risk_display, plan)
+        log_advisory_usage(email, region, plan, "advisor_chat", "quota_exceeded", user_message)
+        return result
+    increment_user_message_usage(email)
+    log_advisory_usage(email, region, plan, "advisor_chat", "success", user_message)
+
+    input_data = {
+        "region": region,
+        "threat_type": threat_type,
+        "triggers": triggers,
+        "categories": categories,
+        "subcategories": subcategories,
+        "risk_profile": risk_profile,
+        "sources": sources,
+        "reports_analyzed": reports_analyzed,
+        "plan": plan
+    }
+    advisory = ""
 
     if plan in ["PRO", "VIP"]:
         system_prompt = ADVISOR_SYSTEM_PROMPT_PRO
         structured_user_prompt = ADVISOR_USER_PROMPT_PRO.format(
             user_message=user_message,
-            input_data=json.dumps(
-                {
-                    "region": region,
-                    "threat_type": threat_type,
-                    "triggers": triggers,
-                    "categories": categories,
-                    "subcategories": subcategories,
-                    "risk_profile": risk_profile,
-                    "sources": sources,
-                    "reports_analyzed": reports_analyzed,
-                    "plan": plan,
-                },
-                ensure_ascii=False,
-            ),
+            input_data=json.dumps(input_data, ensure_ascii=False),
         )
-    else:
-        system_prompt = ADVISOR_SYSTEM_PROMPT_BASIC
-        structured_user_prompt = ADVISOR_USER_PROMPT_BASIC.format(
-            user_message=user_message,
-            region=region or "Unspecified",
-            threat_type=threat_type or "Unspecified",
-        )
-
-    max_retries = 3
-    retry_delay = 4
-    for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
                 model="gpt-4",
@@ -178,45 +310,78 @@ def gpt_primary_grok_fallback(
                     {"role": "user", "content": structured_user_prompt}
                 ],
                 temperature=0.4,
-                max_tokens=600
+                max_tokens=650
             )
             response_text = response.choices[0].message.content.strip()
-            analyst_insight = random.choice(ZIKA_QUOTES)
-            result = f"{heading}{response_text}\n\n{analyst_insight}\n\n{format_cta(plan)}"
-            save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-            return result
+            advisory += response_text
         except Exception as e:
-            print(f"[OpenAI error] {e}")
+            logger.error(f"[OpenAI error] {e}")
             try:
                 grok_resp = grok_chat([
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": structured_user_prompt}
                 ], model="grok-3-mini", temperature=0.4)
+                advisory += grok_resp if grok_resp else ""
             except Exception as ex:
-                print(f"[Grok error] {ex}")
-                grok_resp = None
-            if grok_resp:
-                result = f"{heading}{grok_resp}\n\n{format_cta(plan)}"
-                save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-                return result
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                retry_delay *= 2
-            else:
-                fallback_rating = risk_display
-                result = (
-                    f"{heading}"
-                    f"⚠️ Live intelligence unavailable right now. Based on past risk profiles, "
-                    f"{region_display} is generally rated {fallback_rating}. "
-                    "Avoid hotspots, monitor news, and use secure transportation where possible."
-                )
-                save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-                return result
+                logger.error(f"[Grok error] {ex}")
 
-def generate_structured_advisory(user_message, alerts, email="anonymous", region=None, threat_type=None):
+    else:
+        system_prompt = ADVISOR_SYSTEM_PROMPT_BASIC
+        structured_user_prompt = ADVISOR_USER_PROMPT_BASIC.format(
+            user_message=user_message,
+            region=region or "Unspecified",
+            threat_type=threat_type or "Unspecified",
+        )
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": structured_user_prompt}
+                ],
+                temperature=0.4,
+                max_tokens=400
+            )
+            response_text = response.choices[0].message.content.strip()
+            advisory += response_text
+        except Exception as e:
+            logger.error(f"[OpenAI error] {e}")
+            try:
+                grok_resp = grok_chat([
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": structured_user_prompt}
+                ], model="grok-3-mini", temperature=0.4)
+                advisory += grok_resp if grok_resp else ""
+            except Exception as ex:
+                logger.error(f"[Grok error] {ex}")
+
+    # Add advanced prompt sections
+    advisory += f"\n\n🕒 Forecast: {run_forecast(region, input_data, user_message)}"
+    if triggers:
+        advisory += f"\n\n📊 Historical Context: {run_historical_comparison(user_message, region)}"
+        advisory += f"\n\n🌡️ Public Sentiment: {run_sentiment_analysis(user_message)}"
+        advisory += f"\n\n⚖️ Legal/Regulatory Risk: {run_legal_regulatory_risk(user_message, region)}"
+        advisory += f"\n\n♿ Accessibility/Inclusion: {run_accessibility_inclusion(region, triggers, user_message)}"
+        advisory += f"\n\n💻 Cyber/OT Risk: {run_cyber_ot_risk(user_message, region)}"
+        advisory += f"\n\n🌍 Environmental/Epidemic Risk: {run_environmental_epidemic_risk(user_message, region)}"
+        if profession:
+            advisory += f"\n\n👔 Profession-Specific Advice: {run_profession_aware(profession, region, triggers, user_message)}"
+    analyst_insight = random.choice(ZIKA_QUOTES)
+    advisory += f"\n\n{analyst_insight}\n\n{format_cta(plan)}"
+
+    # Localization (if requested)
+    if target_language:
+        advisory = run_localization_translation(advisory, target_language)
+
+    result = f"{heading}{advisory}"
+    save_advisory_log_json(email, region, user_message, result, risk_display, plan)
+    log_advisory_usage(email, region, plan, "advisor_chat", "success", advisory)
+    return result
+
+def generate_structured_advisory(user_message, alerts, email="anonymous", region=None, threat_type=None, profession=None, target_language=None):
     plan = get_plan(email)
     plan = (plan or "FREE").upper()
-    insight_level = PLAN_RULES.get(plan, {}).get("insights", False)
+    insight_level = get_plan_feature(email, "personalized_insights_frequency") is not None
     risk_profiles = load_risk_profiles()
     static_risk_profile = get_static_profile(region, risk_profiles)
     triggers = extract_triggers(alerts)
@@ -232,25 +397,42 @@ def generate_structured_advisory(user_message, alerts, email="anonymous", region
     risk_display = get_risk_level_from_profile(static_risk_profile)
     heading = f"Sentinel AI Advisory – {region_display} | Risk Level: {risk_display}\n\n"
 
+    plan_limits = get_plan_limits(email)
+    if not check_user_message_quota(email, plan_limits):
+        logger.info(f"[Quota] User {email} exceeded monthly message quota")
+        analyst_insight = random.choice(ZIKA_QUOTES)
+        result = (
+            f"{heading}"
+            "⚠️ You have reached your monthly message quota for advisory requests. "
+            "Upgrade your plan or wait until next month for more access."
+            f"\n\n{analyst_insight}\n\n{format_cta(plan)}"
+        )
+        save_advisory_log_json(email, region, user_message, result, risk_display, plan)
+        log_advisory_usage(email, region, plan, "advisor_chat", "quota_exceeded", user_message)
+        return result
+    increment_user_message_usage(email)
+    log_advisory_usage(email, region, plan, "advisor_chat", "success", user_message)
+
+    input_data = {
+        "user_message": user_message,
+        "region": region,
+        "threat_type": threat_type,
+        "triggers": triggers,
+        "categories": categories,
+        "subcategories": subcategories,
+        "risk_profile": static_risk_profile,
+        "sources": sources,
+        "reports_analyzed": reports_analyzed,
+        "confidence": confidence,
+        "plan": plan
+    }
+    advisory = ""
     if insight_level and plan != "FREE":
         try:
             system_prompt = ADVISOR_STRUCTURED_SYSTEM_PROMPT
-            content = {
-                "user_message": user_message,
-                "region": region,
-                "threat_type": threat_type,
-                "triggers": triggers,
-                "categories": categories,
-                "subcategories": subcategories,
-                "risk_profile": static_risk_profile,
-                "sources": sources,
-                "reports_analyzed": reports_analyzed,
-                "confidence": confidence,
-                "plan": plan
-            }
             structured_user_prompt = ADVISOR_STRUCTURED_USER_PROMPT.format(
                 user_message=user_message,
-                input_data=json.dumps(content, ensure_ascii=False)
+                input_data=json.dumps(input_data, ensure_ascii=False)
             )
             response = client.chat.completions.create(
                 model="gpt-4",
@@ -262,48 +444,51 @@ def generate_structured_advisory(user_message, alerts, email="anonymous", region
                 max_tokens=800
             )
             response_text = response.choices[0].message.content.strip()
-            analyst_insight = random.choice(ZIKA_QUOTES)
-            response_text += f"\n\n{analyst_insight}"
-            result = f"{heading}{response_text}\n\n{format_cta(plan)}"
-            save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-            return result
+            advisory += response_text
         except Exception as e:
-            print(f"[OpenAI error] {e}")
+            logger.error(f"[OpenAI error] {e}")
             try:
                 grok_resp = grok_chat([
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": structured_user_prompt}
                 ], model="grok-3-mini", temperature=0.4)
+                advisory += grok_resp if grok_resp else ""
             except Exception as ex:
-                print(f"[Grok error] {ex}")
-                grok_resp = None
-            if grok_resp:
-                result = f"{heading}{grok_resp}\n\n{format_cta(plan)}"
-                save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-                return result
-            fallback_rating = risk_display
-            result = (
-                f"{heading}"
-                f"⚠️ Live intelligence unavailable right now. Based on past risk profiles, "
-                f"{region_display} is generally rated {fallback_rating}. "
-                "Avoid hotspots, monitor news, and use secure transportation where possible."
-            )
-            save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-            return result
+                logger.error(f"[Grok error] {ex}")
     else:
         analyst_insight = random.choice(ZIKA_QUOTES)
-        result = (
-            f"{heading}"
+        advisory += (
             "🛡️ Basic safety alert summary:\n"
             "- Monitor your surroundings.\n"
             "- Follow official travel advisories.\n"
             "- Upgrade to receive personalized threat analysis."
             f"\n\n{analyst_insight}\n\n{format_cta(plan)}"
         )
-        save_advisory_log_json(email, region, user_message, result, risk_display, plan)
-        return result
 
-def generate_advice(user_message, alerts, email="anonymous", region=None, threat_type=None):
+    # Add advanced prompt sections
+    advisory += f"\n\n🕒 Forecast: {run_forecast(region, input_data, user_message)}"
+    if triggers:
+        advisory += f"\n\n📊 Historical Context: {run_historical_comparison(user_message, region)}"
+        advisory += f"\n\n🌡️ Public Sentiment: {run_sentiment_analysis(user_message)}"
+        advisory += f"\n\n⚖️ Legal/Regulatory Risk: {run_legal_regulatory_risk(user_message, region)}"
+        advisory += f"\n\n♿ Accessibility/Inclusion: {run_accessibility_inclusion(region, triggers, user_message)}"
+        advisory += f"\n\n💻 Cyber/OT Risk: {run_cyber_ot_risk(user_message, region)}"
+        advisory += f"\n\n🌍 Environmental/Epidemic Risk: {run_environmental_epidemic_risk(user_message, region)}"
+        if profession:
+            advisory += f"\n\n👔 Profession-Specific Advice: {run_profession_aware(profession, region, triggers, user_message)}"
+    analyst_insight = random.choice(ZIKA_QUOTES)
+    advisory += f"\n\n{analyst_insight}\n\n{format_cta(plan)}"
+
+    # Localization (if requested)
+    if target_language:
+        advisory = run_localization_translation(advisory, target_language)
+
+    result = f"{heading}{advisory}"
+    save_advisory_log_json(email, region, user_message, result, risk_display, plan)
+    log_advisory_usage(email, region, plan, "advisor_chat", "success", advisory)
+    return result
+
+def generate_advice(user_message, alerts, email="anonymous", region=None, threat_type=None, profession=None, target_language=None):
     plan = get_plan(email)
     if not isinstance(plan, str):
         plan = "FREE"
@@ -335,9 +520,11 @@ def generate_advice(user_message, alerts, email="anonymous", region=None, threat
             reports_analyzed=reports_analyzed,
             email=email,
             categories=categories,
-            subcategories=subcategories
+            subcategories=subcategories,
+            profession=profession,
+            target_language=target_language
         )
 
     return generate_structured_advisory(
-        user_message, alerts, email=email, region=region, threat_type=threat_type
+        user_message, alerts, email=email, region=region, threat_type=threat_type, profession=profession, target_language=target_language
     )

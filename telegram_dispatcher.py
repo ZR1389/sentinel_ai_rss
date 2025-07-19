@@ -5,6 +5,15 @@ from datetime import date
 from dotenv import load_dotenv
 from rss_processor import get_clean_alerts
 from threat_scorer import assess_threat_level
+import logging
+
+# --- Logging configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+log = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -12,9 +21,17 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 if not TOKEN:
+    log.error("TELEGRAM_BOT_TOKEN environment variable is required but not set.")
     raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is required but not set.")
 if not CHAT_ID:
+    log.error("TELEGRAM_CHAT_ID environment variable is required but not set.")
     raise RuntimeError("TELEGRAM_CHAT_ID environment variable is required but not set.")
+
+RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+if RAILWAY_ENV:
+    log.info(f"Running in Railway environment: {RAILWAY_ENV}")
+else:
+    log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
 VIP_CLIENTS = [
     str(CHAT_ID),  # Zika default
@@ -31,16 +48,19 @@ def load_unsubscribed():
         with open(UNSUBSCRIBE_FILE, "r") as f:
             return set(json.load(f))
     except Exception as e:
-        print(f"❌ Error loading unsubscribed.json: {e}")
+        log.error(f"Error loading unsubscribed.json: {e}")
         return set()
 
 def save_unsubscribed(unsubscribed_ids):
-    with open(UNSUBSCRIBE_FILE, "w") as f:
-        json.dump(list(unsubscribed_ids), f, indent=2)
+    try:
+        with open(UNSUBSCRIBE_FILE, "w") as f:
+            json.dump(list(unsubscribed_ids), f, indent=2)
+    except Exception as e:
+        log.error(f"Error saving unsubscribed.json: {e}")
 
 def send_telegram_pdf(pdf_path):
     if not os.path.exists(pdf_path):
-        print(f"❌ PDF not found: {pdf_path}")
+        log.error(f"PDF not found: {pdf_path}")
         return
 
     unsubscribed = load_unsubscribed()
@@ -48,7 +68,7 @@ def send_telegram_pdf(pdf_path):
 
     for chat_id in VIP_CLIENTS:
         if chat_id in unsubscribed:
-            print(f"⏩ Skipping unsubscribed user: {chat_id}")
+            log.info(f"Skipping unsubscribed user: {chat_id}")
             continue
 
         with open(pdf_path, "rb") as pdf_file:
@@ -61,19 +81,19 @@ def send_telegram_pdf(pdf_path):
             try:
                 response = requests.post(url, data=data, files=files, timeout=10)
                 if response.ok:
-                    print(f"✅ PDF sent to {chat_id}")
+                    log.info(f"PDF sent to {chat_id}")
                 else:
-                    print(f"❌ Failed to send PDF to {chat_id}: {response.status_code} — {response.text}")
+                    log.error(f"Failed to send PDF to {chat_id}: {response.status_code} — {response.text}")
             except requests.exceptions.RequestException as e:
-                print(f"❌ Telegram request error for {chat_id}: {e}")
+                log.error(f"Telegram request error for {chat_id}: {e}")
 
 def send_alerts_to_telegram(email="anonymous", limit=10):
     unsubscribed = load_unsubscribed()
     alerts = get_clean_alerts(limit=limit)
-    print(f"🔍 Alerts fetched: {len(alerts)}")
+    log.info(f"Alerts fetched: {len(alerts)}")
 
     if not alerts:
-        print("⚠️ No alerts to send.")
+        log.warning("No alerts to send.")
         return 0
 
     qualified_alerts = []
@@ -90,10 +110,10 @@ def send_alerts_to_telegram(email="anonymous", limit=10):
             qualified_alerts.append(alert)
 
     if not qualified_alerts:
-        print("⚠️ No alerts passed the severity filter.")
+        log.warning("No alerts passed the severity filter.")
         return 0
 
-    print(f"📬 Sending {len(qualified_alerts)} high-severity alerts to {len(VIP_CLIENTS)} clients...")
+    log.info(f"Sending {len(qualified_alerts)} high-severity alerts to {len(VIP_CLIENTS)} clients...")
 
     count = 0
     for alert in qualified_alerts:
@@ -110,7 +130,7 @@ def send_alerts_to_telegram(email="anonymous", limit=10):
 
         for chat_id in VIP_CLIENTS:
             if chat_id in unsubscribed:
-                print(f"⏩ Skipping unsubscribed user: {chat_id}")
+                log.info(f"Skipping unsubscribed user: {chat_id}")
                 continue
 
             url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -124,12 +144,12 @@ def send_alerts_to_telegram(email="anonymous", limit=10):
             try:
                 response = requests.post(url, data=payload, timeout=10)
                 if response.ok:
-                    print(f"✅ Alert sent to {chat_id}")
+                    log.info(f"Alert sent to {chat_id}")
                     count += 1
                 else:
-                    print(f"❌ Failed to send alert to {chat_id}: {response.text}")
+                    log.error(f"Failed to send alert to {chat_id}: {response.text}")
             except requests.exceptions.RequestException as e:
-                print(f"❌ Telegram error for {chat_id}: {e}")
+                log.error(f"Telegram error for {chat_id}: {e}")
 
     return count
 
@@ -141,7 +161,7 @@ def handle_unsubscribe(update):
         unsubscribed = load_unsubscribed()
         unsubscribed.add(chat_id)
         save_unsubscribed(unsubscribed)
-        print(f"🛑 User {chat_id} unsubscribed.")
+        log.info(f"User {chat_id} unsubscribed.")
         return {
             "chat_id": chat_id,
             "text": "You have been unsubscribed from Sentinel AI alerts."
@@ -150,6 +170,6 @@ def handle_unsubscribe(update):
     return None
 
 if __name__ == "__main__":
-    print("📨 Running Telegram dispatcher...")
+    log.info("Running Telegram dispatcher...")
     count = send_alerts_to_telegram()
-    print(f"✅ Finished sending {count} alert(s).")
+    log.info(f"Finished sending {count} alert(s).")
