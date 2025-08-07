@@ -614,3 +614,9 @@ def group_alerts_by_period(period="day", region=None):
     except Exception as e:
         logger.error(f"[plan_utils.py] Error grouping alerts by period: {e}")
         return []
+
+# ---- ALIAS/STUB FOR fetch_user_preferences ----
+def fetch_user_preferences(*args, **kwargs):
+    """Stub function for compatibility. If you have a real function, alias it here."""
+    # You can replace this with logic to fetch user preferences if needed.
+    return {}
