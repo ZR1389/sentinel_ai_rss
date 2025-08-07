@@ -450,4 +450,8 @@ def tag_alerts_by_user_interest(alerts, email):
                 score += 1
         alert["user_interest_tag"] = score
         tagged_alerts.append(alert)
-    return tagged_alerts
+    return tagged_alerts 
+
+# ---- ALIAS FOR ENRICH LOG DB ----
+# This fixes ImportError: cannot import name 'enrich_log_db' from 'risk_shared'
+enrich_log_db = enrich_log
