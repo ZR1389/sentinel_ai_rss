@@ -163,6 +163,74 @@ def extract_keywords(text):
     normalized_matches = [k.lower() for k in raw_matches]
     return raw_matches, normalized_matches
 
+# ---- CATEGORY AND SUBCATEGORY EXTRACTION ----
+def extract_threat_category(text):
+    """
+    Extracts the main threat category from text.
+    Returns (category, confidence).
+    """
+    if not text:
+        return "Other", 0.5
+    text_lower = text.lower()
+    categories = [
+        "Crime", "Terrorism", "Civil Unrest", "Cyber", "Infrastructure",
+        "Environmental", "Epidemic", "Other"
+    ]
+    for cat in categories:
+        if cat.lower() in text_lower:
+            return cat, 0.90
+    # Fallback: keyword matching
+    for k in THREAT_KEYWORDS:
+        if re.search(rf'\b{re.escape(k)}\b', text_lower):
+            # crude mapping, can extend with keyword-category map
+            if "cyber" in k or "malware" in k or "ransomware" in k:
+                return "Cyber", 0.7
+            if "disease" in k or "pandemic" in k or "epidemic" in k:
+                return "Epidemic", 0.7
+            if "riot" in k or "protest" in k or "unrest" in k:
+                return "Civil Unrest", 0.7
+            if "bomb" in k or "attack" in k or "terror" in k:
+                return "Terrorism", 0.7
+            if "earthquake" in k or "flood" in k or "wild fire" in k:
+                return "Environmental", 0.7
+            if "crime" in k or "shooting" in k or "kidnapping" in k:
+                return "Crime", 0.7
+    return "Other", 0.5
+
+def extract_threat_subcategory(text, category):
+    """
+    Extracts subcategory from text, using category context.
+    Returns subcategory string.
+    """
+    if not text or not category:
+        return "Unspecified"
+    text_lower = text.lower()
+    if category == "Cyber":
+        for sub in ["ransomware", "data breach", "phishing", "malware", "hacktivism"]:
+            if sub in text_lower:
+                return sub.title()
+    if category == "Terrorism":
+        for sub in ["bombing", "suicide bombing", "attack", "IED", "hostage"]:
+            if sub in text_lower:
+                return sub.title()
+    if category == "Crime":
+        for sub in ["shooting", "kidnapping", "hijacking", "abduction", "assassination"]:
+            if sub in text_lower:
+                return sub.title()
+    if category == "Civil Unrest":
+        for sub in ["protest", "riot", "coup", "martial law", "uprising"]:
+            if sub in text_lower:
+                return sub.title()
+    if category == "Environmental":
+        for sub in ["earthquake", "flood", "wild fire", "hurricane", "tornado"]:
+            if sub in text_lower:
+                return sub.title()
+    if category == "Epidemic":
+        for sub in ["pandemic", "viral outbreak", "disease spread", "quarantine"]:
+            if sub in text_lower:
+                return sub.title()
+    return "Unspecified"
+
 async def fetch_feed_async(url, timeout=7, retries=3, backoff=1.5, max_backoff=60):
     attempt = 0
     current_backoff = backoff
