@@ -5,6 +5,8 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 import logging
+import re
+from plan_utils import require_plan_feature
 
 # --- Logging configuration ---
 logging.basicConfig(
@@ -63,6 +65,11 @@ THREAT_KEYWORDS = [
 
 CACHE_FILE = "telegram_cache.json"
 
+def json_default(obj):
+    if isinstance(obj, (datetime,)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
 def load_telegram_cache():
     if Path(CACHE_FILE).exists():
         with open(CACHE_FILE, "r") as f:
@@ -76,7 +83,7 @@ def load_telegram_cache():
 def save_telegram_cache(cache):
     try:
         with open(CACHE_FILE, "w") as f:
-            json.dump(cache, f, indent=2)
+            json.dump(cache, f, indent=2, default=json_default)
     except Exception as e:
         log.error(f"Failed to save telegram_cache.json: {e}")
 
@@ -94,7 +101,20 @@ def detect_region(text):
         return "Russia"
     return "Global"
 
-def scrape_telegram_messages():
+def keyword_match(content):
+    # PATCH: Use regex word boundaries for keywords to avoid false positives
+    for keyword in THREAT_KEYWORDS:
+        # Escape keyword for regex and allow case-insensitive word boundary match
+        if re.search(r"\b" + re.escape(keyword) + r"\b", content, re.IGNORECASE):
+            return True
+    return False
+
+def scrape_telegram_messages(region=None, city=None, topic=None, limit=30, email=None):
+    # --- PLAN GATING FOR TELEGRAM SCRAPER FEATURE ---
+    if email and not require_plan_feature(email, "telegram"):
+        log.info(f"User {email} not allowed to access Telegram OSINT alerts (feature gated).")
+        return []
+
     alerts = []
 
     # Only proceed if session file exists (avoid interactive login)
@@ -116,7 +136,7 @@ def scrape_telegram_messages():
 
                 try:
                     entity = client.get_entity(username)
-                    messages = client.iter_messages(entity, limit=30)
+                    messages = client.iter_messages(entity, limit=limit)
                     for msg in messages:
                         # Only process messages within the last 24 hours
                         if msg.date < datetime.now(timezone.utc) - timedelta(hours=24):
@@ -129,7 +149,8 @@ def scrape_telegram_messages():
                             continue
 
                         content = msg.message.lower() if isinstance(msg.message, str) else str(msg.message).lower()
-                        if any(keyword in content for keyword in THREAT_KEYWORDS):
+                        # PATCH: use regex-based keyword match for precise detection
+                        if keyword_match(content):
                             alerts.append({
                                 "title": f"Telegram Post: {username}",
                                 "summary": msg.message,
@@ -166,6 +187,6 @@ if __name__ == "__main__":
     if alerts:
         log.info(f"Found {len(alerts)} new alerts")
         for a in alerts[:5]:
-            print(json.dumps(a, indent=2))
+            print(json.dumps(a, indent=2, default=json_default))
     else:
         log.info("No new matching alerts found in the last 24 hours.")

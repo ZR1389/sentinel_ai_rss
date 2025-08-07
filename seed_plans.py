@@ -5,27 +5,32 @@ import os
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Adjust these columns and features to match your actual plans table schema
 plans = [
-    # name, price_cents, messages_per_month, summaries_per_month, chat_messages_per_month, travel_alerts_per_month,
-    # access_to_all_features, response_speed, personalized_insights_frequency,
-    # darkweb_monitoring, human_security_support, custom_pdf_briefings_frequency, early_access_new_features,
-    # pdf_report, telegram_alerts, insights, alerts
-    ("FREE", 0, 30, 10, 30, 0, False, "Standard", "Monthly", False, False, None, False, False, False, True, True),
-    ("BASIC", 1999, 100, 50, 100, 25, False, "Standard", "Monthly", False, False, None, False, False, True, True, True),
-    ("PRO", 4999, 1000, 500, 1000, 100, True, "Fast", "Weekly", True, False, "Monthly", True, True, True, True, True),
-    ("VIP", 14999, 10000, 5000, 10000, 1000, True, "Fastest", "On-demand", True, True, "On-request", True, True, True, True, True),
+    # name, price_cents, pdf_reports_per_month, chat_messages_per_month, summaries_per_month, telegram, insights, alerts, darkweb_monitoring, human_security_support, early_access_new_features
+    ("FREE", 0, 0, 5, 3, False, False, True, False, False, False),                 # Free: 0 PDFs/mo, 5 chat, 3 summaries, no Telegram
+    ("PRO", 4999, 20, 1000, 500, True, True, True, True, False, True),             # Pro: Telegram allowed
+    ("ENTERPRISE", 19999, None, 10000, 5000, True, True, True, True, True, True),  # Enterprise: Telegram allowed
 ]
 
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 cur.executemany("""
     INSERT INTO plans (
-      name, price_cents, messages_per_month, summaries_per_month, chat_messages_per_month, travel_alerts_per_month,
-      access_to_all_features, response_speed, personalized_insights_frequency,
-      darkweb_monitoring, human_security_support, custom_pdf_briefings_frequency, early_access_new_features,
-      pdf_report, telegram_alerts, insights, alerts
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (name) DO NOTHING
+      name, price_cents, pdf_reports_per_month, chat_messages_per_month, summaries_per_month,
+      telegram, insights, alerts, darkweb_monitoring, human_security_support, early_access_new_features
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (name) DO UPDATE SET
+      price_cents=EXCLUDED.price_cents,
+      pdf_reports_per_month=EXCLUDED.pdf_reports_per_month,
+      chat_messages_per_month=EXCLUDED.chat_messages_per_month,
+      summaries_per_month=EXCLUDED.summaries_per_month,
+      telegram=EXCLUDED.telegram,
+      insights=EXCLUDED.insights,
+      alerts=EXCLUDED.alerts,
+      darkweb_monitoring=EXCLUDED.darkweb_monitoring,
+      human_security_support=EXCLUDED.human_security_support,
+      early_access_new_features=EXCLUDED.early_access_new_features
 """, plans)
 conn.commit()
 cur.close()

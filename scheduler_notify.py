@@ -9,7 +9,31 @@ from telegram_dispatcher import send_alerts_to_telegram
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+def get_users_with_pdf_quota():
+    """Return users with a nonzero pdf_reports_per_month quota and active status."""
+    if not DATABASE_URL:
+        print("❌ DATABASE_URL environment variable not set.")
+        return []
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT u.email, u.plan, u.region
+            FROM users u
+            JOIN plans p ON u.plan = p.name
+            WHERE COALESCE(p.pdf_reports_per_month, 0) > 0
+              AND u.is_active = TRUE
+        """)
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
+        return users
+    except Exception as e:
+        print(f"❌ Database query failed: {e}")
+        return []
+
 def get_users_with_feature(feature_column):
+    """Return users with a boolean feature enabled (e.g., telegram) and active status."""
     if not DATABASE_URL:
         print("❌ DATABASE_URL environment variable not set.")
         return []
@@ -21,6 +45,7 @@ def get_users_with_feature(feature_column):
             FROM users u
             JOIN plans p ON u.plan = p.name
             WHERE p.{feature_column} = TRUE
+              AND u.is_active = TRUE
         """)
         users = cur.fetchall()
         cur.close()
@@ -32,17 +57,18 @@ def get_users_with_feature(feature_column):
 
 def email_job():
     print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running email dispatch (daily 08:00)...")
-    clients = get_users_with_feature('pdf_report')
+    clients = get_users_with_pdf_quota()
     if not clients:
         print("⚠️ No users eligible for PDF reports.")
         return
 
     for client in clients:
         email = client["email"]
-        plan = client["plan"]
-        result = send_pdf_report(email=email, plan=plan)
+        region = client.get("region")
+        result = send_pdf_report(email=email, region=region)
         status = result.get("status", "unknown")
         reason = result.get("reason", "")
+        plan = client["plan"]  # for printout
         if status == "sent":
             print(f"✅ Report sent to {email} ({plan})")
         elif status == "skipped":
@@ -54,7 +80,7 @@ def email_job():
 
 def telegram_job():
     print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running Telegram dispatch (daily 08:00)...")
-    clients = get_users_with_feature('telegram_alerts')
+    clients = get_users_with_feature('telegram')
     if not clients:
         print("⚠️ No users eligible for Telegram alerts.")
         return
@@ -63,7 +89,7 @@ def telegram_job():
         email = client["email"]
         plan = client["plan"]
         try:
-            count = send_alerts_to_telegram(email=email, plan=plan)
+            count = send_alerts_to_telegram(email=email)
             print(f"📨 Sent Telegram alert to {email} ({plan}).")
         except Exception as e:
             print(f"❌ Telegram dispatch failed for {email} ({plan}): {e}")

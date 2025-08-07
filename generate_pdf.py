@@ -3,9 +3,13 @@ import logging
 from pathlib import Path
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
-from datetime import date
+from datetime import date, datetime
 from threat_scorer import assess_threat_level
-from rss_processor import get_clean_alerts
+from threat_engine import get_clean_alerts
+from plan_utils import get_plan_limits, require_plan_feature
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # --- Logging configuration ---
 logging.basicConfig(
@@ -16,6 +20,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
+DATABASE_URL = os.getenv("DATABASE_URL")
 if RAILWAY_ENV:
     log.info(f"Running in Railway environment: {RAILWAY_ENV}")
 else:
@@ -33,8 +38,97 @@ def get_threat_color(level):
     else:
         return (100, 100, 100)
 
-def generate_pdf(output_path=None):
-    raw_alerts = get_clean_alerts()
+def get_user_pdf_usage(email):
+    """
+    Returns (used, last_reset) for the given user.
+    """
+    if not DATABASE_URL:
+        log.error("DATABASE_URL not set for DB usage tracking.")
+        return 0, None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT pdf_reports_used, pdf_reports_last_reset
+            FROM user_usage
+            WHERE email = %s
+        """, (email,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return 0, None
+        return row.get("pdf_reports_used", 0) or 0, row.get("pdf_reports_last_reset")
+    except Exception as e:
+        log.error(f"Error fetching PDF usage for {email}: {e}")
+        return 0, None
+
+def set_user_pdf_usage(email, used, last_reset):
+    if not DATABASE_URL:
+        log.error("DATABASE_URL not set for DB usage tracking.")
+        return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE user_usage
+            SET pdf_reports_used = %s, pdf_reports_last_reset = %s
+            WHERE email = %s
+        """, (used, last_reset, email))
+        conn.commit()
+        cur.close()
+        conn.close()
+        log.info(f"Set pdf_reports_used={used}, pdf_reports_last_reset={last_reset} for {email}")
+    except Exception as e:
+        log.error(f"Error updating PDF usage for {email}: {e}")
+
+def increment_user_pdf_usage(email):
+    # Handles monthly reset and increments usage
+    used, last_reset = get_user_pdf_usage(email)
+    today = date.today()
+    now_month = today.strftime("%Y-%m")
+    last_month = None
+    if last_reset:
+        try:
+            last_month = last_reset.strftime("%Y-%m") if isinstance(last_reset, date) else str(last_reset)[:7]
+        except Exception:
+            last_month = str(last_reset)[:7]
+    if last_month != now_month:
+        # Reset for new month
+        set_user_pdf_usage(email, 1, today)
+        return 1
+    else:
+        set_user_pdf_usage(email, used + 1, today)
+        return used + 1
+
+def generate_pdf(output_path=None, email=None):
+    # --- ENFORCE PLAN GATING AND QUOTA FOR PDF GENERATION ---
+    if email:
+        plan_limits = get_plan_limits(email)
+        quota = plan_limits.get("pdf_reports_per_month", 0)
+        if not plan_limits.get("pdf_reports_per_month", 0):
+            log.info(f"User {email} not allowed to generate PDF (quota 0).")
+            raise PermissionError(f"User {email} not allowed to generate PDF: quota 0.")
+        if not require_plan_feature(email, "custom_pdf_briefings_frequency"):
+            log.info(f"User {email} not allowed to generate PDF (missing custom_pdf_briefings_frequency feature).")
+            raise PermissionError(f"User {email} not allowed to generate PDF: missing feature.")
+        used, last_reset = get_user_pdf_usage(email)
+        today = date.today()
+        now_month = today.strftime("%Y-%m")
+        last_month = None
+        if last_reset:
+            try:
+                last_month = last_reset.strftime("%Y-%m") if isinstance(last_reset, date) else str(last_reset)[:7]
+            except Exception:
+                last_month = str(last_reset)[:7]
+        if last_month != now_month:
+            used = 0  # Reset for new month
+
+        if quota is not None and quota > 0 and used >= quota:
+            log.info(f"User {email} has reached their monthly PDF quota ({used}/{quota}).")
+            raise PermissionError(f"User {email} has reached their monthly PDF quota ({used}/{quota}).")
+
+    raw_alerts = get_clean_alerts(user_email=email) if email else get_clean_alerts()
     scored_alerts = []
 
     for alert in raw_alerts:
@@ -110,7 +204,12 @@ def generate_pdf(output_path=None):
             output_path = str(Path.home() / f"Desktop/daily-brief-{date.today().isoformat()}.pdf")
     pdf.output(output_path)
     log.info(f"PDF created: {output_path}")
+
+    # Only increment usage if email is present (i.e. user context)
+    if email:
+        increment_user_pdf_usage(email)
     return output_path
 
 if __name__ == "__main__":
+    # Example usage: generate_pdf(email="user@example.com")
     generate_pdf()

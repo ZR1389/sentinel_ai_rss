@@ -1,11 +1,12 @@
 from fpdf import FPDF
 from datetime import date
 from threat_scorer import assess_threat_level
-from rss_processor import get_clean_alerts
+from threat_engine import get_clean_alerts
 import os
 from dotenv import load_dotenv
 import smtplib
 import ssl
+import tempfile
 from pathlib import Path
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -13,8 +14,8 @@ from email.mime.text import MIMEText
 import re
 import logging
 
-# Import your new plan utilities
-from plan_utils import get_plan_limits
+from plan_utils import get_plan_limits, require_plan_feature, check_user_pdf_quota, increment_user_pdf_usage
+from security_log_utils import log_security_event
 
 # --- Configurable constants ---
 FONT_PATH = "fonts/NotoSans-Regular.ttf"
@@ -36,7 +37,6 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
-# --- Environment variable checks for Railway ---
 if not all([SENDER_EMAIL, SENDER_PASSWORD, SMTP_SERVER]):
     log.warning("Some email environment variables are missing! Check Railway service variables.")
 
@@ -47,7 +47,6 @@ else:
     log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
 def sanitize_filename(email):
-    # Remove dangerous/special chars for filesystem
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", email)
 
 def generate_pdf(email, alerts, plan_name, region=None):
@@ -58,7 +57,6 @@ def generate_pdf(email, alerts, plan_name, region=None):
             self.set_text_color(237, 0, 0)
             self.cell(0, 10, heading, ln=True, align='C')
             self.ln(2)
-            # Subheading with metadata
             self.set_font(FONT_FAMILY, "I", 11)
             self.set_text_color(100)
             region_str = f" | Region: {region}" if region else ""
@@ -90,7 +88,6 @@ def generate_pdf(email, alerts, plan_name, region=None):
                 self.set_font(FONT_FAMILY, "", 12)
                 self.multi_cell(0, 10, f"{alert['summary']}", align='L')
 
-                # --- Advanced (recommendation) fields ---
                 self.set_font(FONT_FAMILY, "I", 11)
                 if alert.get("forecast"):
                     self.set_text_color(0, 60, 120)
@@ -132,7 +129,6 @@ def generate_pdf(email, alerts, plan_name, region=None):
         else:
             return (100, 100, 100)
 
-    # Score and truncate alerts for PDF
     scored_alerts = []
     for alert in alerts[:PDF_ALERT_LIMIT]:
         level_result = assess_threat_level(f"{alert['title']}: {alert['summary']}")
@@ -146,7 +142,6 @@ def generate_pdf(email, alerts, plan_name, region=None):
             "source": alert["source"],
             "link": alert["link"],
             "level": level,
-            # Include advanced fields if present
             "forecast": alert.get("forecast", ""),
             "historical_context": alert.get("historical_context", ""),
             "sentiment": alert.get("sentiment", ""),
@@ -159,107 +154,157 @@ def generate_pdf(email, alerts, plan_name, region=None):
     pdf.add_font(FONT_FAMILY, "", FONT_PATH, uni=True)
     pdf.add_font(FONT_FAMILY, "B", FONT_PATH, uni=True)
     pdf.add_font(FONT_FAMILY, "I", FONT_PATH, uni=True)
-
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.chapter_body(scored_alerts)
 
-    safe_email = sanitize_filename(email)
-    filename = f"report_{safe_email}_{date.today().isoformat()}.pdf"
-    pdf.output(filename)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+        pdf.output(temp_pdf.name)
+        filename = temp_pdf.name
     log.info(f"PDF report generated: {filename} for {email}")
+    log_security_event(
+        event_type="pdf_generated",
+        email=email,
+        details=f"PDF file {filename} generated for {email}, plan {plan_name}, region {region}"
+    )
     return filename
 
 def send_pdf_report(email, region=None):
-    # Get plan features directly from database
     plan_info = get_plan_limits(email)
     if not plan_info:
         log.error(f"No plan found for {email}, skipping PDF report.")
+        log_security_event(
+            event_type="pdf_skipped",
+            email=email,
+            details="No plan found"
+        )
         return {"status": "skipped", "reason": "No plan", "email": email}
 
     plan_name = plan_info.get("plan", "FREE").upper()
-    pdf_allowed = plan_info.get("custom_pdf_briefings_frequency") is not None
-
-    if not pdf_allowed:
-        log.info(f"Skipped {email} — plan '{plan_name}' not eligible for PDF.")
+    # --- ENFORCE PLAN GATING FOR PDF FEATURE & PDF QUOTA ---
+    # PDF access: custom_pdf_briefings_frequency must be set (not None/False/empty) and pdf_reports_per_month quota must be > 0 (if set)
+    if not plan_info.get("pdf_reports_per_month", 0):
+        log.info(f"Skipped {email} — plan '{plan_name}' not eligible for PDF (pdf_reports_per_month=0).")
+        log_security_event(
+            event_type="pdf_plan_denied",
+            email=email,
+            plan=plan_name,
+            details="Plan not eligible for PDF (zero quota)"
+        )
+        return {"status": "skipped", "reason": "Plan not eligible", "email": email, "plan": plan_name}
+    if not require_plan_feature(email, "custom_pdf_briefings_frequency"):
+        log.info(f"Skipped {email} — plan '{plan_name}' not eligible for PDF (no custom_pdf_briefings_frequency).")
+        log_security_event(
+            event_type="pdf_plan_denied",
+            email=email,
+            plan=plan_name,
+            details="Plan not eligible for PDF (no custom_pdf_briefings_frequency)"
+        )
         return {"status": "skipped", "reason": "Plan not eligible", "email": email, "plan": plan_name}
 
-    alerts = get_clean_alerts(region=region, user_email=email, session_id="pdfreport")
-    pdf_file = generate_pdf(email, alerts, plan_name, region=region)
-
-    # --- Compose email with HTML and plain text ---
-    msg = MIMEMultipart("mixed")
-    msg["From"] = SENDER_EMAIL
-    msg["To"] = email
-    msg["Subject"] = f"Sentinel AI Report — {plan_name} Plan"
-
-    # Plain text body
-    text = (
-        f"Sentinel AI {plan_name} Plan - Daily Travel Safety Report\n"
-        f"Please find your attached PDF report.\n"
-        f"Stay safe and informed.\n"
-        f"https://zikarisk.com\n"
-    )
-
-    # HTML body
-    html = f"""\
-    <html>
-      <body style="font-family: 'Segoe UI', 'Noto Sans', Arial, sans-serif; color: #222;">
-        <h2 style="color: #ed0000;">Sentinel AI Daily Brief — {plan_name} Plan</h2>
-        <p>Your PDF report is attached.<br>
-           <b>Stay safe and informed.</b></p>
-        <hr>
-        <p style="font-size:90%;color:#666;">
-          Powered by <a href="https://zikarisk.com" style="color:#ed0000;text-decoration:none;">Sentinel AI</a>
-        </p>
-      </body>
-    </html>
-    """
-    # Attach multipart/alternative (plain + html)
-    alt = MIMEMultipart("alternative")
-    alt.attach(MIMEText(text, "plain"))
-    alt.attach(MIMEText(html, "html"))
-    msg.attach(alt)
+    # Enforce PDF quota per plan
+    allowed, reason = check_user_pdf_quota(email, plan_info)
+    if not allowed:
+        log.info(f"PDF quota denied for {email}: {reason}")
+        log_security_event(
+            event_type="pdf_quota_denied",
+            email=email,
+            plan=plan_name,
+            details=reason
+        )
+        return {"status": "skipped", "reason": reason, "email": email, "plan": plan_name}
 
     try:
+        alerts = get_clean_alerts(region=region, user_email=email, session_id="pdfreport")
+        pdf_file = generate_pdf(email, alerts, plan_name, region=region)
+
+        msg = MIMEMultipart("mixed")
+        msg["From"] = SENDER_EMAIL
+        msg["To"] = email
+        msg["Subject"] = f"Sentinel AI Report — {plan_name} Plan"
+
+        text = (
+            f"Sentinel AI {plan_name} Plan - Daily Travel Safety Report\n"
+            f"Please find your attached PDF report.\n"
+            f"Stay safe and informed.\n"
+            f"https://zikarisk.com\n"
+        )
+        html = f"""\
+        <html>
+          <body style="font-family: 'Segoe UI', 'Noto Sans', Arial, sans-serif; color: #222;">
+            <h2 style="color: #ed0000;">Sentinel AI Daily Brief — {plan_name} Plan</h2>
+            <p>Your PDF report is attached.<br>
+               <b>Stay safe and informed.</b></p>
+            <hr>
+            <p style="font-size:90%;color:#666;">
+              Powered by <a href="https://zikarisk.com" style="color:#ed0000;text-decoration:none;">Sentinel AI</a>
+            </p>
+          </body>
+        </html>
+        """
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(text, "plain"))
+        alt.attach(MIMEText(html, "html"))
+        msg.attach(alt)
+
         with open(pdf_file, "rb") as f:
             part = MIMEApplication(f.read(), Name=os.path.basename(pdf_file))
             part['Content-Disposition'] = f'attachment; filename="{os.path.basename(pdf_file)}"'
             msg.attach(part)
 
-        # Secure SMTP context
         context = ssl.create_default_context()
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls(context=context)
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.send_message(msg)
-        server.quit()
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.send_message(msg)
         log.info(f"Report sent to {email} ({plan_name})")
+        log_security_event(
+            event_type="pdf_sent",
+            email=email,
+            plan=plan_name,
+            details=f"PDF report sent for region {region}"
+        )
+        # Increment PDF usage for user (after successful send)
+        increment_user_pdf_usage(email)
         result = {"status": "sent", "email": email, "plan": plan_name}
     except Exception as e:
         log.error(f"Failed to send report to {email}: {str(e)}")
+        log_security_event(
+            event_type="pdf_send_failed",
+            email=email,
+            plan=plan_name,
+            details=str(e)
+        )
         result = {"status": "error", "reason": str(e), "email": email, "plan": plan_name}
     finally:
-        report_path = Path(pdf_file)
-        if report_path.exists():
-            report_path.unlink()
-            log.info(f"Deleted temporary PDF file: {pdf_file}")
+        try:
+            report_path = Path(pdf_file)
+            if report_path.exists():
+                report_path.unlink()
+                log.info(f"Deleted temporary PDF file: {pdf_file}")
+                log_security_event(
+                    event_type="pdf_cleanup",
+                    email=email,
+                    details=f"Deleted PDF file {pdf_file}"
+                )
+        except Exception as cleanup_err:
+            log.error(f"Failed to clean up PDF file {pdf_file}: {cleanup_err}")
+            log_security_event(
+                event_type="pdf_cleanup_failed",
+                email=email,
+                details=f"Cleanup error: {cleanup_err}"
+            )
     return result
 
 def send_daily_summaries():
-    """
-    Query all users from DB whose plan allows PDF reports, and send them their daily summary.
-    """
     import psycopg2
     from psycopg2.extras import RealDictCursor
-
     from plan_utils import DATABASE_URL
 
     results = []
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Only users with PDF-eligible plans
         cur.execute("""
             SELECT u.email, u.full_name, u.plan, u.region
             FROM users u
@@ -273,6 +318,10 @@ def send_daily_summaries():
         conn.close()
     except Exception as e:
         log.error(f"Error fetching users for daily summaries: {e}")
+        log_security_event(
+            event_type="daily_summaries_user_fetch_failed",
+            details=str(e)
+        )
         return []
 
     for user in users:
@@ -281,4 +330,8 @@ def send_daily_summaries():
         result = send_pdf_report(email=email, region=region)
         results.append(result)
     log.info(f"Batch summary: {results}")
+    log_security_event(
+        event_type="daily_summaries_sent",
+        details=f"Results: {results}"
+    )
     return results

@@ -3,8 +3,9 @@ import os
 import json
 from datetime import date
 from dotenv import load_dotenv
-from rss_processor import get_clean_alerts
+from threat_engine import get_clean_alerts
 from threat_scorer import assess_threat_level
+from plan_utils import get_plan_limits, require_plan_feature, check_user_pdf_quota, increment_user_pdf_usage
 import logging
 
 # --- Logging configuration ---
@@ -33,9 +34,10 @@ if RAILWAY_ENV:
 else:
     log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
-VIP_CLIENTS = [
-    str(CHAT_ID),  # Zika default
-    # Add more chat IDs as strings if needed
+# List of Telegram chat IDs to receive alerts (legacy: "VIP_CLIENTS" was just a static list)
+TELEGRAM_TARGET_CHAT_IDS = [
+    str(CHAT_ID),  # Default or admin channel/group/user
+    # Add more chat IDs as needed
 ]
 
 SEVERITY_FILTER = {"High", "Critical"}
@@ -58,15 +60,28 @@ def save_unsubscribed(unsubscribed_ids):
     except Exception as e:
         log.error(f"Error saving unsubscribed.json: {e}")
 
-def send_telegram_pdf(pdf_path):
+def send_telegram_pdf(pdf_path, email=None):
     if not os.path.exists(pdf_path):
         log.error(f"PDF not found: {pdf_path}")
         return
 
+    # --- ENFORCE PLAN GATING ---
+    if email:
+        plan_limits = get_plan_limits(email)
+        if not plan_limits.get("telegram"):
+            log.info(f"User {email} not allowed to send Telegram PDF (feature gated).")
+            return
+
+        allowed, reason = check_user_pdf_quota(email, plan_limits)
+        if not allowed:
+            log.info(f"User {email} has reached their monthly PDF quota for Telegram: {reason}")
+            return
+
     unsubscribed = load_unsubscribed()
     url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
 
-    for chat_id in VIP_CLIENTS:
+    sent = False
+    for chat_id in TELEGRAM_TARGET_CHAT_IDS:
         if chat_id in unsubscribed:
             log.info(f"Skipping unsubscribed user: {chat_id}")
             continue
@@ -82,12 +97,27 @@ def send_telegram_pdf(pdf_path):
                 response = requests.post(url, data=data, files=files, timeout=10)
                 if response.ok:
                     log.info(f"PDF sent to {chat_id}")
+                    sent = True
                 else:
                     log.error(f"Failed to send PDF to {chat_id}: {response.status_code} — {response.text}")
             except requests.exceptions.RequestException as e:
                 log.error(f"Telegram request error for {chat_id}: {e}")
 
+    # Increment usage after successful send
+    if sent and email:
+        increment_user_pdf_usage(email)
+
 def send_alerts_to_telegram(email="anonymous", limit=10):
+    # --- ENFORCE PLAN GATING ONLY ---
+    if not email:
+        log.info("No email provided for Telegram alert dispatch.")
+        return 0
+
+    plan_limits = get_plan_limits(email)
+    if not plan_limits.get("telegram"):
+        log.info(f"User {email} not allowed to send Telegram alerts (feature gated).")
+        return 0
+
     unsubscribed = load_unsubscribed()
     alerts = get_clean_alerts(limit=limit)
     log.info(f"Alerts fetched: {len(alerts)}")
@@ -98,10 +128,8 @@ def send_alerts_to_telegram(email="anonymous", limit=10):
 
     qualified_alerts = []
     for alert in alerts:
-        # Combine title and summary for risk assessment
         text = f"{alert.get('title', '')}: {alert.get('summary', '')}"
         threat = assess_threat_level(text)
-        # Logic fix: threat is a dict, use threat_label field
         threat_label = threat.get("threat_label", "Low")
         if threat_label in SEVERITY_FILTER:
             alert["level"] = threat_label
@@ -113,7 +141,7 @@ def send_alerts_to_telegram(email="anonymous", limit=10):
         log.warning("No alerts passed the severity filter.")
         return 0
 
-    log.info(f"Sending {len(qualified_alerts)} high-severity alerts to {len(VIP_CLIENTS)} clients...")
+    log.info(f"Sending {len(qualified_alerts)} high-severity alerts to {len(TELEGRAM_TARGET_CHAT_IDS)} clients...")
 
     count = 0
     for alert in qualified_alerts:
@@ -128,7 +156,7 @@ def send_alerts_to_telegram(email="anonymous", limit=10):
             f"[Read more]({alert.get('link', '')})"
         )
 
-        for chat_id in VIP_CLIENTS:
+        for chat_id in TELEGRAM_TARGET_CHAT_IDS:
             if chat_id in unsubscribed:
                 log.info(f"Skipping unsubscribed user: {chat_id}")
                 continue
@@ -171,5 +199,8 @@ def handle_unsubscribe(update):
 
 if __name__ == "__main__":
     log.info("Running Telegram dispatcher...")
-    count = send_alerts_to_telegram()
+    # You must pass the user's email to send_alerts_to_telegram for proper feature gating.
+    # For testing, replace with actual user email as needed:
+    test_email = os.getenv("TEST_USER_EMAIL", "anonymous")
+    count = send_alerts_to_telegram(email=test_email)
     log.info(f"Finished sending {count} alert(s).")

@@ -1,162 +1,211 @@
-import re
 import os
+import re
 import json
-import time
-import psycopg2
-from datetime import datetime
-from functools import lru_cache
-import logging
+import asyncio
+import httpx
+import feedparser
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+from dotenv import load_dotenv
+from hashlib import sha256
+from pathlib import Path
+from unidecode import unidecode
+import difflib
+from langdetect import detect
 
-# --- Logging configuration ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-log = logging.getLogger(__name__)
+from db_utils import save_raw_alerts_to_db, fetch_incident_clusters, save_user_threat_preferences, fetch_user_threat_preferences
+from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+
+with open('fcdo_country_feeds.json', 'r', encoding='utf-8') as f:
+    FCDO_FEEDS = json.load(f)
+
+with open('threat_keywords.json', 'r', encoding='utf-8') as f:
+    keywords_data = json.load(f)
+    THREAT_KEYWORDS = keywords_data["keywords"]
+    TRANSLATED_KEYWORDS = keywords_data["translated"]
+
+load_dotenv()
+
+from telegram_scraper import scrape_telegram_messages
+from translation_utils import translate_snippet
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
 if RAILWAY_ENV:
-    log.info(f"Running in Railway environment: {RAILWAY_ENV}")
+    logger.info(f"Running in Railway environment: {RAILWAY_ENV}")
 else:
-    log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
+    logger.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
-# ---- KEYWORD WEIGHTS ----
-KEYWORD_WEIGHTS = {
-    "assassination": 30,
-    "bombing": 25,
-    "explosion": 25,
-    "kidnapping": 20,
-    "active shooter": 35,
-    "armed robbery": 15,
-    "riot": 15,
-    "civil unrest": 12,
-    "terrorism": 18,
-    "hostage": 20,
-    "carjacking": 14,
-    "protest": 8,
-    "shooting": 12,
-    "looting": 10,
-    "evacuation": 8,
-    "martial law": 13,
-    "power outage": 7,
-    "IED": 18,
-    "arson": 10,
-    "sabotage": 11,
-    "roadblock": 7,
-    "corruption": 5,
-    # ...add more as needed
-}
+def json_default(obj):
+    if isinstance(obj, (datetime,)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
-# ---- SHARED ENRICHMENT FUNCTIONS (with CACHING) ----
+KEYWORD_PATTERN = re.compile(
+    r'\b(' + '|'.join(re.escape(k) for k in THREAT_KEYWORDS) + r')\b',
+    re.IGNORECASE
+)
 
-def _cache_key(*args, **kwargs):
-    # Simple cache key generator for enrichment caching
-    key = repr(args) + repr(sorted(kwargs.items()))
-    return hash(key)
+def first_sentence(text):
+    sentences = re.split(r'(?<=[.!?。！？\n])\s+', text.strip())
+    return sentences[0] if sentences else text
 
-@lru_cache(maxsize=512)
-def run_sentiment_analysis_cached(text):
-    from xai_client import grok_chat
-    from prompts import SENTIMENT_ANALYSIS_PROMPT
-    prompt = SENTIMENT_ANALYSIS_PROMPT.format(incident=text)
-    messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+def any_multilingual_keyword(text, lang, TRANSLATED_KEYWORDS):
+    text = text.lower()
+    for threat, lang_map in TRANSLATED_KEYWORDS.items():
+        roots = lang_map.get(lang, [])
+        for root in roots:
+            if root in text:
+                return threat
+    return None
+
+def safe_detect_lang(text, default="en"):
     try:
-        return grok_chat(messages, temperature=0.2, max_tokens=60)
-    except Exception as e:
-        log.error(f"[SentimentAnalysisError] {e}")
-        return f"[SentimentAnalysisError] {e}"
+        if len(text.strip()) < 10:
+            return default
+        return detect(text)
+    except Exception:
+        return default
 
-def run_sentiment_analysis(text):
-    # Use cache for same text
-    return run_sentiment_analysis_cached(text)
+NORMALIZED_LOCAL_FEEDS = {unidecode(city).lower().strip(): v for city, v in LOCAL_FEEDS.items()}
 
-@lru_cache(maxsize=512)
-def run_forecast_cached(region, input_data, user_message):
-    from xai_client import grok_chat
-    from prompts import PROACTIVE_FORECAST_PROMPT
-    prompt = PROACTIVE_FORECAST_PROMPT.format(region=region, input_data=json.dumps(input_data), user_message=user_message)
-    messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+def get_feed_for_city(city):
+    if not city:
+        return None
+    city_key = unidecode(city).lower().strip()
+    match = difflib.get_close_matches(city_key, NORMALIZED_LOCAL_FEEDS.keys(), n=1, cutoff=0.8)
+    if match:
+        return NORMALIZED_LOCAL_FEEDS[match[0]]
+    return None
+
+def get_feed_for_location(region=None, city=None, topic=None):
+    region_key = region.strip().title() if region else None
+    city_feeds = get_feed_for_city(city)
+    if city_feeds:
+        logger.info("Using LOCAL feed(s) for city match.")
+        return city_feeds
+    if region_key and region_key in FCDO_FEEDS:
+        logger.info("Using FCDO region feed.")
+        return [FCDO_FEEDS[region_key]]
+    if topic and topic.lower() == "cyber":
+        try:
+            from feeds_catalog import CYBER_FEEDS
+            return CYBER_FEEDS
+        except ImportError:
+            pass
+    region_key_lower = region.lower().strip() if region else None
+    if region_key_lower and region_key_lower in COUNTRY_FEEDS:
+        logger.info("Using COUNTRY feed.")
+        return COUNTRY_FEEDS[region_key_lower]
+    logger.info("Using GLOBAL feed(s) as fallback.")
+    return GLOBAL_FEEDS
+
+def normalize_timestamp(ts):
+    """Normalize timestamp to UTC ISO string."""
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = ts.astimezone(timezone.utc)
+        return ts.isoformat()
+    if isinstance(ts, (int, float)):
+        return datetime.utcfromtimestamp(ts).replace(tzinfo=timezone.utc).isoformat()
+    if isinstance(ts, str):
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt.isoformat()
+        except Exception:
+            try:
+                import email.utils
+                parsed = email.utils.parsedate_to_datetime(ts)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                else:
+                    parsed = parsed.astimezone(timezone.utc)
+                return parsed.isoformat()
+            except Exception:
+                return ts
+    return None
+
+def generate_series_id(region, threat_type, timestamp):
+    """Generate a series_id for related incidents in the same region/type/time window."""
+    if not region:
+        region = "unknown"
+    if not threat_type:
+        threat_type = "unknown"
     try:
-        return grok_chat(messages, temperature=0.2, max_tokens=80)
-    except Exception as e:
-        log.error(f"[ForecastError] {e}")
-        return f"[ForecastError] {e}"
+        if isinstance(timestamp, str):
+            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        elif isinstance(timestamp, datetime):
+            dt = timestamp
+        else:
+            dt = datetime.utcnow()
+        day_str = dt.strftime("%Y-%m-%d")
+    except Exception:
+        day_str = "unknown"
+    base = f"{region.lower().strip()}|{threat_type.lower().strip()}|{day_str}"
+    return sha256(base.encode("utf-8")).hexdigest()
 
-def run_forecast(region, input_data, user_message=None):
-    # Use cache for same input
-    user_msg = user_message if user_message else str(input_data)
-    return run_forecast_cached(region, json.dumps(input_data, sort_keys=True), user_msg)
+def extract_keywords(text):
+    raw_matches = []
+    normalized_matches = []
+    text_lower = text.lower()
+    for k in THREAT_KEYWORDS:
+        if re.search(rf'\b{re.escape(k)}\b', text_lower):
+            raw_matches.append(k)
+    normalized_matches = [k.lower() for k in raw_matches]
+    return raw_matches, normalized_matches
 
-@lru_cache(maxsize=512)
-def run_legal_risk_cached(text, region):
-    from xai_client import grok_chat
-    from prompts import LEGAL_REGULATORY_RISK_PROMPT
-    prompt = LEGAL_REGULATORY_RISK_PROMPT.format(incident=text, region=region)
-    messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
-    try:
-        return grok_chat(messages, temperature=0.2, max_tokens=80)
-    except Exception as e:
-        log.error(f"[LegalRiskError] {e}")
-        return f"[LegalRiskError] {e}"
+async def fetch_feed_async(url, timeout=7, retries=3, backoff=1.5, max_backoff=60):
+    attempt = 0
+    current_backoff = backoff
+    while attempt < retries:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=timeout)
+                if response.status_code == 200:
+                    logger.info(f"✅ Fetched: {url}")
+                    return feedparser.parse(response.text), url
+                elif response.status_code in [429, 503]:
+                    current_backoff = min(current_backoff * 2, max_backoff)
+                    logger.warning(f"⚠️ Throttled ({response.status_code}) by {url}; backing off for {current_backoff} seconds")
+                    await asyncio.sleep(current_backoff)
+                else:
+                    logger.warning(f"⚠️ Feed returned {response.status_code}: {url}")
+        except Exception as e:
+            logger.warning(f"❌ Attempt {attempt + 1} failed for {url} — {e}")
+        attempt += 1
+        await asyncio.sleep(current_backoff)
+    logger.warning(f"❌ Failed to fetch after {retries} retries: {url}")
+    return None, url
 
-def run_legal_risk(text, region):
-    return run_legal_risk_cached(text, region)
+# ---- Shared Keyword Scoring ----
+def compute_keyword_weight(text, return_detail=False):
+    score = 0
+    matched = []
+    text_lower = text.lower()
+    for k in THREAT_KEYWORDS:
+        if re.search(rf'\b{k}\b', text_lower, re.IGNORECASE):
+            score += 1
+            matched.append(k)
+    if return_detail:
+        return score, matched
+    return score
 
-@lru_cache(maxsize=512)
-def run_cyber_ot_risk_cached(text, region):
-    from xai_client import grok_chat
-    from prompts import CYBER_OT_RISK_PROMPT
-    prompt = CYBER_OT_RISK_PROMPT.format(incident=text, region=region)
-    messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
-    try:
-        return grok_chat(messages, temperature=0.2, max_tokens=80)
-    except Exception as e:
-        log.error(f"[CyberOTRiskError] {e}")
-        return f"[CyberOTRiskError] {e}"
-
-def run_cyber_ot_risk(text, region):
-    return run_cyber_ot_risk_cached(text, region)
-
-@lru_cache(maxsize=512)
-def run_environmental_epidemic_risk_cached(text, region):
-    from xai_client import grok_chat
-    from prompts import ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT
-    prompt = ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT.format(incident=text, region=region)
-    messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
-    try:
-        return grok_chat(messages, temperature=0.2, max_tokens=80)
-    except Exception as e:
-        log.error(f"[EnvEpidemicRiskError] {e}")
-        return f"[EnvEpidemicRiskError] {e}"
-
-def run_environmental_epidemic_risk(text, region):
-    return run_environmental_epidemic_risk_cached(text, region)
-
-# ---- ENRICHMENT LOGGING ----
-
-def enrich_log(
-    alert,
-    region=None,
-    city=None,
-    source=None,
-    user_email=None,
-    log_path=None
-):
-    """
-    Log enriched alert data to a JSONL file for analyst review, retraining, or audit.
-    Includes region, city, source, and user_email for better metadata.
-    Logging only happens if LOG_ALERTS=true in env.
-    log_path can be set via ENRICH_LOG_PATH env var, else defaults to logs/alert_enrichments.jsonl.
-    """
+# ---- Shared Enrichment Logging ----
+def enrich_log(alert, region=None, city=None, source=None, user_email=None, log_path=None):
     if os.getenv("LOG_ALERTS", "true").lower() != "true":
         return
-
     if log_path is None:
         log_path = os.getenv("ENRICH_LOG_PATH", "logs/alert_enrichments.jsonl")
-
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-
     enrich_record = {
         "timestamp": datetime.utcnow().isoformat(),
         "region": region if region else alert.get('region'),
@@ -167,70 +216,184 @@ def enrich_log(
     }
     try:
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(enrich_record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(enrich_record, ensure_ascii=False, default=json_default) + "\n")
     except Exception as e:
-        log.error(f"[enrich_log][FileError] {e}")
+        logger.error(f"[enrich_log][FileError] {e}")
 
-def enrich_log_db(
-    enrichment_result,
-    enrichment_type="",
-    user_email=None,
-    db_url=None
-):
+# ---- Fallback Routes/Cities for Alternatives ----
+FALLBACK_ROUTES = {
+    "Kyiv": [
+        {"route": "Via Lviv", "city": "Lviv", "description": "Safer route via western Ukraine."},
+        {"route": "Via Dnipro", "city": "Dnipro", "description": "Alternate route avoiding central conflict zones."},
+    ],
+    "Mexico City": [
+        {"route": "Via Puebla", "city": "Puebla", "description": "Recommended alternate for unrest in CDMX."},
+    ],
+    # Add more as needed...
+}
+
+# ---- Trend Metrics Helper ----
+def compute_trend_metrics(historical_alerts):
     """
-    Log enrichment result to a database table (enrichment_logs) for audit, quota, and analytics.
+    Given a list of historical alerts (dicts), return:
+    - trend_direction: 'improving', 'deteriorating', 'stable', or 'unknown'
+    - future_risk_probability: float 0-1
+    - early_warning_indicators: list of keywords/patterns historically preceding escalation
     """
-    db_url = db_url or os.getenv("DATABASE_URL")
-    if not db_url:
-        log.warning("DATABASE_URL not set. Falling back to file logging for enrichment logs.")
-        enrich_log(
-            enrichment_result,
-            region=enrichment_result.get('location'),
-            source=enrichment_result.get('model_used'),
-            user_email=user_email
-        )
-        return
+    trend_direction = compute_trend_direction(historical_alerts)
+    future_risk_probability = compute_future_risk_probability(historical_alerts)
+    early_warning_indicators = extract_early_warning_indicators(historical_alerts)
+    return {
+        "trend_direction": trend_direction,
+        "future_risk_probability": future_risk_probability,
+        "early_warning_indicators": early_warning_indicators
+    }
+
+def compute_trend_direction(alerts):
+    """Return 'improving', 'deteriorating', or 'stable' based on alert score trend."""
+    if len(alerts) < 3:
+        return "unknown"
+    scores = [a.get("score", 0) for a in alerts if isinstance(a.get("score", 0), (int, float))]
+    if len(scores) < 3:
+        return "unknown"
+    mid = len(scores) // 2
+    before = scores[mid:]
+    after = scores[:mid]
+    if not after or not before:
+        return "unknown"
+    before_avg = sum(before) / len(before)
+    after_avg = sum(after) / len(after)
+    if after_avg > before_avg + 7:
+        return "deteriorating"
+    elif after_avg < before_avg - 7:
+        return "improving"
+    else:
+        return "stable"
+
+def compute_future_risk_probability(alerts, window=3):
+    """Estimate probability of escalation in next 24-72h based on recent alert trend."""
+    if len(alerts) < window + 1:
+        return 0.5
+    sorted_alerts = sorted(alerts, key=lambda x: x.get("timestamp", ""), reverse=True)
+    scores = [a.get("score", 0) for a in sorted_alerts if isinstance(a.get("score", 0), (int, float))]
+    if len(scores) < window * 2:
+        return 0.5
+    recent = scores[:window]
+    previous = scores[window:window*2]
+    if not previous or not recent:
+        return 0.5
+    diff = (sum(recent)/len(recent)) - (sum(previous)/len(previous))
+    if diff > 10:
+        return 0.9
+    if diff > 5:
+        return 0.7
+    if diff < -10:
+        return 0.1
+    if diff < -5:
+        return 0.3
+    return 0.5
+
+def extract_early_warning_indicators(alerts):
+    """
+    Extract patterns (keywords, subcategories, triggers) that historically precede escalation
+    (score > 75). Returns a list of indicators.
+    """
+    indicators = set()
+    for alert in alerts:
+        if alert.get("score", 0) >= 75:
+            for k in alert.get("matched_keywords", []):
+                indicators.add(k)
+            if "subcategory" in alert and alert["subcategory"]:
+                indicators.add(alert["subcategory"])
+            if "tags" in alert and alert["tags"]:
+                indicators.update(alert["tags"])
+            if "processed_keywords" in alert and alert["processed_keywords"]:
+                indicators.update(alert["processed_keywords"])
+    return list(indicators)
+
+# ---- Shared Model-Based Enrichment ----
+def run_sentiment_analysis(text):
     try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO enrichment_logs 
-            (timestamp, enrichment_type, user_email, result_json)
-            VALUES (%s, %s, %s, %s)
-        """, (
-            datetime.utcnow().isoformat(),
-            enrichment_type,
-            user_email,
-            json.dumps(enrichment_result, ensure_ascii=False)
-        ))
-        conn.commit()
-        cur.close()
-        conn.close()
+        from xai_client import grok_chat
+        from prompts import SENTIMENT_ANALYSIS_PROMPT
+        prompt = SENTIMENT_ANALYSIS_PROMPT.format(incident=text)
+        messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+        return grok_chat(messages, temperature=0.2, max_tokens=60)
     except Exception as e:
-        log.error(f"[enrich_log_db][DBError] {e}")
-        # Fallback to file log if DB fails
-        enrich_log(
-            enrichment_result,
-            region=enrichment_result.get('location'),
-            source=enrichment_result.get('model_used'),
-            user_email=user_email
-        )
+        logger.error(f"[SentimentAnalysisError] {e}")
+        return f"[SentimentAnalysisError] {e}"
 
-# ---- SHARED KEYWORD SCORING ----
+def run_forecast(region, input_data, user_message=None):
+    try:
+        from xai_client import grok_chat
+        from prompts import PROACTIVE_FORECAST_PROMPT
+        prompt = PROACTIVE_FORECAST_PROMPT.format(region=region, input_data=json.dumps(input_data, default=json_default), user_message=user_message)
+        messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+        return grok_chat(messages, temperature=0.2, max_tokens=80)
+    except Exception as e:
+        logger.error(f"[ForecastError] {e}")
+        return f"[ForecastError] {e}"
 
-def compute_keyword_weight(text, return_detail=False):
-    """
-    Compute the total keyword weight for a given text using the shared dictionary, using regex for precise word boundaries.
-    If return_detail=True, returns (score, matched_keywords).
-    """
-    score = 0
-    matched = []
-    text_lower = text.lower()
-    for k, w in KEYWORD_WEIGHTS.items():
-        # Use regex for word boundary matching (case-insensitive)
-        if re.search(rf'\b{k}\b', text_lower, re.IGNORECASE):
-            score += w
-            matched.append(k)
-    if return_detail:
-        return score, matched
-    return score
+def run_legal_risk(text, region):
+    try:
+        from xai_client import grok_chat
+        from prompts import LEGAL_REGULATORY_RISK_PROMPT
+        prompt = LEGAL_REGULATORY_RISK_PROMPT.format(incident=text, region=region)
+        messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+        return grok_chat(messages, temperature=0.2, max_tokens=80)
+    except Exception as e:
+        logger.error(f"[LegalRiskError] {e}")
+        return f"[LegalRiskError] {e}"
+
+def run_cyber_ot_risk(text, region):
+    try:
+        from xai_client import grok_chat
+        from prompts import CYBER_OT_RISK_PROMPT
+        prompt = CYBER_OT_RISK_PROMPT.format(incident=text, region=region)
+        messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+        return grok_chat(messages, temperature=0.2, max_tokens=80)
+    except Exception as e:
+        logger.error(f"[CyberOTRiskError] {e}")
+        return f"[CyberOTRiskError] {e}"
+
+def run_environmental_epidemic_risk(text, region):
+    try:
+        from xai_client import grok_chat
+        from prompts import ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT
+        prompt = ENVIRONMENTAL_EPIDEMIC_RISK_PROMPT.format(incident=text, region=region)
+        messages = [{"role": "system", "content": ""}, {"role": "user", "content": prompt}]
+        return grok_chat(messages, temperature=0.2, max_tokens=80)
+    except Exception as e:
+        logger.error(f"[EnvEpidemicRiskError] {e}")
+        return f"[EnvEpidemicRiskError] {e}"
+
+# ---- Event Clustering and Semantic Grouping ----
+def assign_incident_cluster_ids(alerts, region=None, keywords=None, hours_window=72):
+    clusters = fetch_incident_clusters(region=region, keywords=keywords, hours_window=hours_window)
+    uuid_to_cluster = {}
+    for cl in clusters:
+        for uuid in cl["alert_uuids"]:
+            uuid_to_cluster[uuid] = f"{cl['region']}-{cl['keywords']}-{cl['start_time']}"
+    for alert in alerts:
+        alert_uuid = alert.get("uuid")
+        if alert_uuid in uuid_to_cluster:
+            alert["incident_cluster_id"] = uuid_to_cluster[alert_uuid]
+        else:
+            alert["incident_cluster_id"] = None
+    return alerts
+
+def tag_alerts_by_user_interest(alerts, email):
+    prefs = fetch_user_threat_preferences(email)
+    tagged_alerts = []
+    for alert in alerts:
+        score = 0
+        for field in ["regions", "categories", "keywords"]:
+            tags = alert.get("tags", [])
+            pref_vals = prefs.get(field) or []
+            if isinstance(pref_vals, str):
+                pref_vals = [pref_vals]
+            if any(x in tags for x in pref_vals):
+                score += 1
+        alert["user_interest_tag"] = score
+        tagged_alerts.append(alert)
+    return tagged_alerts

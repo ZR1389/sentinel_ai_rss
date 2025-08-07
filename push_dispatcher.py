@@ -4,6 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pywebpush import webpush, WebPushException
 import logging
+from plan_utils import require_plan_feature
 
 # --- Logging configuration ---
 logging.basicConfig(
@@ -46,22 +47,28 @@ def load_subscribers():
         log.error(f"Failed to load subscribers: {e}")
         return []
 
-def send_push_notification(sub, message):
+def send_push_notification(sub, message, email=None):
+    # --- PLAN GATING FOR PUSH NOTIFICATIONS ---
+    if email and not require_plan_feature(email, "push"):
+        log.info(f"User {email} not allowed to receive push notifications (feature gated).")
+        return {"status": "error", "endpoint": sub.get('endpoint', ''), "reason": "Plan does not include push notifications."}
     try:
+        # Remove email before sending (pywebpush doesn't expect it)
+        sub_slim = {k: v for k, v in sub.items() if k != "email"}
         webpush(
-            subscription_info=sub,
+            subscription_info=sub_slim,
             data=message,
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims=VAPID_CLAIMS
         )
-        log.info(f"Push sent to {sub.get('endpoint', '')[:50]}...")
-        return {"status": "sent", "endpoint": sub.get('endpoint', '')}
+        log.info(f"Push sent to {sub.get('endpoint', '')[:50]}... (user: {email})")
+        return {"status": "sent", "endpoint": sub.get('endpoint', ''), "email": email}
     except WebPushException as ex:
-        log.error(f"Push failed [{sub.get('endpoint', '')[:50]}]: {ex}")
-        return {"status": "error", "endpoint": sub.get('endpoint', ''), "reason": str(ex)}
+        log.error(f"Push failed [{sub.get('endpoint', '')[:50]}] (user: {email}): {ex}")
+        return {"status": "error", "endpoint": sub.get('endpoint', ''), "reason": str(ex), "email": email}
     except Exception as e:
-        log.error(f"Unexpected error: {e}")
-        return {"status": "error", "endpoint": sub.get('endpoint', ''), "reason": str(e)}
+        log.error(f"Unexpected error (user: {email}): {e}")
+        return {"status": "error", "endpoint": sub.get('endpoint', ''), "reason": str(e), "email": email}
 
 def send_all_push_notifications(message="🚨 New alert from Sentinel AI. Check your dashboard."):
     subscribers = load_subscribers()
@@ -72,7 +79,8 @@ def send_all_push_notifications(message="🚨 New alert from Sentinel AI. Check 
     log.info(f"Sending push to {len(subscribers)} subscribers...")
     results = []
     for sub in subscribers:
-        result = send_push_notification(sub, message)
+        email = sub.get("email")
+        result = send_push_notification(sub, message, email=email)
         results.append(result)
 
     sent = sum(1 for r in results if r["status"] == "sent")
