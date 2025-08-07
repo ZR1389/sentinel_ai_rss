@@ -333,7 +333,6 @@ def get_action_alternatives(region, user_message):
                 f"Avoid {region}, take {r['route']} via {r['city']} instead. {r['description']}"
             )
         return "\n".join(alternatives)
-    # If not available, use GPT to generate
     prompt = ACTION_ALTERNATIVES_PROMPT.format(region=region)
     messages = [
         {"role": "system", "content": "You are a travel safety planner."},
@@ -374,7 +373,6 @@ def generate_structured_advisory(user_message, alerts, email="anonymous", region
     risk_display = get_risk_level_from_profile(static_risk_profile)
     heading = f"ALERT: Sentinel AI Advisory\nRegion: {region_display}\nRisk Level: {risk_display}\n\n"
 
-    # --- User Profile Injection ---
     user_profile = fetch_user_profile(email) or {}
     user_pref_profile = fetch_user_preferences(email) or {}
     risk_tolerance = user_pref_profile.get("risk_tolerance") or user_profile.get("risk_tolerance")
@@ -402,7 +400,6 @@ def generate_structured_advisory(user_message, alerts, email="anonymous", region
     if not check_user_message_quota(email, plan_limits):
         logger.info(f"[Quota] User {email} exceeded monthly message quota")
         analyst_insight = random.choice(ZIKA_QUOTES)
-        # Fallback logic: include mandatory action alternatives!
         action_alternatives = get_action_alternatives(region, user_message)
         alt_strategies = run_alternate_strategies(user_message, {}, "")
         fallback_text = (
@@ -515,11 +512,9 @@ def generate_structured_advisory(user_message, alerts, email="anonymous", region
     analyst_insight = random.choice(ZIKA_QUOTES)
     advisory += f"\n\n{analyst_insight}\n\n{format_cta(plan)}"
 
-    # ---- Action Alternatives ----
     action_alternatives = get_action_alternatives(region, user_message)
     advisory += f"\n\n🚦 Action Alternatives:\n{action_alternatives}"
 
-    # ---- Alternate Strategies ----
     alt_strategies = run_alternate_strategies(user_message, input_data, advisory)
     if not alt_strategies:
         alt_strategies = parse_alternate_strategies(advisory)

@@ -144,12 +144,6 @@ def set_preferences():
         with psycopg2.connect(os.getenv("DATABASE_URL")) as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                ALTER TABLE user_profiles
-                ADD COLUMN IF NOT EXISTS country_watchlist TEXT,
-                ADD COLUMN IF NOT EXISTS threat_categories TEXT,
-                ADD COLUMN IF NOT EXISTS alert_channels TEXT;
-                """)
-                cur.execute("""
                     INSERT INTO user_profiles (email, country_watchlist, threat_categories, alert_channels)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (email) DO UPDATE SET
@@ -158,9 +152,9 @@ def set_preferences():
                         alert_channels=EXCLUDED.alert_channels
                 """, (
                     email,
-                    json.dumps(watchlist) if watchlist is not None else None,
-                    json.dumps(categories) if categories is not None else None,
-                    json.dumps(channels) if channels is not None else None
+                    watchlist,
+                    categories,
+                    channels
                 ))
                 conn.commit()
         return _build_cors_response(jsonify({"success": True, "message": "Preferences updated."}))
@@ -187,14 +181,10 @@ def get_preferences():
                         "threat_categories": None,
                         "alert_channels": None
                     }))
-                def try_parse(val):
-                    if not val: return None
-                    try: return json.loads(val)
-                    except Exception: return val
                 result = {
-                    "country_watchlist": try_parse(row[0]),
-                    "threat_categories": try_parse(row[1]),
-                    "alert_channels": try_parse(row[2])
+                    "country_watchlist": row[0],
+                    "threat_categories": row[1],
+                    "alert_channels": row[2]
                 }
         return _build_cors_response(jsonify(result))
     except Exception as e:
@@ -471,7 +461,6 @@ def chat():
                 log_security_event("plan_denied", email=email, ip=get_remote_address(), endpoint="/chat", plan=plan_limits.get("name"), details="Advanced insights not available")
                 return _build_cors_response(jsonify({"error": "Advanced insights are not available on your plan. Please upgrade."})), 403
         print("Calling handle_user_query...")
-        # --- API Gateway: Accept trend data and personalized advisory profile params ---
         trend_data_request = data.get("trend_data", False)
         requested_profile = data.get("profile", None)
         result = handle_user_query(
@@ -480,7 +469,6 @@ def chat():
             region=region,
             threat_type=threat_type,
         )
-        # If trend data is requested, add it to the result
         if trend_data_request:
             from db_utils import fetch_past_incidents
             historical = fetch_past_incidents(region=region, category=result.get("alerts", [{}])[0].get("category"), days=90, limit=100)
@@ -488,10 +476,8 @@ def chat():
             trend_metrics = compute_trend_metrics(historical)
             result["trend_metrics"] = trend_metrics
 
-        # If personalized profile is passed, merge into response
         if requested_profile and isinstance(requested_profile, dict):
             result["requested_profile"] = requested_profile
-            # Optionally also fetch stored profile for user and include
             user_profile = fetch_user_profile(email)
             result["user_profile"] = user_profile
 
@@ -678,7 +664,7 @@ def verify_code_route():
             return _build_cors_response(jsonify({"success": False, "error": err})), 403
     except Exception as e:
         log.error(f"Verification failed: {e}")
-        log_security_event("verify_code_error", email=None, ip=None, endpoint="/verify_code", details=str(e))
+        log_security_event("verification_code_error", email=None, ip=None, endpoint="/verify_code", details=str(e))
         return _build_cors_response(jsonify({"success": False, "error": str(e)})), 500
 
 @app.route("/newsletter_subscribe", methods=["POST"])
@@ -778,12 +764,11 @@ def send_proactive_alerts():
                             }
                             for r in cur.fetchall()
                         ]
-                        # TODO: Actual delivery logic (email, webhook, etc.)
                         log.info(f"Proactive alerts for {email}: {risks}")
             log.info("Proactive alert push completed.")
         except Exception as e:
             log.error(f"Proactive alert push error: {e}")
-        time.sleep(86400)  # 24 hours
+        time.sleep(86400)
 
 if os.getenv("ENV") == "production":
     threading.Thread(target=send_proactive_alerts, daemon=True).start()

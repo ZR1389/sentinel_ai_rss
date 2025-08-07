@@ -102,15 +102,12 @@ def detect_region(text):
     return "Global"
 
 def keyword_match(content):
-    # PATCH: Use regex word boundaries for keywords to avoid false positives
     for keyword in THREAT_KEYWORDS:
-        # Escape keyword for regex and allow case-insensitive word boundary match
         if re.search(r"\b" + re.escape(keyword) + r"\b", content, re.IGNORECASE):
             return True
     return False
 
 def scrape_telegram_messages(region=None, city=None, topic=None, limit=30, email=None):
-    # --- PLAN GATING FOR TELEGRAM SCRAPER FEATURE ---
     if email and not require_plan_feature(email, "telegram"):
         log.info(f"User {email} not allowed to access Telegram OSINT alerts (feature gated).")
         return []
@@ -130,7 +127,6 @@ def scrape_telegram_messages(region=None, city=None, topic=None, limit=30, email
             for username in channels:
                 log.info(f"Scraping: {username}")
 
-                # Get last seen post id for this channel, if any
                 last_seen_id = cache.get(username)
                 new_highest_id = last_seen_id if last_seen_id is not None else 0
 
@@ -138,18 +134,15 @@ def scrape_telegram_messages(region=None, city=None, topic=None, limit=30, email
                     entity = client.get_entity(username)
                     messages = client.iter_messages(entity, limit=limit)
                     for msg in messages:
-                        # Only process messages within the last 24 hours
                         if msg.date < datetime.now(timezone.utc) - timedelta(hours=24):
                             continue
                         if not msg.message:
                             continue
 
-                        # Skip already-seen posts
                         if last_seen_id is not None and msg.id <= last_seen_id:
                             continue
 
                         content = msg.message.lower() if isinstance(msg.message, str) else str(msg.message).lower()
-                        # PATCH: use regex-based keyword match for precise detection
                         if keyword_match(content):
                             alerts.append({
                                 "title": f"Telegram Post: {username}",
@@ -161,11 +154,9 @@ def scrape_telegram_messages(region=None, city=None, topic=None, limit=30, email
                                 "post_id": msg.id
                             })
 
-                        # Track the highest post ID seen this run
                         if msg.id > new_highest_id:
                             new_highest_id = msg.id
 
-                    # Only update cache if we found something higher than last_seen_id
                     if new_highest_id and (last_seen_id is None or new_highest_id > last_seen_id):
                         cache[username] = new_highest_id
                         cache_updated = True

@@ -34,9 +34,9 @@ if RAILWAY_ENV:
 else:
     log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
-# List of Telegram chat IDs to receive alerts (legacy: "VIP_CLIENTS" was just a static list)
+# List of Telegram chat IDs to receive alerts
 TELEGRAM_TARGET_CHAT_IDS = [
-    str(CHAT_ID),  # Default or admin channel/group/user
+    str(CHAT_ID),
     # Add more chat IDs as needed
 ]
 
@@ -199,8 +199,6 @@ def handle_unsubscribe(update):
 
 if __name__ == "__main__":
     log.info("Running Telegram dispatcher...")
-    # You must pass the user's email to send_alerts_to_telegram for proper feature gating.
-    # For testing, replace with actual user email as needed:
     test_email = os.getenv("TEST_USER_EMAIL", "anonymous")
     count = send_alerts_to_telegram(email=test_email)
     log.info(f"Finished sending {count} alert(s).")

@@ -1,5 +1,5 @@
 import psycopg2
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import os
 import logging
 import json
@@ -410,13 +410,6 @@ def fetch_user_profile(email):
             return {}
         columns = [desc[0] for desc in cur.description]
         profile = dict(zip(columns, row))
-        # Parse JSON fields if present
-        for key in ["country_watchlist", "threat_categories", "alert_channels", "custom_fields"]:
-            if profile.get(key) is not None:
-                try:
-                    profile[key] = json.loads(profile[key])
-                except Exception:
-                    pass
         cur.close()
         conn.close()
         return profile
@@ -466,9 +459,9 @@ def save_or_update_user_profile(profile):
             profile.get("risk_tolerance"),
             profile.get("asset_type"),
             profile.get("preferred_alert_types"),
-            json.dumps(profile.get("country_watchlist")) if profile.get("country_watchlist") is not None else None,
-            json.dumps(profile.get("threat_categories")) if profile.get("threat_categories") is not None else None,
-            json.dumps(profile.get("alert_channels")) if profile.get("alert_channels") is not None else None,
+            profile.get("country_watchlist"),
+            profile.get("threat_categories"),
+            profile.get("alert_channels"),
             profile.get("profession"),
             profile.get("employer"),
             profile.get("destination"),
@@ -476,7 +469,7 @@ def save_or_update_user_profile(profile):
             profile.get("travel_end"),
             profile.get("means_of_transportation"),
             profile.get("reason_for_travel"),
-            json.dumps(profile.get("custom_fields")) if profile.get("custom_fields") is not None else None,
+            profile.get("custom_fields"),
             profile.get("preferred_region"),
             profile.get("preferred_threat_type"),
             profile.get("home_location"),
@@ -527,12 +520,7 @@ def update_user_preferences(email, preferred_region=None, preferred_threat_type=
         logger.error(f"[plan_utils.py] Error updating user preferences: {e}")
         return False
 
-# --- Incident Clustering Utility ---
-
 def assign_alert_cluster(region, threat_type, title, published_time):
-    """
-    Assigns/returns a cluster_id for similar alerts within 24–72h based on region, type, title.
-    """
     db_url = DATABASE_URL
     cluster_id = None
     try:
@@ -554,7 +542,6 @@ def assign_alert_cluster(region, threat_type, title, published_time):
         if row and row[0]:
             cluster_id = row[0]
         else:
-            # create new cluster_id
             cluster_id = str(uuid4())
         cur.close()
         conn.close()
@@ -563,12 +550,7 @@ def assign_alert_cluster(region, threat_type, title, published_time):
         cluster_id = str(uuid4())
     return cluster_id
 
-# --- Forecasting Engine ---
-
 def alert_frequency(region, threat_type, hours=48):
-    """
-    Returns the count of alerts in a region/threat_type within last 'hours'.
-    """
     db_url = DATABASE_URL
     try:
         conn = psycopg2.connect(db_url)
@@ -587,9 +569,6 @@ def alert_frequency(region, threat_type, hours=48):
         return 0
 
 def get_recent_alerts(region, threat_type, limit=10):
-    """
-    Returns recent alerts for GPT prompt construction.
-    """
     db_url = DATABASE_URL
     try:
         conn = psycopg2.connect(db_url)
@@ -608,12 +587,7 @@ def get_recent_alerts(region, threat_type, limit=10):
         logger.error(f"[plan_utils.py] Error fetching recent alerts: {e}")
         return []
 
-# --- Trend Tracking Utility ---
-
 def group_alerts_by_period(period="day", region=None):
-    """
-    Groups alerts by day/week/month for trend tracking.
-    """
     db_url = DATABASE_URL
     try:
         conn = psycopg2.connect(db_url)

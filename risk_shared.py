@@ -234,12 +234,6 @@ FALLBACK_ROUTES = {
 
 # ---- Trend Metrics Helper ----
 def compute_trend_metrics(historical_alerts):
-    """
-    Given a list of historical alerts (dicts), return:
-    - trend_direction: 'improving', 'deteriorating', 'stable', or 'unknown'
-    - future_risk_probability: float 0-1
-    - early_warning_indicators: list of keywords/patterns historically preceding escalation
-    """
     trend_direction = compute_trend_direction(historical_alerts)
     future_risk_probability = compute_future_risk_probability(historical_alerts)
     early_warning_indicators = extract_early_warning_indicators(historical_alerts)
@@ -250,7 +244,6 @@ def compute_trend_metrics(historical_alerts):
     }
 
 def compute_trend_direction(alerts):
-    """Return 'improving', 'deteriorating', or 'stable' based on alert score trend."""
     if len(alerts) < 3:
         return "unknown"
     scores = [a.get("score", 0) for a in alerts if isinstance(a.get("score", 0), (int, float))]
@@ -271,7 +264,6 @@ def compute_trend_direction(alerts):
         return "stable"
 
 def compute_future_risk_probability(alerts, window=3):
-    """Estimate probability of escalation in next 24-72h based on recent alert trend."""
     if len(alerts) < window + 1:
         return 0.5
     sorted_alerts = sorted(alerts, key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -294,10 +286,6 @@ def compute_future_risk_probability(alerts, window=3):
     return 0.5
 
 def extract_early_warning_indicators(alerts):
-    """
-    Extract patterns (keywords, subcategories, triggers) that historically precede escalation
-    (score > 75). Returns a list of indicators.
-    """
     indicators = set()
     for alert in alerts:
         if alert.get("score", 0) >= 75:
@@ -311,7 +299,6 @@ def extract_early_warning_indicators(alerts):
                 indicators.update(alert["processed_keywords"])
     return list(indicators)
 
-# ---- Shared Model-Based Enrichment ----
 def run_sentiment_analysis(text):
     try:
         from xai_client import grok_chat
@@ -367,7 +354,6 @@ def run_environmental_epidemic_risk(text, region):
         logger.error(f"[EnvEpidemicRiskError] {e}")
         return f"[EnvEpidemicRiskError] {e}"
 
-# ---- Event Clustering and Semantic Grouping ----
 def assign_incident_cluster_ids(alerts, region=None, keywords=None, hours_window=72):
     clusters = fetch_incident_clusters(region=region, keywords=keywords, hours_window=hours_window)
     uuid_to_cluster = {}

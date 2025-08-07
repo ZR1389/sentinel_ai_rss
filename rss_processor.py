@@ -14,7 +14,7 @@ import difflib
 from langdetect import detect
 
 from db_utils import save_raw_alerts_to_db
-from db_utils import save_region_trend  # <-- For writing trend data
+from db_utils import save_region_trend
 from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 
 with open('fcdo_country_feeds.json', 'r', encoding='utf-8') as f:
@@ -105,7 +105,6 @@ def get_feed_for_location(region=None, city=None, topic=None):
     return GLOBAL_FEEDS
 
 def normalize_timestamp(ts):
-    # Accept string, datetime, or None; always output UTC ISO format
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
@@ -146,7 +145,6 @@ def extract_keywords(text):
     return raw_matches, normalized_matches
 
 def generate_series_id(region, keywords, timestamp):
-    # Group by region + sorted keywords + day
     region = region or "unknown"
     keywords = sorted([k.lower() for k in (keywords or [])])
     try:
@@ -308,22 +306,19 @@ async def ingest_all_feeds_to_db(
         logger.error("⚠️ No relevant alerts found for city/region. Will use fallback advisory.")
         return []
 
-    # --- Cluster/group logic ---
     clusters = group_alerts_by_cluster(alerts, time_window_hours=48)
     logger.info(f"🧩 Generated {len(clusters)} incident clusters (geo-temporal).")
 
-    # --- Basic trend tracker ---
     trend_tracker = compute_trend_tracker(alerts, time_unit="week")
     logger.info(f"📈 Threat counts by city/week: {json.dumps(trend_tracker, indent=2)}")
 
-    # ---- Store trend metadata in region_trends table ----
     try:
         for city, week_data in trend_tracker.items():
             for week, count in week_data.items():
                 save_region_trend(
                     region=region_str or "",
                     city=city,
-                    trend_window_start=week + "-1",  # ISO week start: add day-of-week if needed
+                    trend_window_start=week + "-1",
                     trend_window_end=week + "-7",
                     incident_count=count,
                     categories=None,

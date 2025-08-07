@@ -40,7 +40,7 @@ from db_utils import (
     save_alerts_to_db,
     fetch_alerts_from_db,
     fetch_past_incidents,
-    save_region_trend,  # <-- ADDED: for trend enrichment
+    save_region_trend,
 )
 from threat_scorer import (
     assess_threat_level,
@@ -92,7 +92,6 @@ CITY_LIST = [
     "Buenos Aires", "Cairo", "Bangkok", "Madrid", "Rome", "Sydney", "Toronto", "Chicago"
 ]
 
-# --- USAGE LOGGING (plan/quota is enforced here, not at ingestion) ---
 def log_threat_engine_usage(email, plan, action_type, status, region=None, summary_text=None):
     try:
         import psycopg2
@@ -548,12 +547,7 @@ def get_clean_alerts(
 
     return clean_alerts
 
-# --- New: Trend Tracking API helper ---
 def get_trend_tracker(region=None, city=None, time_unit="week", days=30):
-    """
-    Fetches and groups trend data from region_trends table for API or dashboard use.
-    Returns: {city: {week: count}} or {region: {week: count}}
-    """
     import psycopg2
     trend_data = {}
     try:
@@ -567,7 +561,6 @@ def get_trend_tracker(region=None, city=None, time_unit="week", days=30):
         if city:
             where_clause.append("city = %s")
             params.append(city)
-        # Always filter by recent N days
         where_sql = ("WHERE " + " AND ".join(where_clause)) if where_clause else "WHERE 1=1"
         cur.execute(f"""
             SELECT city, region, trend_window_start, incident_count

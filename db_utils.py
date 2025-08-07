@@ -13,7 +13,6 @@ from psycopg2.extras import execute_values
 from datetime import datetime, timedelta
 import uuid
 import logging
-import json
 from plan_utils import require_plan_feature
 from security_log_utils import log_security_event
 
@@ -39,10 +38,6 @@ def get_db_url():
 # --- USER PROFILE UTILITIES ---
 
 def fetch_user_profile(email):
-    """
-    Fetch basic user profile fields for advisory personalization.
-    Returns a dict containing all profile fields for the given user.
-    """
     db_url = get_db_url()
     if not db_url:
         return {}
@@ -71,9 +66,6 @@ def fetch_user_profile(email):
         return {}
 
 def fetch_full_user_profile(email):
-    """
-    Fetch all user profile fields, including preferences, watchlist, alert tone, etc.
-    """
     db_url = get_db_url()
     if not db_url:
         return {}
@@ -93,13 +85,6 @@ def fetch_full_user_profile(email):
             return {}
         columns = [desc[0] for desc in cur.description]
         profile = dict(zip(columns, row))
-        # Parse JSON fields
-        for key in ["country_watchlist", "threat_categories", "alert_channels", "custom_fields"]:
-            if profile.get(key):
-                try:
-                    profile[key] = json.loads(profile[key])
-                except Exception:
-                    pass
         cur.close()
         conn.close()
         return profile
@@ -108,9 +93,6 @@ def fetch_full_user_profile(email):
         return {}
 
 def save_or_update_user_profile(profile):
-    """
-    Insert or update a user profile with all major fields, including preferences.
-    """
     db_url = get_db_url()
     if not db_url:
         return False
@@ -156,7 +138,7 @@ def save_or_update_user_profile(profile):
             profile.get("travel_end"),
             profile.get("means_of_transportation"),
             profile.get("reason_for_travel"),
-            json.dumps(profile.get("custom_fields")) if profile.get("custom_fields") is not None else None,
+            profile.get("custom_fields"),
             profile.get("risk_tolerance"),
             profile.get("asset_type"),
             profile.get("preferred_alert_types"),
@@ -165,9 +147,9 @@ def save_or_update_user_profile(profile):
             profile.get("preferred_threat_type"),
             profile.get("home_location"),
             profile.get("alert_tone"),
-            json.dumps(profile.get("country_watchlist")) if profile.get("country_watchlist") is not None else None,
-            json.dumps(profile.get("threat_categories")) if profile.get("threat_categories") is not None else None,
-            json.dumps(profile.get("alert_channels")) if profile.get("alert_channels") is not None else None
+            profile.get("country_watchlist"),
+            profile.get("threat_categories"),
+            profile.get("alert_channels")
         ))
         conn.commit()
         cur.close()
@@ -178,9 +160,6 @@ def save_or_update_user_profile(profile):
         return False
 
 def update_user_preferences(email, preferred_region=None, preferred_threat_type=None, home_location=None, alert_tone=None):
-    """
-    Update user preferences in user_profiles.
-    """
     db_url = get_db_url()
     if not db_url:
         return False
@@ -217,9 +196,6 @@ def update_user_preferences(email, preferred_region=None, preferred_threat_type=
         return False
 
 def update_user_watchlist(email, country_watchlist=None, threat_categories=None, alert_channels=None):
-    """
-    Update user watchlist, threat categories, and alert channels in user_profiles.
-    """
     db_url = get_db_url()
     try:
         conn = psycopg2.connect(db_url)
@@ -228,13 +204,13 @@ def update_user_watchlist(email, country_watchlist=None, threat_categories=None,
         params = []
         if country_watchlist is not None:
             fields.append("country_watchlist = %s")
-            params.append(json.dumps(country_watchlist))
+            params.append(country_watchlist)
         if threat_categories is not None:
             fields.append("threat_categories = %s")
-            params.append(json.dumps(threat_categories))
+            params.append(threat_categories)
         if alert_channels is not None:
             fields.append("alert_channels = %s")
-            params.append(json.dumps(alert_channels))
+            params.append(alert_channels)
         if not fields:
             cur.close()
             conn.close()
@@ -249,6 +225,46 @@ def update_user_watchlist(email, country_watchlist=None, threat_categories=None,
     except Exception as e:
         log.error(f"[db_utils.py] Error updating user watchlist: {e}")
         return False
+
+def save_user_threat_preferences(email, prefs):
+    db_url = get_db_url()
+    if not db_url:
+        return False
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE user_profiles SET threat_preferences = %s WHERE email = %s",
+            (prefs, email)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        log.error(f"Error saving user threat preferences: {e}")
+        return False
+
+def fetch_user_threat_preferences(email):
+    db_url = get_db_url()
+    if not db_url:
+        return {}
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT threat_preferences FROM user_profiles WHERE email = %s",
+            (email,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row[0]:
+            return row[0]
+        return {}
+    except Exception as e:
+        log.error(f"Error fetching user threat preferences: {e}")
+        return {}
 
 # --- ALERTS/INCIDENTS LOGIC ---
 
@@ -516,9 +532,6 @@ def save_alerts_to_db(alerts):
         conn.close()
 
 def assign_alert_cluster(region, threat_type, title, published_time):
-    """
-    Assigns or returns a cluster_id for similar alerts within 72h based on region, type, title.
-    """
     db_url = get_db_url()
     try:
         conn = psycopg2.connect(db_url)
@@ -549,12 +562,6 @@ def assign_alert_cluster(region, threat_type, title, published_time):
 
 def fetch_alerts_from_db(region=None, country=None, city=None, threat_level=None, threat_label=None,
                          start_time=None, end_time=None, limit=100, email=None, days_back=None):
-    """
-    Fetch enriched alerts from the alerts table, filtered by optional parameters.
-
-    WARNING: For downstream use only (advisor, API, UI, reporting).
-    Never use this for further enrichment or threat engine ingestion.
-    """
     if email and not require_plan_feature(email, "insights"):
         log_security_event(
             event_type="alerts_plan_denied",
@@ -688,10 +695,6 @@ def fetch_past_incidents(region=None, category=None, days=30, limit=20):
         return []
 
 def fetch_incident_clusters(region=None, keywords=None, hours_window=72, limit=10):
-    """
-    Fetch incident clusters grouped by region, keywords, and time window.
-    Returns a list of clusters: each is a dict with {region, keywords, start_time, end_time, alerts}
-    """
     db_url = get_db_url()
     if not db_url:
         return []
@@ -733,8 +736,6 @@ def fetch_incident_clusters(region=None, keywords=None, hours_window=72, limit=1
     except Exception as e:
         log.error(f"[db_utils.py] Error in fetch_incident_clusters: {e}")
         return []
-
-# ---- REGION TRENDS LOGIC ----
 
 def save_region_trend(region, city, trend_window_start, trend_window_end, incident_count, categories=None):
     db_url = get_db_url()
@@ -828,9 +829,6 @@ def get_regional_trend(region: str, days: int = 7, city: str = None) -> dict:
     }
 
 def group_alerts_by_period(period="day", region=None):
-    """
-    Groups alerts by day/week/month for trend tracking.
-    """
     db_url = get_db_url()
     try:
         conn = psycopg2.connect(db_url)
@@ -858,12 +856,7 @@ def group_alerts_by_period(period="day", region=None):
         log.error(f"Error grouping alerts by period: {e}")
         return []
 
-# --- FORECASTING ENGINE ---
-
 def alert_frequency(region, threat_type, hours=48):
-    """
-    Returns the count of alerts in a region/threat_type within last 'hours'.
-    """
     db_url = get_db_url()
     try:
         conn = psycopg2.connect(db_url)
@@ -882,9 +875,6 @@ def alert_frequency(region, threat_type, hours=48):
         return 0
 
 def get_recent_alerts(region, threat_type, limit=10):
-    """
-    Returns recent alerts for GPT forecasting prompts.
-    """
     db_url = get_db_url()
     try:
         conn = psycopg2.connect(db_url)
@@ -904,10 +894,6 @@ def get_recent_alerts(region, threat_type, limit=10):
         return []
 
 def link_similar_alerts(alert_id, min_score=0.3, days=14, limit=10):
-    """
-    Given an alert_uuid, returns a list of similar alert uuids based on keyword/entity overlap,
-    location, category, and optional semantic similarity.
-    """
     db_url = get_db_url()
     try:
         conn = psycopg2.connect(db_url)
