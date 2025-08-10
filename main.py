@@ -35,6 +35,7 @@ from password_strength_utils import is_strong_password
 import threading
 import time
 import json
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,15 +127,6 @@ def require_plan_feature(email, feature):
 @app.route("/set_preferences", methods=["POST"])
 @login_required
 def set_preferences():
-    """
-    Set user preferences for watchlist, threat categories, alert channels, etc.
-    Example JSON:
-    {
-      "country_watchlist": ["Ukraine", "Poland", "Mexico"],
-      "threat_categories": ["Crime", "Civil Unrest"],
-      "alert_channels": ["email", "telegram"]
-    }
-    """
     email = get_logged_in_email()
     data = request.get_json(force=True)
     watchlist = data.get("country_watchlist")
@@ -165,7 +157,6 @@ def set_preferences():
 @app.route("/get_preferences", methods=["GET"])
 @login_required
 def get_preferences():
-    """Get user preferences for watchlist, threat categories, alert channels."""
     email = get_logged_in_email()
     try:
         with psycopg2.connect(os.getenv("DATABASE_URL")) as conn:
@@ -190,7 +181,34 @@ def get_preferences():
     except Exception as e:
         log.error(f"Get preferences error: {e}")
         return _build_cors_response(jsonify({"error": str(e)})), 500
-# --- END USER PREFERENCES ENDPOINTS ---
+
+# --- PUSH NOTIFICATIONS ENDPOINT ---
+SUBSCRIBERS_FILE = Path("subscribers.json")
+
+def save_subscription(subscription, email):
+    # Load existing
+    if SUBSCRIBERS_FILE.exists():
+        with SUBSCRIBERS_FILE.open("r", encoding="utf-8") as f:
+            subs = json.load(f)
+    else:
+        subs = []
+    # Remove any previous subscription for this email
+    subs = [sub for sub in subs if sub.get("email") != email]
+    # Add new
+    subscription["email"] = email
+    subs.append(subscription)
+    with SUBSCRIBERS_FILE.open("w", encoding="utf-8") as f:
+        json.dump(subs, f, indent=2)
+
+@app.route("/subscribe_push", methods=["POST"])
+@login_required
+def subscribe_push():
+    data = request.get_json(force=True)
+    subscription = data.get("subscription")
+    email = get_logged_in_email()
+    save_subscription(subscription, email)
+    log_security_event("push_subscribe", email=email, ip=get_remote_address(), endpoint="/subscribe_push")
+    return jsonify({"success": True})
 
 @app.route("/register", methods=["POST"])
 @limiter.limit("5 per minute")
@@ -568,7 +586,6 @@ def user_plan():
         "pdf": bool(plan_limits.get("custom_pdf_briefings_frequency")),
         "insights": bool(plan_limits.get("insights")),
         "telegram": bool(plan_limits.get("telegram")),
-        "newsletter": bool(plan_limits.get("newsletter")),
         "alerts": bool(plan_limits.get("rss_monthly", 0) > 0)
     }
     log_security_event("plan_query", email=email, ip=get_remote_address(), endpoint="/user_plan", plan=plan_limits.get("name"))
@@ -674,23 +691,28 @@ def newsletter_subscribe_route():
     try:
         print("Parsing JSON for newsletter subscribe...")
         data = request.get_json(force=True)
-        email = data.get("user_email", "").strip().lower()
+        email = (data.get("user_email") or "").strip().lower()
         ip = get_remote_address()
         print(f"newsletter_subscribe email={email}")
+
         if not email:
-            log_security_event("newsletter_failed", email=email, ip=ip, endpoint="/newsletter_subscribe", details="Missing user_email")
+            log_security_event("newsletter_failed", email=email, ip=ip, endpoint="/newsletter_subscribe",
+                               details="Missing user_email")
             return _build_cors_response(jsonify({"success": False, "error": "Missing user_email"})), 400
+
+        # Make sure user exists (keeps your user table tidy for analytics/attribution)
         ensure_user_exists(email, plan="FREE")
-        plan_limits = get_plan_limits(email)
-        if not require_plan_feature(email, "newsletter"):
-            log_security_event("newsletter_denied", email=email, ip=ip, endpoint="/newsletter_subscribe", plan=plan_limits.get("name"), details="Newsletter not available for this plan")
-            return _build_cors_response(jsonify({"success": False, "error": "Your plan does not allow newsletter subscriptions. Please upgrade for access."})), 403
+
+        # ✅ No plan gating here — open to all plans
         result = subscribe_to_newsletter(email)
-        log_security_event("newsletter_subscribed", email=email, ip=ip, endpoint="/newsletter_subscribe")
+
+        log_security_event("newsletter_subscribe_attempt", email=email, ip=ip,
+                           endpoint="/newsletter_subscribe", details=f"result={result}")
         return _build_cors_response(jsonify({"success": result}))
     except Exception as e:
         log.error(f"Newsletter error: {e}")
-        log_security_event("newsletter_error", email=None, ip=None, endpoint="/newsletter_subscribe", details=str(e))
+        log_security_event("newsletter_error", email=None, ip=None,
+                           endpoint="/newsletter_subscribe", details=str(e))
         return _build_cors_response(jsonify({"success": False, "error": str(e)})), 500
 
 @app.route("/presets", methods=["GET"])
@@ -717,6 +739,46 @@ def get_presets():
         ]))
     except Exception as e:
         log.error(f"🔥 Error fetching presets: {e}")
+        return _build_cors_response(jsonify({"error": "Internal server error"})), 500
+
+@app.route("/alerts", methods=["GET"])
+def get_alerts():
+    """
+    Returns clean, enriched alerts from the alerts table for frontend display.
+    Supports optional filtering by region, category, risk_level, etc. via query params.
+    """
+    try:
+        region = request.args.get("region")
+        category = request.args.get("category")
+        risk_level = request.args.get("risk_level")
+        limit = int(request.args.get("limit", 100))
+
+        # Import the function that fetches clean alerts (from threat_engine)
+        from threat_engine import get_clean_alerts
+
+        # Optionally pass user_email for plan logic (if needed)
+        user_email = None
+        if "Authorization" in request.headers:
+            try:
+                user_email = get_logged_in_email()
+            except Exception:
+                user_email = None
+
+        alerts = get_clean_alerts(
+            region=region,
+            threat_label=category,
+            threat_level=risk_level,
+            limit=limit,
+            user_email=user_email
+        )
+
+        # Ensure alerts are serializable (if using datetime objects)
+        def clean_alert_dict(alert):
+            return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in alert.items()}
+
+        return _build_cors_response(jsonify({"alerts": [clean_alert_dict(a) for a in alerts]}))
+    except Exception as e:
+        log.error(f"🔥 Error fetching alerts: {e}")
         return _build_cors_response(jsonify({"error": "Internal server error"})), 500
 
 @app.errorhandler(404)

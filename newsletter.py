@@ -1,7 +1,8 @@
+# newsletter.py
 import requests
 import os
 from dotenv import load_dotenv
-from plan_utils import require_plan_feature
+# from plan_utils import require_plan_feature   # ❌ not needed for general newsletter
 from security_log_utils import log_security_event
 
 load_dotenv()
@@ -11,21 +12,9 @@ NEWSLETTER_LIST_ID = int(os.getenv("NEWSLETTER_LIST_ID", 3))
 
 def subscribe_to_newsletter(email):
     """
-    Subscribes the given email to your Brevo newsletter list.
-    Returns True if successful, False otherwise.
-    Backend plan gating: only users with newsletter feature can subscribe.
-    Security logging added for all relevant events.
+    Subscribes the given email to your Brevo *general* newsletter list.
+    Open to all plans. Returns True if successful, False otherwise.
     """
-    # --- ENFORCE PLAN GATING FOR NEWSLETTER FEATURE ---
-    if not require_plan_feature(email, "newsletter"):
-        log_security_event(
-            event_type="newsletter_plan_denied",
-            email=email,
-            details="Feature gated: newsletter not enabled for plan"
-        )
-        print(f"❌ User {email} not allowed to subscribe to newsletter (feature gated).")
-        return False
-
     if not BREVO_API_KEY:
         log_security_event(
             event_type="newsletter_api_key_missing",
@@ -46,7 +35,9 @@ def subscribe_to_newsletter(email):
         "listIds": [NEWSLETTER_LIST_ID],
         "updateEnabled": True
     }
+
     r = requests.post(url, headers=headers, json=payload)
+
     if r.status_code in [201, 204]:
         log_security_event(
             event_type="newsletter_subscribed",

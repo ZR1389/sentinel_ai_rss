@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def ensure_user_exists(email, plan="free"):
+def ensure_user_exists(email, plan="FREE"):
     if not email:
         logger.warning("No email passed to ensure_user_exists.")
         log_security_event(
@@ -143,7 +143,7 @@ def get_plan_limits(email):
             details="Returned default limits"
         )
         return {
-            "plan": "free",
+            "plan": "FREE",
             "summaries_per_month": 0,
             "chat_messages_per_month": 0,
             "travel_alerts_per_month": 0,
@@ -151,7 +151,7 @@ def get_plan_limits(email):
             "pdf_reports_per_month": 0,
             "insights": False,
             "telegram": False,
-            "newsletter": False
+            "newsletter": True
         }
     limits = dict(zip(colnames, row))
     log_security_event(
