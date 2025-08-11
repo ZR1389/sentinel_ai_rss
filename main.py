@@ -715,6 +715,51 @@ def newsletter_subscribe_route():
                            endpoint="/newsletter_subscribe", details=str(e))
         return _build_cors_response(jsonify({"success": False, "error": str(e)})), 500
 
+@app.route("/telegram_opt_in", methods=["POST"])
+@limiter.limit("3 per hour", key_func=lambda: request.get_json(force=True).get("telegram_handle", get_remote_address()))
+def telegram_opt_in_route():
+    print("TELEGRAM_OPT_IN ENDPOINT HIT")
+    try:
+        print("Parsing JSON for telegram opt-in...")
+        data = request.get_json(force=True)
+        handle = (data.get("telegram_handle") or "").strip()
+        ip = get_remote_address()
+        print(f"telegram_opt_in handle={handle}")
+
+        if not handle:
+            log_security_event("telegram_opt_in_failed", email=None, ip=ip, endpoint="/telegram_opt_in", details="Missing telegram_handle")
+            return _build_cors_response(jsonify({"success": False, "error": "Missing telegram_handle"})), 400
+
+        # If the user is logged in, associate with their email
+        try:
+            email = get_logged_in_email()
+        except Exception:
+            email = None
+
+        # Save to DB (add table if needed, see DB section below)
+        with psycopg2.connect(os.getenv("DATABASE_URL")) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS telegram_opt_ins (
+                        id SERIAL PRIMARY KEY,
+                        email TEXT,
+                        telegram_handle TEXT NOT NULL,
+                        opted_in_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    );
+                """)
+                cur.execute(
+                    "INSERT INTO telegram_opt_ins (email, telegram_handle) VALUES (%s, %s)",
+                    (email, handle)
+                )
+                conn.commit()
+
+        log_security_event("telegram_opt_in", email=email, ip=ip, endpoint="/telegram_opt_in", details=f"handle={handle}")
+        return _build_cors_response(jsonify({"success": True}))
+    except Exception as e:
+        log.error(f"Telegram opt-in error: {e}")
+        log_security_event("telegram_opt_in_error", email=None, ip=None, endpoint="/telegram_opt_in", details=str(e))
+        return _build_cors_response(jsonify({"success": False, "error": str(e)})), 500
+
 @app.route("/presets", methods=["GET"])
 def get_presets():
     try:
