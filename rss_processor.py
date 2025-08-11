@@ -150,10 +150,17 @@ def generate_series_id(region, keywords, timestamp):
     try:
         if isinstance(timestamp, str):
             dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
         elif isinstance(timestamp, datetime):
-            dt = timestamp
+            if timestamp.tzinfo is None:
+                dt = timestamp.replace(tzinfo=timezone.utc)
+            else:
+                dt = timestamp.astimezone(timezone.utc)
         else:
-            dt = datetime.utcnow()
+            dt = datetime.now(timezone.utc)
         day_str = dt.strftime("%Y-%m-%d")
     except Exception:
         day_str = "unknown"
@@ -162,14 +169,18 @@ def generate_series_id(region, keywords, timestamp):
 
 def group_alerts_by_cluster(alerts, time_window_hours=48):
     clusters = {}
-    cutoff = datetime.utcnow() - timedelta(hours=time_window_hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
     for alert in alerts:
         published = alert.get("published")
         norm_time = normalize_timestamp(published)
         try:
             dt = datetime.fromisoformat(norm_time.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
         except Exception:
-            dt = datetime.utcnow()
+            dt = datetime.now(timezone.utc)
         if dt < cutoff:
             continue
         cluster_id = alert.get("series_id")
@@ -186,6 +197,10 @@ def compute_trend_tracker(alerts, time_unit="week"):
         norm_time = normalize_timestamp(published)
         try:
             dt = datetime.fromisoformat(norm_time.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
         except Exception:
             continue
         if time_unit == "week":
@@ -267,7 +282,7 @@ async def ingest_all_feeds_to_db(
                 "region": region_str,
                 "country": None,
                 "city": city_str,
-                "ingested_at": normalize_timestamp(datetime.utcnow()),
+                "ingested_at": normalize_timestamp(datetime.now(timezone.utc)),
                 "tags": raw_keywords,
                 "processed_keywords": processed_keywords,
                 "incident_series": series_id,
@@ -287,13 +302,13 @@ async def ingest_all_feeds_to_db(
                 continue
             telegram_alert['uuid'] = dedupe_key
             telegram_alert['source'] = "telegram"
-            telegram_alert['ingested_at'] = normalize_timestamp(datetime.utcnow())
+            telegram_alert['ingested_at'] = normalize_timestamp(datetime.now(timezone.utc))
             raw_keywords, processed_keywords = extract_keywords(
                 f"{telegram_alert.get('title','')} {telegram_alert.get('summary','')}"
             )
             telegram_alert['tags'] = raw_keywords
             telegram_alert['processed_keywords'] = processed_keywords
-            series_id = generate_series_id(region_str, raw_keywords, telegram_alert.get("published", datetime.utcnow()))
+            series_id = generate_series_id(region_str, raw_keywords, telegram_alert.get("published", datetime.now(timezone.utc)))
             telegram_alert['series_id'] = series_id
             telegram_alert['incident_series'] = series_id
             alerts.append(telegram_alert)
