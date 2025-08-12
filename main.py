@@ -685,13 +685,15 @@ def verify_code_route():
         return _build_cors_response(jsonify({"success": False, "error": str(e)})), 500
 
 @app.route("/newsletter_subscribe", methods=["POST"])
-@limiter.limit("3 per hour", key_func=lambda: request.get_json(force=True).get("user_email", get_remote_address()))
+@limiter.limit("3 per hour", key_func=lambda: get_logged_in_email() or get_remote_address())
+@login_required
 def newsletter_subscribe_route():
     print("NEWSLETTER_SUBSCRIBE ENDPOINT HIT")
     try:
         print("Parsing JSON for newsletter subscribe...")
         data = request.get_json(force=True)
-        email = (data.get("user_email") or "").strip().lower()
+        # user_email is sent from frontend, but we always use logged-in email for subscription
+        email = get_logged_in_email()
         ip = get_remote_address()
         print(f"newsletter_subscribe email={email}")
 
@@ -787,10 +789,12 @@ def get_presets():
         return _build_cors_response(jsonify({"error": "Internal server error"})), 500
 
 @app.route("/alerts", methods=["GET"])
+@login_required
 def get_alerts():
     """
     Returns clean, enriched alerts from the alerts table for frontend display.
     Supports optional filtering by region, category, risk_level, etc. via query params.
+    Requires user to be logged in and verified.
     """
     try:
         region = request.args.get("region")
@@ -801,13 +805,8 @@ def get_alerts():
         # Import the function that fetches clean alerts (from threat_engine)
         from threat_engine import get_clean_alerts
 
-        # Optionally pass user_email for plan logic (if needed)
-        user_email = None
-        if "Authorization" in request.headers:
-            try:
-                user_email = get_logged_in_email()
-            except Exception:
-                user_email = None
+        # Always pass user_email for plan logic (since endpoint is now protected)
+        user_email = get_logged_in_email()
 
         alerts = get_clean_alerts(
             region=region,
