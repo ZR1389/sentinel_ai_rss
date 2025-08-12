@@ -17,7 +17,11 @@ from flask_limiter.util import get_remote_address
 
 from chat_handler import handle_user_query
 from email_dispatcher import generate_pdf
-from plan_utils import get_plan_limits, get_usage, ensure_user_exists, check_user_message_quota, fetch_user_profile
+from plan_utils import (
+    get_plan_limits, get_usage, ensure_user_exists,
+    check_user_message_quota, fetch_user_profile,
+    check_user_pdf_quota, increment_user_pdf_usage
+)
 from newsletter import subscribe_to_newsletter
 from verification_utils import (
     send_code_email, check_verification_code,
@@ -122,6 +126,11 @@ def require_plan_feature(email, feature):
     if not plan_limits.get(feature):
         return False
     return True
+
+def is_pro_or_enterprise(email):
+    plan_limits = get_plan_limits(email)
+    plan_name = plan_limits.get("name", "FREE")
+    return plan_name in ["PRO", "Enterprise"]
 
 # --- USER PREFERENCES ENDPOINTS ---
 @app.route("/set_preferences", methods=["POST"])
@@ -525,42 +534,74 @@ def chat():
 def request_report():
     print("REQUEST_REPORT ENDPOINT HIT")
     try:
-        print("Parsing JSON for report...")
         data = request.get_json(force=True)
         email = get_logged_in_email()
         plan_limits = get_plan_limits(email)
-        if not require_plan_feature(email, "custom_pdf_briefings_frequency"):
-            log_security_event("plan_denied", email=email, ip=get_remote_address(), endpoint="/request_report", plan=plan_limits.get("name"), details="PDF reports not available")
+        plan_name = plan_limits.get("name", "FREE")
+
+        # 1. Plan gating
+        if plan_name not in ["PRO", "Enterprise"]:
+            log_security_event(
+                "plan_denied",
+                email=email,
+                ip=get_remote_address(),
+                endpoint="/request_report",
+                plan=plan_name,
+                details="Report/briefing not available for this plan"
+            )
+            return _build_cors_response(jsonify({
+                "error": "Briefings are only available to PRO or Enterprise users. Please upgrade your plan."
+            })), 403
+
+        # 2. Feature gating
+        if not plan_limits.get("custom_pdf_briefings_frequency"):
+            log_security_event("plan_denied", email=email, ip=get_remote_address(), endpoint="/request_report", plan=plan_name, details="PDF reports not available")
             return _build_cors_response(jsonify({"error": "Your plan does not allow PDF reports. Please upgrade for access."})), 403
+
+        # 3. Quota check
+        ok, quota_msg = check_user_pdf_quota(email, plan_limits)
+        if not ok:
+            log_security_event("pdf_quota_exceeded", email=email, ip=get_remote_address(), endpoint="/request_report", plan=plan_name, details=quota_msg)
+            usage = get_usage(email)
+            return _build_cors_response(jsonify({
+                "error": quota_msg,
+                "quota": {
+                    "used": usage.get("pdf_reports_used", 0),
+                    "limit": plan_limits.get("pdf_reports_per_month")
+                }
+            })), 429
+
         region = data.get("region")
         threat_type = data.get("type")
-        print(f"email={email}, region={region}, threat_type={threat_type}")
         region = None if not region or str(region).lower() == "all" else str(region)
         threat_type = None if not threat_type or str(threat_type).lower() == "all" else str(threat_type)
-        log.info(f"📄 Generating report for {email} | Region={region}, Type={threat_type}")
-        if email:
-            print("Ensuring user exists for report...")
-            ensure_user_exists(email, plan="FREE")
-        print("Calling handle_user_query for report...")
+
+        ensure_user_exists(email, plan="FREE")
         alerts = handle_user_query(
             {"query": "Generate my report"},
             email=email,
             region=region,
             threat_type=threat_type
         ).get("alerts", [])
-        print(f"Alerts for report: {len(alerts)}")
-        generate_pdf(email, alerts, get_plan_limits(email).get("name", "FREE"))
-        print("Report generated and sent")
-        log_security_event("report_generated", email=email, ip=get_remote_address(), endpoint="/request_report", plan=plan_limits.get("name"), details=f"Alerts included: {len(alerts)}")
+
+        generate_pdf(email, alerts, plan_name)
+        increment_user_pdf_usage(email)  # <--- Increment quota on success!
+
+        usage = get_usage(email)
+        log_security_event("report_generated", email=email, ip=get_remote_address(), endpoint="/request_report", plan=plan_name, details=f"Alerts included: {len(alerts)}")
         return _build_cors_response(jsonify({
             "status": "Report generated and sent",
-            "alerts_included": len(alerts)
+            "alerts_included": len(alerts),
+            "quota": {
+                "used": usage.get("pdf_reports_used", 0),
+                "limit": plan_limits.get("pdf_reports_per_month")
+            }
         }))
     except Exception as e:
         log.error(f"Report generation failed: {e}")
         log_security_event("report_error", email=get_logged_in_email(), ip=get_remote_address(), endpoint="/request_report", details=str(e))
         return _build_cors_response(jsonify({"error": "Internal server error"})), 500
- 
+
 @app.route("/send_telegram", methods=["POST"])
 @limiter.limit("3 per hour", key_func=lambda: get_logged_in_email() or get_remote_address())
 @login_required
@@ -578,7 +619,6 @@ def send_telegram():
 def user_plan():
     print("USER_PLAN ENDPOINT HIT")
     email = get_logged_in_email()
-    print(f"user_plan email={email}")
     if email:
         ensure_user_exists(email, plan="FREE")
     plan_limits = get_plan_limits(email)
@@ -586,14 +626,17 @@ def user_plan():
         "pdf": bool(plan_limits.get("custom_pdf_briefings_frequency")),
         "insights": bool(plan_limits.get("insights")),
         "telegram": bool(plan_limits.get("telegram")),
-        "alerts": bool(plan_limits.get("rss_monthly", 0) > 0)
+        "alerts": bool(plan_limits.get("rss_monthly", 0) > 0),
+        "newsletter": bool(plan_limits.get("newsletter")),
     }
+    usage = get_usage(email)
     log_security_event("plan_query", email=email, ip=get_remote_address(), endpoint="/user_plan", plan=plan_limits.get("name"))
     return _build_cors_response(jsonify({
         "email": email,
         "plan": plan_limits.get("name", "FREE"),
         "features": features,
-        "limits": plan_limits
+        "limits": plan_limits,
+        "usage": usage,
     }))
 
 @app.route("/plan_features", methods=["GET"])
@@ -794,7 +837,7 @@ def get_alerts():
     """
     Returns clean, enriched alerts from the alerts table for frontend display.
     Supports optional filtering by region, category, risk_level, etc. via query params.
-    Requires user to be logged in and verified.
+    Requires user to be logged in, to be PRO/Enterprise, and not to exceed plan quota.
     """
     try:
         region = request.args.get("region")
@@ -802,11 +845,48 @@ def get_alerts():
         risk_level = request.args.get("risk_level")
         limit = int(request.args.get("limit", 100))
 
+        user_email = get_logged_in_email()
+        plan_limits = get_plan_limits(user_email)
+        plan_name = plan_limits.get("name", "FREE")
+
+        # 1. Plan gating: restrict to PRO/Enterprise
+        if plan_name not in ["PRO", "Enterprise"]:
+            log_security_event(
+                "plan_denied",
+                email=user_email,
+                ip=get_remote_address(),
+                endpoint="/alerts",
+                plan=plan_name,
+                details="Alerts access not available for this plan"
+            )
+            return _build_cors_response(jsonify({
+                "error": "Alerts are only available to PRO or Enterprise users. Please upgrade your plan."
+            })), 403
+
+        # 2. Quota check: travel_alerts_per_month
+        # Using summaries_used for alert quota, for fast implementation.
+        usage = get_usage(user_email)
+        alerts_used = usage.get("summaries_used", 0)
+        alerts_limit = plan_limits.get("travel_alerts_per_month")
+        if alerts_limit is not None and alerts_limit > 0 and alerts_used >= alerts_limit:
+            log_security_event(
+                "alerts_quota_exceeded",
+                email=user_email,
+                ip=get_remote_address(),
+                endpoint="/alerts",
+                plan=plan_name,
+                details=f"Monthly alert quota reached. Used: {alerts_used}, Limit: {alerts_limit}"
+            )
+            return _build_cors_response(jsonify({
+                "error": "You have reached your monthly security alerts quota. Upgrade or wait for reset.",
+                "quota": {
+                    "used": alerts_used,
+                    "limit": alerts_limit
+                }
+            })), 429
+
         # Import the function that fetches clean alerts (from threat_engine)
         from threat_engine import get_clean_alerts
-
-        # Always pass user_email for plan logic (since endpoint is now protected)
-        user_email = get_logged_in_email()
 
         alerts = get_clean_alerts(
             region=region,
@@ -816,11 +896,22 @@ def get_alerts():
             user_email=user_email
         )
 
+        # INCREMENT ALERT USAGE QUOTA
+        # This makes quota enforcement work.
+        from plan_utils import increment_user_summary_usage
+        increment_user_summary_usage(user_email)
+
         # Ensure alerts are serializable (if using datetime objects)
         def clean_alert_dict(alert):
             return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in alert.items()}
 
-        return _build_cors_response(jsonify({"alerts": [clean_alert_dict(a) for a in alerts]}))
+        return _build_cors_response(jsonify({
+            "alerts": [clean_alert_dict(a) for a in alerts],
+            "quota": {
+                "used": alerts_used + 1,  # Show incremented usage
+                "limit": alerts_limit
+            },
+        }))
     except Exception as e:
         log.error(f"🔥 Error fetching alerts: {e}")
         return _build_cors_response(jsonify({"error": "Internal server error"})), 500
