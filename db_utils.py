@@ -1,475 +1,251 @@
-"""
-Database utility functions for Zika Risk platform.
+# db_utils.py — drop-in (Sentinel AI) • v2025-08-13
+# Postgres helpers for RSS ingest, Threat Engine, and Advisor pipeline.
 
-- Only use fetch_raw_alerts_from_db for ingestion and threat engine enrichment.
-- Only use fetch_alerts_from_db for downstream consumption (advisor, API, UI, reporting).
-- Never use fetch_raw_alerts_from_db for advisor or UI/clients.
-- Never use fetch_alerts_from_db for further enrichment—alerts table is the final, best, scored product.
-"""
-
+from __future__ import annotations
 import os
-import psycopg2
-from psycopg2.extras import execute_values
-from datetime import datetime, timedelta
-import uuid
+import uuid as _uuid
 import logging
-from plan_utils import require_plan_feature
-from security_log_utils import log_security_event
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-log = logging.getLogger(__name__)
+import psycopg2
+import psycopg2.extras
+from psycopg2.extras import execute_values, RealDictCursor, Json
 
-RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
-if RAILWAY_ENV:
-    log.info(f"Running in Railway environment: {RAILWAY_ENV}")
-else:
-    log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("db_utils")
 
-def get_db_url():
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        log.error("DATABASE_URL not set in environment")
-    return db_url
+# ---------------------------------------------------------------------
+# Connection helpers
+# ---------------------------------------------------------------------
 
-# --- USER PROFILE UTILITIES ---
+def get_db_url() -> Optional[str]:
+    return os.getenv("DATABASE_URL")
 
-def fetch_user_profile(email):
+def _conn():
     db_url = get_db_url()
     if not db_url:
-        return {}
+        raise RuntimeError("DATABASE_URL not set")
+    return psycopg2.connect(db_url)
+
+# Simple helpers used by RSS health/backoff and misc queries
+def execute(query: str, params: tuple = ()) -> None:
+    """Execute a single statement (no return)."""
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(query, params)
+
+def fetch_one(query: str, params: tuple = ()):
+    """Fetch a single row (tuple) or None."""
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchone()
+
+def fetch_all(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+    """Fetch all rows as dicts."""
+    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+def log_security_event(event_type: str, details: str) -> None:
     try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT email, profession, employer, destination, travel_start, travel_end, means_of_transportation,
-                   reason_for_travel, custom_fields, created_at, updated_at, risk_tolerance, asset_type, preferred_alert_types
-            FROM user_profiles
-            WHERE email = %s
-            LIMIT 1
-        """, (email,))
-        row = cur.fetchone()
-        if not row:
-            cur.close()
-            conn.close()
-            return {}
-        columns = [desc[0] for desc in cur.description]
-        profile = dict(zip(columns, row))
-        cur.close()
-        conn.close()
-        return profile
-    except Exception as e:
-        log.error(f"[db_utils.py] Error fetching user profile: {e}")
-        return {}
+        logger.warning("[SECURITY_EVENT] %s: %s", event_type, details)
+    except Exception:
+        pass
 
-def fetch_full_user_profile(email):
-    db_url = get_db_url()
-    if not db_url:
-        return {}
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT *
-            FROM user_profiles
-            WHERE email = %s
-            LIMIT 1
-        """, (email,))
-        row = cur.fetchone()
-        if not row:
-            cur.close()
-            conn.close()
-            return {}
-        columns = [desc[0] for desc in cur.description]
-        profile = dict(zip(columns, row))
-        cur.close()
-        conn.close()
-        return profile
-    except Exception as e:
-        log.error(f"[db_utils.py] Error fetching full user profile: {e}")
-        return {}
+# ---------------------------------------------------------------------
+# RAW ALERTS (ingest side)
+# ---------------------------------------------------------------------
 
-def save_or_update_user_profile(profile):
-    db_url = get_db_url()
-    if not db_url:
-        return False
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        sql = """
-        INSERT INTO user_profiles (
-            email, profession, employer, destination, travel_start, travel_end,
-            means_of_transportation, reason_for_travel, custom_fields, risk_tolerance,
-            asset_type, preferred_alert_types, updated_at, preferred_region,
-            preferred_threat_type, home_location, alert_tone, country_watchlist,
-            threat_categories, alert_channels
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (email) DO UPDATE SET
-            profession = EXCLUDED.profession,
-            employer = EXCLUDED.employer,
-            destination = EXCLUDED.destination,
-            travel_start = EXCLUDED.travel_start,
-            travel_end = EXCLUDED.travel_end,
-            means_of_transportation = EXCLUDED.means_of_transportation,
-            reason_for_travel = EXCLUDED.reason_for_travel,
-            custom_fields = EXCLUDED.custom_fields,
-            risk_tolerance = EXCLUDED.risk_tolerance,
-            asset_type = EXCLUDED.asset_type,
-            preferred_alert_types = EXCLUDED.preferred_alert_types,
-            updated_at = EXCLUDED.updated_at,
-            preferred_region = EXCLUDED.preferred_region,
-            preferred_threat_type = EXCLUDED.preferred_threat_type,
-            home_location = EXCLUDED.home_location,
-            alert_tone = EXCLUDED.alert_tone,
-            country_watchlist = EXCLUDED.country_watchlist,
-            threat_categories = EXCLUDED.threat_categories,
-            alert_channels = EXCLUDED.alert_channels
-        """
-        cur.execute(sql, (
-            profile.get("email"),
-            profile.get("profession"),
-            profile.get("employer"),
-            profile.get("destination"),
-            profile.get("travel_start"),
-            profile.get("travel_end"),
-            profile.get("means_of_transportation"),
-            profile.get("reason_for_travel"),
-            profile.get("custom_fields"),
-            profile.get("risk_tolerance"),
-            profile.get("asset_type"),
-            profile.get("preferred_alert_types"),
-            datetime.utcnow(),
-            profile.get("preferred_region"),
-            profile.get("preferred_threat_type"),
-            profile.get("home_location"),
-            profile.get("alert_tone"),
-            profile.get("country_watchlist"),
-            profile.get("threat_categories"),
-            profile.get("alert_channels")
-        ))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        log.error(f"[db_utils.py] Error saving/updating user profile: {e}")
-        return False
-
-def update_user_preferences(email, preferred_region=None, preferred_threat_type=None, home_location=None, alert_tone=None):
-    db_url = get_db_url()
-    if not db_url:
-        return False
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        fields = []
-        params = []
-        if preferred_region is not None:
-            fields.append("preferred_region = %s")
-            params.append(preferred_region)
-        if preferred_threat_type is not None:
-            fields.append("preferred_threat_type = %s")
-            params.append(preferred_threat_type)
-        if home_location is not None:
-            fields.append("home_location = %s")
-            params.append(home_location)
-        if alert_tone is not None:
-            fields.append("alert_tone = %s")
-            params.append(alert_tone)
-        if not fields:
-            cur.close()
-            conn.close()
-            return False
-        params.append(email)
-        sql = f"UPDATE user_profiles SET {', '.join(fields)} WHERE email = %s"
-        cur.execute(sql, tuple(params))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        log.error(f"[db_utils.py] Error updating user preferences: {e}")
-        return False
-
-def update_user_watchlist(email, country_watchlist=None, threat_categories=None, alert_channels=None):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        fields = []
-        params = []
-        if country_watchlist is not None:
-            fields.append("country_watchlist = %s")
-            params.append(country_watchlist)
-        if threat_categories is not None:
-            fields.append("threat_categories = %s")
-            params.append(threat_categories)
-        if alert_channels is not None:
-            fields.append("alert_channels = %s")
-            params.append(alert_channels)
-        if not fields:
-            cur.close()
-            conn.close()
-            return False
-        params.append(email)
-        sql = f"UPDATE user_profiles SET {', '.join(fields)} WHERE email = %s"
-        cur.execute(sql, tuple(params))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        log.error(f"[db_utils.py] Error updating user watchlist: {e}")
-        return False
-
-def save_user_threat_preferences(email, prefs):
-    db_url = get_db_url()
-    if not db_url:
-        return False
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE user_profiles SET threat_preferences = %s WHERE email = %s",
-            (prefs, email)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        log.error(f"Error saving user threat preferences: {e}")
-        return False
-
-def fetch_user_threat_preferences(email):
-    db_url = get_db_url()
-    if not db_url:
-        return {}
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT threat_preferences FROM user_profiles WHERE email = %s",
-            (email,)
-        )
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        if row and row[0]:
-            return row[0]
-        return {}
-    except Exception as e:
-        log.error(f"Error fetching user threat preferences: {e}")
-        return {}
-
-# --- ALERTS/INCIDENTS LOGIC ---
-
-def save_raw_alerts_to_db(alerts):
-    db_url = get_db_url()
-    if not db_url:
-        log_security_event(
-            event_type="db_config_error",
-            details="DATABASE_URL not set for save_raw_alerts_to_db"
-        )
-        raise Exception("DATABASE_URL not set in environment")
-    try:
-        conn = psycopg2.connect(db_url)
-    except Exception as e:
-        log_security_event(
-            event_type="db_connection_error",
-            details=f"Could not connect to DB: {e}"
-        )
-        raise
-    cur = conn.cursor()
-
-    columns = [
-        "uuid", "title", "summary", "en_snippet", "link", "source", "published",
-        "region", "country", "city", "ingested_at", "tags"
+def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
+    """
+    Bulk upsert raw alerts. Expected fields:
+    uuid, title, summary, en_snippet, link, source, published (datetime or iso),
+    region, country, city, tags (list[str]), language
+    """
+    if not alerts:
+        return 0
+    cols = [
+        "uuid","title","summary","en_snippet","link","source","published",
+        "region","country","city","tags","language","ingested_at"
     ]
 
-    values = []
-    for alert in alerts:
-        alert_uuid = alert.get("uuid")
-        if not alert_uuid:
-            alert_uuid = str(uuid.uuid4())
-        elif isinstance(alert_uuid, uuid.UUID):
-            alert_uuid = str(alert_uuid)
-        alert["uuid"] = alert_uuid
+    def _coerce(a: Dict[str, Any]) -> Tuple:
+        aid = a.get("uuid") or str(_uuid.uuid4())
+        if isinstance(aid, _uuid.UUID):
+            aid = str(aid)
 
-        if not alert.get("ingested_at"):
-            alert["ingested_at"] = datetime.utcnow()
-
-        tags = alert.get("tags")
-        if tags is not None and isinstance(tags, str):
-            import ast
+        published = a.get("published")
+        if isinstance(published, str):
             try:
-                tags = ast.literal_eval(tags)
+                published = datetime.fromisoformat(published.replace("Z","+00:00")).replace(tzinfo=None)
             except Exception:
-                tags = [tags]
-        if tags is not None and not isinstance(tags, list):
-            tags = [tags]
-        alert["tags"] = tags
+                published = None
 
-        row = [alert.get(col) for col in columns]
-        values.append(row)
+        tags = a.get("tags") or []
+        return (
+            aid,
+            a.get("title"),
+            a.get("summary"),
+            a.get("en_snippet"),
+            a.get("link"),
+            a.get("source"),
+            published,
+            a.get("region"),
+            a.get("country"),
+            a.get("city"),
+            tags,
+            a.get("language") or "en",
+            a.get("ingested_at") or datetime.utcnow(),
+        )
+
+    rows = [_coerce(a) for a in alerts]
 
     sql = f"""
-    INSERT INTO raw_alerts ({", ".join(columns)})
+    INSERT INTO raw_alerts ({", ".join(cols)})
     VALUES %s
-    ON CONFLICT (uuid) DO UPDATE SET
-        title = EXCLUDED.title,
-        summary = EXCLUDED.summary,
-        en_snippet = EXCLUDED.en_snippet,
-        link = EXCLUDED.link,
-        source = EXCLUDED.source,
-        published = EXCLUDED.published,
-        region = EXCLUDED.region,
-        country = EXCLUDED.country,
-        city = EXCLUDED.city,
-        ingested_at = EXCLUDED.ingested_at,
-        tags = EXCLUDED.tags
-    ;
+    ON CONFLICT (uuid) DO NOTHING
     """
-    try:
-        execute_values(cur, sql, values)
-        conn.commit()
-        log_security_event(
-            event_type="raw_alerts_saved",
-            details=f"Inserted/updated {len(values)} raw alerts"
-        )
-    except Exception as e:
-        conn.rollback()
-        log_security_event(
-            event_type="raw_alerts_save_error",
-            details=str(e)
-        )
-        raise
-    finally:
-        cur.close()
-        conn.close()
+    with _conn() as conn, conn.cursor() as cur:
+        execute_values(cur, sql, rows)
+    return len(rows)
 
-def fetch_raw_alerts_from_db(region=None, country=None, city=None, start_time=None, end_time=None, limit=1000):
-    db_url = get_db_url()
-    if not db_url:
-        log_security_event(
-            event_type="db_config_error",
-            details="DATABASE_URL not set for fetch_raw_alerts_from_db"
-        )
-        raise Exception("DATABASE_URL not set in environment")
-    try:
-        conn = psycopg2.connect(db_url)
-    except Exception as e:
-        log_security_event(
-            event_type="db_connection_error",
-            details=f"Could not connect to DB: {e}"
-        )
-        raise
-    cur = conn.cursor()
-
-    base_sql = "SELECT * FROM raw_alerts WHERE 1=1"
-    params = []
-
+def fetch_raw_alerts_from_db(
+    region: Optional[str] = None,
+    country: Optional[str] = None,
+    city: Optional[str] = None,
+    limit: int = 1000
+) -> List[Dict[str, Any]]:
+    """
+    Return recent raw alerts for enrichment.
+    """
+    where = []
+    params: List[Any] = []
     if region:
-        base_sql += " AND region = %s"
+        where.append("region = %s")
         params.append(region)
     if country:
-        base_sql += " AND country = %s"
+        where.append("country = %s")
         params.append(country)
     if city:
-        base_sql += " AND city = %s"
+        where.append("city = %s")
         params.append(city)
-    if start_time:
-        base_sql += " AND published >= %s"
-        params.append(start_time)
-    if end_time:
-        base_sql += " AND published <= %s"
-        params.append(end_time)
-
-    base_sql += " ORDER BY published DESC NULLS LAST LIMIT %s"
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    q = f"""
+        SELECT uuid, title, summary, en_snippet, link, source, published,
+               region, country, city, tags, language, ingested_at
+        FROM raw_alerts
+        {where_sql}
+        ORDER BY published DESC NULLS LAST, ingested_at DESC
+        LIMIT %s
+    """
     params.append(limit)
+    return fetch_all(q, tuple(params))
 
-    try:
-        cur.execute(base_sql, params)
-        rows = cur.fetchall()
-        colnames = [desc[0] for desc in cur.description]
-        results = [dict(zip(colnames, row)) for row in rows]
-        log_security_event(
-            event_type="raw_alerts_fetched",
-            details=f"Fetched {len(results)} raw alerts"
-        )
-    except Exception as e:
-        log_security_event(
-            event_type="raw_alerts_fetch_error",
-            details=str(e)
-        )
-        raise
-    finally:
-        cur.close()
-        conn.close()
-    return results
+# ---------------------------------------------------------------------
+# ALERTS (enriched) — final schema (Option A)
+# ---------------------------------------------------------------------
 
-def save_alerts_to_db(alerts):
+def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
+    """
+    Bulk upsert into alerts (final schema Option A).
+    """
     db_url = get_db_url()
     if not db_url:
-        log_security_event(
-            event_type="db_config_error",
-            details="DATABASE_URL not set for save_alerts_to_db"
-        )
-        raise Exception("DATABASE_URL not set in environment")
-    try:
-        conn = psycopg2.connect(db_url)
-    except Exception as e:
-        log_security_event(
-            event_type="db_connection_error",
-            details=f"Could not connect to DB: {e}"
-        )
-        raise
-    cur = conn.cursor()
+        log_security_event("db_config_error", "DATABASE_URL not set for save_alerts_to_db")
+        raise RuntimeError("DATABASE_URL not set")
+
+    if not alerts:
+        return 0
 
     columns = [
-        "uuid", "title", "summary", "en_snippet", "gpt_summary", "link", "source", "published",
-        "region", "country", "city", "type", "type_confidence", "threat_level", "threat_label",
-        "score", "confidence", "reasoning", "review_flag", "review_notes", "ingested_at",
-        "model_used", "sentiment", "forecast", "legal_risk", "cyber_ot_risk",
-        "environmental_epidemic_risk", "keyword_weight", "tags", "trend_score", "trend_score_msg",
-        "is_anomaly", "early_warning_indicators", "series_id", "incident_series", "historical_context",
-        "incident_cluster_id"
+        "uuid","title","summary","en_snippet","gpt_summary","link","source","published",
+        "region","country","city",
+        "category","category_confidence","threat_level","threat_label","score","confidence","reasoning",
+        "review_flag","review_notes","ingested_at","model_used","sentiment","forecast","legal_risk","cyber_ot_risk",
+        "environmental_epidemic_risk","keyword_weight","tags","trend_score","trend_score_msg","is_anomaly",
+        "early_warning_indicators","series_id","incident_series","historical_context",
+        "subcategory","domains","incident_count_30d","recent_count_7d","baseline_avg_7d",
+        "baseline_ratio","trend_direction","anomaly_flag","future_risk_probability",
+        "reports_analyzed","sources","cluster_id"
     ]
 
-    values = []
-    for alert in alerts:
-        alert_uuid = alert.get("uuid")
-        if not alert_uuid:
-            alert_uuid = str(uuid.uuid4())
-        elif isinstance(alert_uuid, uuid.UUID):
-            alert_uuid = str(alert_uuid)
-        alert["uuid"] = alert_uuid
+    def _json(v):
+        return Json(v) if v is not None else None
 
-        if not alert.get("ingested_at"):
-            alert["ingested_at"] = datetime.utcnow()
+    def _coerce_row(a: Dict[str, Any]) -> Tuple:
+        aid = a.get("uuid") or str(_uuid.uuid4())
+        if isinstance(aid, _uuid.UUID):
+            aid = str(aid)
 
-        tags = alert.get("tags")
-        if tags is not None and isinstance(tags, str):
-            import ast
+        published = a.get("published")
+        if isinstance(published, str):
             try:
-                tags = ast.literal_eval(tags)
+                published = datetime.fromisoformat(published.replace("Z","+00:00")).replace(tzinfo=None)
             except Exception:
-                tags = [tags]
-        if tags is not None and not isinstance(tags, list):
-            tags = [tags]
-        alert["tags"] = tags
+                published = None
 
-        incident_cluster_id = alert.get("incident_cluster_id")
-        if incident_cluster_id is None:
-            incident_cluster_id = None
-        alert["incident_cluster_id"] = incident_cluster_id
+        ingested_at = a.get("ingested_at") or datetime.utcnow()
 
-        row = [alert.get(col) for col in columns]
-        values.append(row)
+        tags    = a.get("tags") or []
+        ewi     = a.get("early_warning_indicators") or []
+        domains = a.get("domains") or []
+        sources = a.get("sources") or []
+
+        is_anomaly   = bool(a.get("is_anomaly") or a.get("anomaly_flag") or False)
+        anomaly_flag = bool(a.get("anomaly_flag") or False)
+
+        return (
+            aid,
+            a.get("title"),
+            a.get("summary"),
+            a.get("en_snippet"),
+            a.get("gpt_summary"),
+            a.get("link"),
+            a.get("source"),
+            published,
+            a.get("region"),
+            a.get("country"),
+            a.get("city"),
+            a.get("category") or a.get("type"),  # back-compat read
+            a.get("category_confidence") or a.get("type_confidence"),
+            a.get("threat_level") or a.get("label"),
+            a.get("threat_label") or a.get("label"),
+            a.get("score"),
+            a.get("confidence"),
+            a.get("reasoning"),
+            a.get("review_flag"),
+            a.get("review_notes"),
+            ingested_at,
+            a.get("model_used"),
+            a.get("sentiment"),
+            a.get("forecast"),
+            a.get("legal_risk"),
+            a.get("cyber_ot_risk"),
+            a.get("environmental_epidemic_risk"),
+            a.get("keyword_weight"),
+            tags,  # text[]
+            a.get("trend_score"),
+            a.get("trend_score_msg"),
+            bool(is_anomaly),
+            ewi,   # text[]
+            a.get("series_id"),
+            a.get("incident_series"),
+            a.get("historical_context"),
+            a.get("subcategory"),
+            _json(domains),   # jsonb
+            a.get("incident_count_30d"),
+            a.get("recent_count_7d"),
+            a.get("baseline_avg_7d"),
+            a.get("baseline_ratio"),
+            a.get("trend_direction"),
+            bool(anomaly_flag),
+            a.get("future_risk_probability"),
+            a.get("reports_analyzed"),
+            _json(sources),   # jsonb
+            a.get("cluster_id"),
+        )
+
+    rows = [_coerce_row(a) for a in alerts]
 
     sql = f"""
     INSERT INTO alerts ({", ".join(columns)})
@@ -485,8 +261,8 @@ def save_alerts_to_db(alerts):
         region = EXCLUDED.region,
         country = EXCLUDED.country,
         city = EXCLUDED.city,
-        type = EXCLUDED.type,
-        type_confidence = EXCLUDED.type_confidence,
+        category = EXCLUDED.category,
+        category_confidence = EXCLUDED.category_confidence,
         threat_level = EXCLUDED.threat_level,
         threat_label = EXCLUDED.threat_label,
         score = EXCLUDED.score,
@@ -510,431 +286,97 @@ def save_alerts_to_db(alerts):
         series_id = EXCLUDED.series_id,
         incident_series = EXCLUDED.incident_series,
         historical_context = EXCLUDED.historical_context,
-        incident_cluster_id = EXCLUDED.incident_cluster_id
-    ;
+        subcategory = EXCLUDED.subcategory,
+        domains = EXCLUDED.domains,
+        incident_count_30d = EXCLUDED.incident_count_30d,
+        recent_count_7d = EXCLUDED.recent_count_7d,
+        baseline_avg_7d = EXCLUDED.baseline_avg_7d,
+        baseline_ratio = EXCLUDED.baseline_ratio,
+        trend_direction = EXCLUDED.trend_direction,
+        anomaly_flag = EXCLUDED.anomaly_flag,
+        future_risk_probability = EXCLUDED.future_risk_probability,
+        reports_analyzed = EXCLUDED.reports_analyzed,
+        sources = EXCLUDED.sources,
+        cluster_id = EXCLUDED.cluster_id
     """
-    try:
-        execute_values(cur, sql, values)
-        conn.commit()
-        log_security_event(
-            event_type="alerts_saved",
-            details=f"Inserted/updated {len(values)} enriched alerts"
-        )
-    except Exception as e:
-        conn.rollback()
-        log_security_event(
-            event_type="alerts_save_error",
-            details=str(e)
-        )
-        raise
-    finally:
-        cur.close()
-        conn.close()
+    with _conn() as conn, conn.cursor() as cur:
+        execute_values(cur, sql, rows)
+    return len(rows)
 
-def assign_alert_cluster(region, threat_type, title, published_time):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT incident_cluster_id FROM alerts
-            WHERE region = %s AND type = %s AND title = %s
-              AND published BETWEEN %s AND %s
-            LIMIT 1
-        """, (
-            region,
-            threat_type,
-            title,
-            published_time - timedelta(hours=72),
-            published_time + timedelta(hours=72),
-        ))
-        row = cur.fetchone()
-        if row and row[0]:
-            cluster_id = row[0]
-        else:
-            cluster_id = str(uuid.uuid4())
-        cur.close()
-        conn.close()
-        return cluster_id
-    except Exception as e:
-        log.error(f"Error assigning cluster ID: {e}")
-        return str(uuid.uuid4())
+# ---------------------------------------------------------------------
+# Historical pulls for Threat Engine / Scoring
+# ---------------------------------------------------------------------
 
-def fetch_alerts_from_db(region=None, country=None, city=None, threat_level=None, threat_label=None,
-                         start_time=None, end_time=None, limit=100, email=None, days_back=None):
-    if email and not require_plan_feature(email, "insights"):
-        log_security_event(
-            event_type="alerts_plan_denied",
-            email=email,
-            details="User does not have insights feature, fetch denied"
-        )
-        return []
+def fetch_past_incidents(
+    region: Optional[str] = None,
+    category: Optional[str] = None,
+    days: int = 7,
+    limit: int = 100
+) -> List[Dict[str, Any]]:
+    """
+    Pulls recent incidents from alerts for a given region/city/country and/or category.
+    Returns dict rows (score, published, etc.) used by scorer/engine.
+    """
+    where = ["published >= NOW() - INTERVAL %s"]
+    params: List[Any] = [f"{max(days,1)} days"]
 
-    db_url = get_db_url()
-    if not db_url:
-        log_security_event(
-            event_type="db_config_error",
-            details="DATABASE_URL not set for fetch_alerts_from_db"
-        )
-        raise Exception("DATABASE_URL not set in environment")
-    try:
-        conn = psycopg2.connect(db_url)
-    except Exception as e:
-        log_security_event(
-            event_type="db_connection_error",
-            details=f"Could not connect to DB: {e}"
-        )
-        raise
-    cur = conn.cursor()
-
-    base_sql = "SELECT * FROM alerts WHERE 1=1"
-    params = []
-
+    # Region filter: allow region OR city OR country
     if region:
-        base_sql += " AND region = %s"
-        params.append(region)
-    if country:
-        base_sql += " AND country = %s"
-        params.append(country)
-    if city:
-        base_sql += " AND city = %s"
-        params.append(city)
-    if threat_level:
-        base_sql += " AND threat_level = %s"
-        params.append(threat_level)
-    if threat_label:
-        base_sql += " AND threat_label = %s"
-        params.append(threat_label)
-    if start_time:
-        base_sql += " AND published >= %s"
-        params.append(start_time)
-    if end_time:
-        base_sql += " AND published <= %s"
-        params.append(end_time)
-    if days_back is not None:
-        since = datetime.utcnow() - timedelta(days=days_back)
-        base_sql += " AND published >= %s"
-        params.append(since)
-
-    base_sql += " ORDER BY published DESC NULLS LAST LIMIT %s"
-    params.append(limit)
-
-    try:
-        cur.execute(base_sql, params)
-        rows = cur.fetchall()
-        colnames = [desc[0] for desc in cur.description]
-        results = [dict(zip(colnames, row)) for row in rows]
-        log_security_event(
-            event_type="alerts_fetched",
-            email=email,
-            details=f"Fetched {len(results)} enriched alerts"
-        )
-    except Exception as e:
-        log_security_event(
-            event_type="alerts_fetch_error",
-            email=email,
-            details=str(e)
-        )
-        raise
-    finally:
-        cur.close()
-        conn.close()
-    return results
-
-def fetch_past_incidents(region=None, category=None, days=30, limit=20):
-    db_url = get_db_url()
-    if not db_url:
-        log_security_event(
-            event_type="db_config_error",
-            details="DATABASE_URL not set for fetch_past_incidents"
-        )
-        raise Exception("DATABASE_URL not set in environment")
-    try:
-        conn = psycopg2.connect(db_url)
-    except Exception as e:
-        log_security_event(
-            event_type="db_connection_error",
-            details=f"Could not connect to DB: {e}"
-        )
-        raise
-    cur = conn.cursor()
-
-    where_clauses = []
-    params = []
-    if region:
-        where_clauses.append("region = %s")
-        params.append(region)
+        where.append("(region = %s OR city = %s OR country = %s)")
+        params.extend([region, region, region])
     if category:
-        where_clauses.append("category = %s")
+        where.append("category = %s")
         params.append(category)
-    since = datetime.utcnow() - timedelta(days=days)
-    where_clauses.append("published >= %s")
-    params.append(since)
-    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-    query = f"""
-        SELECT uuid, title, summary, region, category, subcategory, score, label, published AS timestamp
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    q = f"""
+        SELECT uuid, title, summary, score, published, category, subcategory,
+               city, country, region, threat_level, threat_label, tags
         FROM alerts
-        WHERE {where_sql}
+        {where_sql}
         ORDER BY published DESC
         LIMIT %s
     """
     params.append(limit)
+    return fetch_all(q, tuple(params))
+
+# ---------------------------------------------------------------------
+# Region trend (optional helper; safe if table missing)
+# ---------------------------------------------------------------------
+
+def save_region_trend(
+    region: Optional[str],
+    city: Optional[str],
+    trend_window_start: datetime,
+    trend_window_end: datetime,
+    incident_count: int,
+    categories: Optional[List[str]] = None
+) -> None:
+    """
+    Upsert region trend metrics. If the table doesn't exist, we log and continue.
+    Expected table (suggested):
+      CREATE TABLE IF NOT EXISTS region_trends (
+        region text,
+        city text,
+        window_start timestamp,
+        window_end timestamp,
+        incident_count int,
+        categories text[],
+        updated_at timestamp default now(),
+        PRIMARY KEY (region, city, window_start, window_end)
+      );
+    """
     try:
-        cur.execute(query, tuple(params))
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        incidents = [dict(zip(columns, row)) for row in rows]
-        cur.close()
-        conn.close()
-        return incidents
-    except Exception as e:
-        log_security_event(
-            event_type="past_incidents_fetch_error",
-            details=str(e)
-        )
-        return []
-
-def fetch_incident_clusters(region=None, keywords=None, hours_window=72, limit=10):
-    db_url = get_db_url()
-    if not db_url:
-        return []
-    try:
-        conn = psycopg2.connect(db_url)
-    except Exception as e:
-        return []
-    cur = conn.cursor()
-
-    since = datetime.utcnow() - timedelta(hours=hours_window)
-    base_sql = "SELECT region, array_agg(DISTINCT unnest(tags)) as keywords, MIN(published) as start_time, MAX(published) as end_time, array_agg(uuid) as alert_uuids FROM alerts WHERE published >= %s"
-    params = [since]
-
-    if region:
-        base_sql += " AND region = %s"
-        params.append(region)
-    if keywords and isinstance(keywords, list) and keywords:
-        base_sql += " AND tags && %s"
-        params.append(keywords)
-
-    base_sql += " GROUP BY region ORDER BY end_time DESC LIMIT %s"
-    params.append(limit)
-
-    try:
-        cur.execute(base_sql, params)
-        rows = cur.fetchall()
-        clusters = []
-        for row in rows:
-            clusters.append({
-                "region": row[0],
-                "keywords": row[1],
-                "start_time": row[2],
-                "end_time": row[3],
-                "alert_uuids": row[4]
-            })
-        cur.close()
-        conn.close()
-        return clusters
-    except Exception as e:
-        log.error(f"[db_utils.py] Error in fetch_incident_clusters: {e}")
-        return []
-
-def save_region_trend(region, city, trend_window_start, trend_window_end, incident_count, categories=None):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
         sql = """
-        INSERT INTO region_trends (region, city, trend_window_start, trend_window_end, incident_count, categories, last_updated)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (region, city, trend_window_start, trend_window_end) DO UPDATE SET
+        INSERT INTO region_trends (region, city, window_start, window_end, incident_count, categories, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,NOW())
+        ON CONFLICT (region, city, window_start, window_end) DO UPDATE SET
             incident_count = EXCLUDED.incident_count,
             categories = EXCLUDED.categories,
-            last_updated = EXCLUDED.last_updated
+            updated_at = NOW()
         """
-        cur.execute(sql, (
-            region,
-            city,
-            trend_window_start,
-            trend_window_end,
-            incident_count,
-            categories,
-            datetime.utcnow()
+        execute(sql, (
+            region, city, trend_window_start, trend_window_end, int(incident_count), categories or []
         ))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
     except Exception as e:
-        log.error(f"[db_utils.py] Error saving region trend: {e}")
-        return False
-
-def fetch_region_trends(region=None, city=None, start_time=None, end_time=None, limit=20):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        sql = "SELECT region, city, trend_window_start, trend_window_end, incident_count, categories, last_updated FROM region_trends WHERE 1=1"
-        params = []
-        if region:
-            sql += " AND region = %s"
-            params.append(region)
-        if city:
-            sql += " AND city = %s"
-            params.append(city)
-        if start_time:
-            sql += " AND trend_window_start >= %s"
-            params.append(start_time)
-        if end_time:
-            sql += " AND trend_window_end <= %s"
-            params.append(end_time)
-        sql += " ORDER BY trend_window_end DESC LIMIT %s"
-        params.append(limit)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        trends = [dict(zip(columns, row)) for row in rows]
-        cur.close()
-        conn.close()
-        return trends
-    except Exception as e:
-        log.error(f"[db_utils.py] Error fetching region trends: {e}")
-        return []
-
-def get_regional_trend(region: str, days: int = 7, city: str = None) -> dict:
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(days=days)
-    trends = fetch_region_trends(region=region, city=city, start_time=start_time, end_time=end_time, limit=100)
-    total_incidents = sum(t.get('incident_count', 0) for t in trends)
-    categories = set()
-    for t in trends:
-        if t.get('categories'):
-            categories.update(t['categories'])
-    trend_direction = "unknown"
-    if len(trends) >= 2:
-        first = trends[-1]['incident_count']
-        last = trends[0]['incident_count']
-        if last > first:
-            trend_direction = "increasing"
-        elif last < first:
-            trend_direction = "decreasing"
-        else:
-            trend_direction = "stable"
-    return {
-        "region": region,
-        "city": city,
-        "days": days,
-        "incident_count": total_incidents,
-        "categories": list(categories),
-        "trend_direction": trend_direction,
-        "trend_windows": trends,
-    }
-
-def group_alerts_by_period(period="day", region=None):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        date_trunc = "day"
-        if period == "week":
-            date_trunc = "week"
-        elif period == "month":
-            date_trunc = "month"
-        sql = f"""
-            SELECT date_trunc('{date_trunc}', published) AS period,
-                   COUNT(*) as alert_count
-            FROM alerts
-            {"WHERE region = %s" if region else ""}
-            GROUP BY period
-            ORDER BY period DESC
-        """
-        params = (region,) if region else ()
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return [{"period": r[0], "alert_count": r[1]} for r in rows]
-    except Exception as e:
-        log.error(f"Error grouping alerts by period: {e}")
-        return []
-
-def alert_frequency(region, threat_type, hours=48):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT COUNT(*) FROM alerts
-            WHERE region = %s AND type = %s
-              AND published >= NOW() - INTERVAL '%s hours'
-        """, (region, threat_type, hours))
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return count
-    except Exception as e:
-        log.error(f"Error counting alert frequency: {e}")
-        return 0
-
-def get_recent_alerts(region, threat_type, limit=10):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT title, summary, published FROM alerts
-            WHERE region = %s AND type = %s
-            ORDER BY published DESC
-            LIMIT %s
-        """, (region, threat_type, limit))
-        alerts = cur.fetchall()
-        cur.close()
-        conn.close()
-        return alerts
-    except Exception as e:
-        log.error(f"Error fetching recent alerts: {e}")
-        return []
-
-def link_similar_alerts(alert_id, min_score=0.3, days=14, limit=10):
-    db_url = get_db_url()
-    try:
-        conn = psycopg2.connect(db_url)
-        cur = conn.cursor()
-        cur.execute("SELECT uuid, matched_keywords, city, region, country, category, subcategory, summary FROM alerts WHERE uuid = %s LIMIT 1", (alert_id,))
-        ref = cur.fetchone()
-        if not ref:
-            cur.close()
-            conn.close()
-            return []
-        ref_dict = dict(zip([desc[0] for desc in cur.description], ref))
-        since = datetime.utcnow() - timedelta(days=days)
-        cur.execute(
-            """
-            SELECT uuid, matched_keywords, city, region, country, category, subcategory, summary
-            FROM alerts
-            WHERE published >= %s
-              AND uuid != %s
-              AND (
-                  city = %s OR region = %s OR country = %s
-              )
-              AND category = %s
-            LIMIT %s
-            """,
-            (since, alert_id, ref_dict['city'], ref_dict['region'], ref_dict['country'], ref_dict['category'], limit*3)
-        )
-        candidates = cur.fetchall()
-        candidate_dicts = [dict(zip([desc[0] for desc in cur.description], row)) for row in candidates]
-        similar = []
-        ref_keywords = set(ref_dict.get('matched_keywords') or [])
-        for cand in candidate_dicts:
-            cand_keywords = set(cand.get('matched_keywords') or [])
-            overlap = ref_keywords & cand_keywords
-            union = ref_keywords | cand_keywords
-            score = len(overlap) / max(1, len(union))
-            if score >= min_score:
-                similar.append({"uuid": cand['uuid'], "score": score})
-        similar_sorted = sorted(similar, key=lambda x: x['score'], reverse=True)[:limit]
-        cur.close()
-        conn.close()
-        return [s["uuid"] for s in similar_sorted]
-    except Exception as e:
-        log.error(f"[db_utils.py] Error in link_similar_alerts: {e}")
-        return []
+        logger.info("save_region_trend skipped (table may not exist): %s", e)

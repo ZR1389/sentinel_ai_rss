@@ -1,183 +1,131 @@
-from telethon.sync import TelegramClient
-from datetime import datetime, timedelta, timezone
-import json
+# telegram_scraper.py — OSINT ingestion (unmetered) • v2025-08-13
+from __future__ import annotations
 import os
-from dotenv import load_dotenv
-from pathlib import Path
+import uuid
 import logging
-import re
-from plan_utils import require_plan_feature
+from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Any, Optional
 
-# --- Logging configuration ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-log = logging.getLogger(__name__)
+from db_utils import save_raw_alerts_to_db
 
-load_dotenv()
+logger = logging.getLogger("telegram_scraper")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-# --- Credential loading with safety checks ---
-api_id_raw = os.getenv("TELEGRAM_API_ID")
-api_hash = os.getenv("TELEGRAM_API_HASH")
-session_name = "sentinel_session"
+# Feature gate: disabled by default
+TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() in ("1","true","yes","y")
 
-if not api_id_raw:
-    log.error("Environment variable TELEGRAM_API_ID is required but not set.")
-    raise RuntimeError("Environment variable TELEGRAM_API_ID is required but not set.")
-if not api_hash:
-    log.error("Environment variable TELEGRAM_API_HASH is required but not set.")
-    raise RuntimeError("Environment variable TELEGRAM_API_HASH is required but not set.")
+# Optional bounds / hygiene
+MAX_MSG_AGE_DAYS = int(os.getenv("TELEGRAM_MAX_MSG_AGE_DAYS", "7"))
+BATCH_LIMIT      = int(os.getenv("TELEGRAM_BATCH_LIMIT", "300"))
+
+# Try import Telethon (recommended), else soft-disable
 try:
-    api_id = int(api_id_raw)
-except Exception:
-    log.error("TELEGRAM_API_ID must be a valid integer string.")
-    raise RuntimeError("TELEGRAM_API_ID must be a valid integer string.")
+    from telethon import TelegramClient
+    from telethon.tl.functions.messages import GetHistoryRequest
+    from telethon.tl.types import PeerChannel
+    _HAVE_TELETHON = True
+except Exception as e:
+    logger.info("Telethon not available: %s", e)
+    _HAVE_TELETHON = False
 
-RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
-if RAILWAY_ENV:
-    log.info(f"Running in Railway environment: {RAILWAY_ENV}")
-else:
-    log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
-channels = [
-    "war_monitors", "sentdefender", "noelreports", "tacticalreport", "IntelRepublic",
-    "MilitarySummary", "BNOFeed", "vxunderground", "aljazeeraenglish", "cnnbrk", "bbcbreaking"
-]
+def _utc(dt) -> datetime:
+    if isinstance(dt, datetime):
+        if dt.tzinfo:
+            return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
 
-THREAT_KEYWORDS = [
-    "assassination", "mass shooting", "hijacking", "kidnapping", "bombing",
-    "improvised explosive device", "IED", "gunfire", "active shooter", "terrorist attack",
-    "suicide bombing", "military raid", "abduction", "hostage situation",
-    "civil unrest", "riot", "protest", "coup d'etat", "regime change",
-    "political unrest", "uprising", "insurrection", "state of emergency", "martial law",
-    "evacuation", "roadblock", "border closure", "curfew", "flight cancellation",
-    "airport closure", "port closure", "embassy alert", "travel advisory", "travel ban",
-    "pandemic", "viral outbreak", "disease spread", "contamination", "quarantine",
-    "public health emergency", "infectious disease", "epidemic", "biological threat", "health alert",
-    "data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing",
-    "malware", "cyber espionage", "identity theft", "network security",
-    "extremist activity", "radicalization", "border security", "smuggling", "human trafficking",
-    "natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire",
-    "lockdown", "security alert", "critical infrastructure"
-]
 
-CACHE_FILE = "telegram_cache.json"
+def _today_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
-def json_default(obj):
-    if isinstance(obj, (datetime,)):
-        return obj.isoformat()
-    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
-def load_telegram_cache():
-    if Path(CACHE_FILE).exists():
-        with open(CACHE_FILE, "r") as f:
-            try:
-                return json.load(f)
-            except Exception as e:
-                log.error(f"Failed to load telegram_cache.json: {e}")
-                return {}
-    return {}
-
-def save_telegram_cache(cache):
+def _coerce_alert(ch_name: str, msg: Any) -> Optional[Dict[str, Any]]:
+    """
+    Convert a Telegram message into raw_alerts row (schema-aligned).
+    """
     try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(cache, f, indent=2, default=json_default)
+        text = (getattr(msg, "message", None) or "").strip()
+        if not text:
+            return None
+
+        published = getattr(msg, "date", None)
+        if published:
+            published = _utc(published).replace(tzinfo=None)  # store naive UTC per your schema
+
+        title = text.split("\n", 1)[0][:140]
+        link = None
+        # Try to construct a t.me link if we have ids
+        mid = getattr(msg, "id", None)
+        if mid:
+            link = f"https://t.me/{ch_name}/{mid}"
+
+        return {
+            "uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, f"tg:{ch_name}:{mid or uuid.uuid4()}")),
+            "title": title,
+            "summary": text[:2000],
+            "en_snippet": None,  # advisor/threat engine will fill gpt_summary later
+            "link": link,
+            "source": f"telegram:{ch_name}",
+            "published": published,
+            "region": None,
+            "country": None,
+            "city": None,
+            "tags": ["telegram","osint"],
+            "language": "en",    # or attempt language detect in risk_shared if you want
+            "ingested_at": datetime.utcnow(),
+        }
     except Exception as e:
-        log.error(f"Failed to save telegram_cache.json: {e}")
+        logger.debug("coerce_alert failed: %s", e)
+        return None
 
-def detect_region(text):
-    t = text.lower() if isinstance(text, str) else str(text).lower()
-    if "mexico" in t:
-        return "Mexico"
-    if "gaza" in t or "israel" in t:
-        return "Middle East"
-    if "france" in t or "paris" in t:
-        return "France"
-    if "ukraine" in t:
-        return "Ukraine"
-    if "russia" in t:
-        return "Russia"
-    return "Global"
 
-def keyword_match(content):
-    for keyword in THREAT_KEYWORDS:
-        if re.search(r"\b" + re.escape(keyword) + r"\b", content, re.IGNORECASE):
-            return True
-    return False
+async def ingest_telegram_channels_to_db(channels: List[str], limit: int = BATCH_LIMIT, write_to_db: bool = True) -> Dict[str, Any]:
+    """
+    Async entry: scrapes recent messages from channels into raw_alerts (unmetered).
+    """
+    if not TELEGRAM_ENABLED:
+        return {"ok": False, "reason": "TELEGRAM_ENABLED is false", "count": 0}
 
-def scrape_telegram_messages(region=None, city=None, topic=None, limit=30, email=None):
-    if email and not require_plan_feature(email, "telegram"):
-        log.info(f"User {email} not allowed to access Telegram OSINT alerts (feature gated).")
-        return []
+    if not _HAVE_TELETHON:
+        return {"ok": False, "reason": "telethon not installed", "count": 0}
 
-    alerts = []
+    api_id  = os.getenv("TELEGRAM_API_ID")
+    api_hash= os.getenv("TELEGRAM_API_HASH")
+    session = os.getenv("TELEGRAM_SESSION", "sentinel")
 
-    # Only proceed if session file exists (avoid interactive login)
-    if not os.path.exists(session_name + ".session"):
-        log.warning("Telegram session file not found. Skipping Telegram scraping in production.")
-        return []
+    if not api_id or not api_hash:
+        return {"ok": False, "reason": "TELEGRAM_API_ID/TELEGRAM_API_HASH missing", "count": 0}
 
-    cache = load_telegram_cache()
-    cache_updated = False
+    client = TelegramClient(session, int(api_id), api_hash)
+    await client.start()
 
-    try:
-        with TelegramClient(session_name, api_id, api_hash) as client:
-            for username in channels:
-                log.info(f"Scraping: {username}")
+    max_age = _today_utc() - timedelta(days=MAX_MSG_AGE_DAYS)
+    harvested: List[Dict[str, Any]] = []
 
-                last_seen_id = cache.get(username)
-                new_highest_id = last_seen_id if last_seen_id is not None else 0
+    for ch in (channels or []):
+        try:
+            entity = await client.get_entity(ch)
+            # simple page pull
+            history = await client(GetHistoryRequest(
+                peer=entity, limit=min(limit, BATCH_LIMIT), offset_date=None,
+                offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0
+            ))
+            for msg in history.messages:
+                dt = getattr(msg, "date", None)
+                if dt and _utc(dt) < max_age:
+                    continue
+                alert = _coerce_alert(getattr(entity, 'username', ch).lower(), msg)
+                if alert:
+                    harvested.append(alert)
+        except Exception as e:
+            logger.warning("Channel '%s' fetch failed: %s", ch, e)
 
-                try:
-                    entity = client.get_entity(username)
-                    messages = client.iter_messages(entity, limit=limit)
-                    for msg in messages:
-                        if msg.date < datetime.now(timezone.utc) - timedelta(hours=24):
-                            continue
-                        if not msg.message:
-                            continue
+    await client.disconnect()
 
-                        if last_seen_id is not None and msg.id <= last_seen_id:
-                            continue
+    wrote = 0
+    if write_to_db and harvested:
+        wrote = save_raw_alerts_to_db(harvested)
 
-                        content = msg.message.lower() if isinstance(msg.message, str) else str(msg.message).lower()
-                        if keyword_match(content):
-                            alerts.append({
-                                "title": f"Telegram Post: {username}",
-                                "summary": msg.message,
-                                "link": f"https://t.me/{username}/{msg.id}",
-                                "source": "Telegram",
-                                "region": detect_region(msg.message),
-                                "timestamp": msg.date.isoformat(),
-                                "post_id": msg.id
-                            })
-
-                        if msg.id > new_highest_id:
-                            new_highest_id = msg.id
-
-                    if new_highest_id and (last_seen_id is None or new_highest_id > last_seen_id):
-                        cache[username] = new_highest_id
-                        cache_updated = True
-
-                except Exception as e:
-                    log.error(f"Error scraping {username}: {e}")
-
-    except Exception as e:
-        log.error(f"Telegram client setup failed: {e}")
-        return []
-
-    if cache_updated:
-        save_telegram_cache(cache)
-
-    return alerts
-
-if __name__ == "__main__":
-    alerts = scrape_telegram_messages()
-    if alerts:
-        log.info(f"Found {len(alerts)} new alerts")
-        for a in alerts[:5]:
-            print(json.dumps(a, indent=2, default=json_default))
-    else:
-        log.info("No new matching alerts found in the last 24 hours.")
+    return {"ok": True, "count": wrote if write_to_db else len(harvested), "preview": harvested[:3]}

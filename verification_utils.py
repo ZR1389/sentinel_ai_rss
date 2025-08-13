@@ -1,207 +1,201 @@
-import time
-import psycopg2
+# verification_utils.py — email verification flows • v2025-08-13
+
+from __future__ import annotations
 import os
-from datetime import datetime, timedelta
+import secrets
+import hashlib
 import requests
-from plan_utils import get_plan_limits, check_user_message_quota, ensure_user_exists
+from typing import Optional, Tuple
+from datetime import datetime, timedelta, timezone
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
 from security_log_utils import log_security_event
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# --- Brevo transactional email sender ---
-def send_verification_email(email, code, subject, body):
-    api_key = os.getenv("BREVO_API_KEY")
-    sender_email = os.getenv("BREVO_SENDER_EMAIL", "info@zikarisk.com")
-    sender_name = os.getenv("BREVO_SENDER_NAME", "Zika Risk")
+# Email (Brevo)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "info@zikarisk.com")
+BREVO_SENDER_NAME  = os.getenv("BREVO_SENDER_NAME", "Zika Risk")
+
+# Policy
+VERIFY_CODE_TTL_MIN = int(os.getenv("VERIFY_CODE_TTL_MIN", "15"))
+VERIFY_CODE_LEN = int(os.getenv("VERIFY_CODE_LEN", "6"))  # numeric digits
+EMAIL_MAX_PER_HOUR = int(os.getenv("VERIFY_EMAIL_MAX_PER_HOUR", "5"))
+EMAIL_MAX_PER_DAY  = int(os.getenv("VERIFY_EMAIL_MAX_PER_DAY", "12"))
+IP_MAX_PER_HOUR    = int(os.getenv("VERIFY_IP_MAX_PER_HOUR", "20"))
+IP_MAX_PER_DAY     = int(os.getenv("VERIFY_IP_MAX_PER_DAY", "100"))
+
+def _conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL not set")
+    return psycopg2.connect(DATABASE_URL)
+
+def _now_utc():
+    return datetime.now(timezone.utc)
+
+def _code_numeric(n: int) -> str:
+    # returns zero-padded numeric code
+    m = 10 ** n
+    return str(secrets.randbelow(m)).zfill(n)
+
+def _hash_code(code: str, email: str) -> str:
+    # bind hash to email as cheap salt
+    return hashlib.sha256((email.lower().strip() + ":" + code).encode()).hexdigest()
+
+# ---------------- Rate limits ----------------
+
+def _count_recent(cur, table: str, column: str, value: str, minutes: int) -> int:
+    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE {column}=%s AND created_at >= NOW() - INTERVAL %s",
+                (value, f"{minutes} minutes"))
+    return int(cur.fetchone()[0])
+
+def ip_rate_limited(ip_address: Optional[str]) -> bool:
+    if not ip_address:
+        return False
+    with _conn() as conn, conn.cursor() as cur:
+        hour = _count_recent(cur, "email_verification_ip_log", "ip_address", ip_address, 60)
+        day  = _count_recent(cur, "email_verification_ip_log", "ip_address", ip_address, 24*60)
+        exceeded = hour >= IP_MAX_PER_HOUR or day >= IP_MAX_PER_DAY
+        log_security_event(
+            event_type="verify_ip_rate",
+            ip=ip_address,
+            details=f"hour={hour}/{IP_MAX_PER_HOUR} day={day}/{IP_MAX_PER_DAY} exceeded={exceeded}",
+        )
+        return exceeded
+
+def email_rate_limited(email: str) -> bool:
+    with _conn() as conn, conn.cursor() as cur:
+        hour = _count_recent(cur, "email_verification_email_log", "email", email, 60)
+        day  = _count_recent(cur, "email_verification_email_log", "email", email, 24*60)
+        exceeded = hour >= EMAIL_MAX_PER_HOUR or day >= EMAIL_MAX_PER_DAY
+        log_security_event(
+            event_type="verify_email_rate",
+            email=email,
+            details=f"hour={hour}/{EMAIL_MAX_PER_HOUR} day={day}/{EMAIL_MAX_PER_DAY} exceeded={exceeded}",
+        )
+        return exceeded
+
+def _log_ip(ip: Optional[str]) -> None:
+    if not ip:
+        return
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO email_verification_ip_log (ip_address) VALUES (%s)", (ip,))
+        conn.commit()
+
+def _log_email(email: str) -> None:
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO email_verification_email_log (email) VALUES (%s)", (email,))
+        conn.commit()
+
+# ---------------- Email send ----------------
+
+def _send_brevo(email: str, subject: str, text_body: str) -> bool:
+    if not BREVO_API_KEY:
+        log_security_event(event_type="verify_email_api_missing", email=email, details="BREVO_API_KEY missing")
+        return False
     payload = {
-        "sender": {"email": sender_email, "name": sender_name},
+        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
         "to": [{"email": email}],
         "subject": subject,
-        "textContent": body
-    }
-    headers = {
-        "api-key": api_key,
-        "Content-Type": "application/json"
+        "textContent": text_body,
     }
     try:
-        r = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers, timeout=10)
-        log_security_event(
-            event_type="verification_email_sent" if r.status_code in (200,201) else "verification_email_failed",
-            email=email,
-            details=f"Status code: {r.status_code}, response: {r.text}"
-        )
-        return r.status_code in (200, 201)
-    except Exception as e:
-        log_security_event(
-            event_type="verification_email_error",
-            email=email,
-            details=str(e)
-        )
-        print(f"Brevo email send error: {e}")
+        r = requests.post("https://api.brevo.com/v3/smtp/email",
+                          headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                          json=payload, timeout=12)
+        ok = r.status_code in (200, 201, 202)
+        log_security_event(event_type="verify_email_sent" if ok else "verify_email_send_failed",
+                           email=email, details=f"status={r.status_code} body={r.text[:240]}")
+        return ok
+    except requests.RequestException as e:
+        log_security_event(event_type="verify_email_http_error", email=email, details=str(e))
         return False
 
-def set_verification_code(email):
+# ---------------- Core flows ----------------
+
+def issue_verification_code(email: str, ip_address: Optional[str] = None) -> Tuple[bool, str]:
     """
-    Generate and store a verification code for an email, valid for 15 minutes.
-    Returns the code.
+    Creates or replaces a verification code for `email`, enforces rate limits, and sends via Brevo.
+    Returns (ok, message).
     """
-    code = f"{int(time.time_ns() % 1000000):06d}"  # 6-digit code
-    expiry = datetime.utcnow() + timedelta(minutes=15)
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO email_verification (email, code, expires_at, verified)
-        VALUES (%s, %s, %s, FALSE)
-        ON CONFLICT (email) DO UPDATE
-        SET code = EXCLUDED.code, expires_at = EXCLUDED.expires_at, verified = FALSE
-    """, (email, code, expiry))
-    conn.commit()
-    cur.close()
-    conn.close()
-    log_security_event(
-        event_type="verification_code_set",
-        email=email,
-        details=f"Verification code set, expires at {expiry.isoformat()}"
-    )
-    return code
+    if ip_rate_limited(ip_address):
+        return False, "Too many attempts from your IP. Try later."
+    if email_rate_limited(email):
+        return False, "Too many verification emails. Try later."
 
-def send_code_email(email, code=None, subject=None, body=None):
-    """
-    Generate, store, and send a verification or reset code via email, after checking quota for free users.
-    Returns (success, error) tuple.
-    """
-    ensure_user_exists(email, plan="FREE")  # Ensure the user exists before verification/quota
+    code = _code_numeric(VERIFY_CODE_LEN)
+    code_hash = _hash_code(code, email)
+    expires_at = _now_utc() + timedelta(minutes=VERIFY_CODE_TTL_MIN)
 
-    plan_limits = get_plan_limits(email)
-    plan = plan_limits.get("plan", "FREE")
-    if plan == "FREE":
-        ok, msg = check_user_message_quota(email, plan_limits)
-        if not ok:
-            log_security_event(
-                event_type="verification_quota_exceeded",
-                email=email,
-                details=msg
-            )
-            return False, "Your email address is already in our system and you are out of free messages. If this is a mistake contact us. If you are a member, please log in."
-    if code is None:
-        code = set_verification_code(email)
-    if subject is None:
-        subject = "Your Sentinel AI Verification Code"
-    if body is None:
-        body = f"""
-Hello,
+    with _conn() as conn, conn.cursor() as cur:
+        # Remove existing codes for this email
+        cur.execute("DELETE FROM email_verification_codes WHERE email=%s", (email,))
+        cur.execute("""
+            INSERT INTO email_verification_codes (email, code_hash, expires_at, created_at, attempts)
+            VALUES (%s, %s, %s, NOW(), 0)
+        """, (email, code_hash, expires_at.replace(tzinfo=None)))
+        conn.commit()
 
-Your verification code: {code}
+    _log_ip(ip_address)
+    _log_email(email)
 
-This code is valid for 15 minutes.
-If you did not request this, please ignore this message.
-
-Regards,
-Sentinel AI by Zika Risk
-"""
-    sent = send_verification_email(email, code, subject, body)
+    subject = "Your Sentinel AI verification code"
+    body = f"Your verification code is: {code}\nThis code expires in {VERIFY_CODE_TTL_MIN} minutes."
+    sent = _send_brevo(email, subject, body)
     if not sent:
-        log_security_event(
-            event_type="verification_email_send_failed",
-            email=email,
-            details="Failed to send email"
-        )
-        return False, "Failed to send email"
-    log_security_event(
-        event_type="verification_email_send_success",
-        email=email,
-        details="Verification email sent"
-    )
-    return True, None
+        return False, "Failed to send verification email."
+    return True, "Verification code sent."
 
-def check_verification_code(email, code):
+def verify_code(email: str, code: str) -> Tuple[bool, str]:
     """
-    Check if code is correct and not expired for given email.
-    Returns (True, None) if OK, (False, error_message) if not.
+    Verifies the code. On success, marks users.email_verified = TRUE and deletes the code row.
     """
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT code, expires_at, verified FROM email_verification WHERE email=%s
-    """, (email,))
-    row = cur.fetchone()
-    if not row:
-        cur.close()
-        conn.close()
-        log_security_event(
-            event_type="verification_code_missing",
-            email=email,
-            details="No code for this email"
-        )
-        return False, "No code for this email"
-    real_code, expires_at, verified = row
-    now = datetime.utcnow()
-    if expires_at < now:
-        cur.close()
-        conn.close()
-        log_security_event(
-            event_type="verification_code_expired",
-            email=email,
-            details="Code expired"
-        )
-        return False, "Code expired"
-    if code != real_code:
-        cur.close()
-        conn.close()
-        log_security_event(
-            event_type="verification_code_incorrect",
-            email=email,
-            details="Incorrect code"
-        )
-        return False, "Incorrect code"
-    cur.execute("""
-        UPDATE email_verification SET verified=TRUE WHERE email=%s
-    """, (email,))
-    conn.commit()
-    cur.close()
-    conn.close()
-    log_security_event(
-        event_type="verification_code_success",
-        email=email,
-        details="Code verified successfully"
-    )
-    return True, None
+    h = _hash_code(code, email)
+    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT email, code_hash, expires_at, attempts
+            FROM email_verification_codes
+            WHERE email=%s
+            LIMIT 1
+        """, (email,))
+        row = cur.fetchone()
+        if not row:
+            return False, "No verification code found."
+        if row["expires_at"] and row["expires_at"] < _now_utc().replace(tzinfo=None):
+            cur.execute("DELETE FROM email_verification_codes WHERE email=%s", (email,))
+            conn.commit()
+            return False, "Code expired. Request a new one."
 
-def get_client_ip(flask_request):
-    if 'X-Forwarded-For' in flask_request.headers:
-        return flask_request.headers['X-Forwarded-For'].split(',')[0].strip()
-    return flask_request.remote_addr
+        # constant-time compare via hashing + check_password_hash equivalent
+        ok = (h == row["code_hash"])
+        if not ok:
+            # bump attempts
+            cur.execute("UPDATE email_verification_codes SET attempts = attempts + 1 WHERE email=%s", (email,))
+            conn.commit()
+            return False, "Invalid code."
 
-def email_verification_ip_quota_exceeded(ip_address, max_per_hour=5, max_per_day=10):
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM email_verification_ip_log WHERE ip_address=%s AND attempted_at > NOW() - INTERVAL '1 hour'", (ip_address,))
-    hour_count = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM email_verification_ip_log WHERE ip_address=%s AND attempted_at > NOW() - INTERVAL '1 day'", (ip_address,))
-    day_count = cur.fetchone()[0]
-    cur.close()
-    conn.close()
-    exceeded = hour_count >= max_per_hour or day_count >= max_per_day
-    if exceeded:
-        log_security_event(
-            event_type="verification_ip_quota_exceeded",
-            details=f"IP {ip_address} exceeded quota: hour_count={hour_count}, day_count={day_count}"
-        )
-    else:
-        log_security_event(
-            event_type="verification_ip_quota_ok",
-            details=f"IP {ip_address} within quota: hour_count={hour_count}, day_count={day_count}"
-        )
-    return exceeded
+        # success: mark user verified, cleanup
+        cur.execute("UPDATE users SET email_verified = TRUE WHERE email=%s", (email,))
+        cur.execute("DELETE FROM email_verification_codes WHERE email=%s", (email,))
+        conn.commit()
+        log_security_event(event_type="email_verified", email=email, details="verification_success")
+        return True, "Email verified."
 
-def log_email_verification_ip(ip_address):
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
-    cur.execute("INSERT INTO email_verification_ip_log (ip_address) VALUES (%s)", (ip_address,))
-    conn.commit()
-    cur.close()
-    conn.close()
-    log_security_event(
-        event_type="verification_ip_logged",
-        details=f"IP {ip_address} logged for verification attempt"
-    )
+# ---------------- Utilities ----------------
+
+def verification_status(email: str) -> Tuple[bool, Optional[str]]:
+    """
+    Returns (is_verified, reason_if_false)
+    """
+    try:
+        with _conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT email_verified FROM users WHERE email=%s", (email,))
+            row = cur.fetchone()
+            if not row:
+                return False, "User not found."
+            return bool(row[0]), None
+    except Exception as e:
+        return False, "Lookup failed"
