@@ -181,15 +181,26 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, str, Optional[st
     """
     Verifies password; on success returns (ok, msg, access_token, refresh_token_bundle)
     where refresh_token_bundle is 'refresh_id:token' for transport simplicity.
+    Enforces users.is_active == TRUE.
     """
     try:
         with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT email, password_hash, plan, email_verified FROM users WHERE email=%s", (email,))
+            cur.execute(
+                "SELECT email, password_hash, plan, email_verified, is_active "
+                "FROM users WHERE email=%s",
+                (email,)
+            )
             row = cur.fetchone()
             if not row or not row.get("password_hash"):
                 return False, "Invalid credentials", None, None
+
+            # Block disabled accounts
+            if not row.get("is_active", True):
+                return False, "Account disabled", None, None
+
             if not verify_password(password, row["password_hash"]):
                 return False, "Invalid credentials", None, None
+
             access = create_access_token(email, row.get("plan") or DEFAULT_PLAN)
             rt, rid = create_refresh_token(email)
             bundle = f"{rid}:{rt}"

@@ -108,8 +108,7 @@ def subscribe_to_newsletter(email: str) -> bool:
         "email": sanitized,
         "listIds": [NEWSLETTER_LIST_ID],
         "updateEnabled": True,  # idempotent re-subscribe/update
-        # You may add attributes only if they are defined in Brevo, otherwise you'll get 400:
-        # "attributes": {"SOURCE": "sentinel", "CONSENT_AT": datetime.now(timezone.utc).isoformat()}
+        # "attributes": {"SOURCE": "sentinel", "CONSENT_AT": datetime.now(timezone.utc).isoformat()},
     }
 
     try:
@@ -119,13 +118,20 @@ def subscribe_to_newsletter(email: str) -> bool:
         logger.error("❌ Newsletter subscription HTTP error: %s", e)
         return False
 
-    if r.status_code in (201, 204):
+    # Success paths: created/accepted/no-content/ok
+    if r.status_code in (200, 201, 202, 204):
         log_security_event(event_type="newsletter_subscribed", email=sanitized, details=f"OK {r.status_code}")
         logger.info("✅ %s subscribed to newsletter.", sanitized)
         return True
 
-    # Brevo sometimes returns 400 for "Contact already exists" if updateEnabled wasn't honored by API version.
-    # Surface the response for debugging:
+    # Treat 'already exists' as success for idempotency (some Brevo tenants still 400/409)
+    txt = (r.text or "").lower()
+    if r.status_code in (400, 409) and ("already exist" in txt or "already registered" in txt):
+        log_security_event(event_type="newsletter_subscribed", email=sanitized, details=f"idempotent {r.status_code}")
+        logger.info("✅ %s already subscribed (idempotent).", sanitized)
+        return True
+
+    # Otherwise, surface brief detail for logs
     detail = (r.text or "").strip()
     log_security_event(event_type="newsletter_subscribe_failed", email=sanitized, details=f"{r.status_code}: {detail}")
     logger.warning("❌ Newsletter subscription failed (%s): %s", r.status_code, detail)

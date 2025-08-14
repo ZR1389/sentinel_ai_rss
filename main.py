@@ -56,16 +56,22 @@ except Exception as e:
     require_paid_feature = None
     get_plan = None
 
-# Advisor — allow a couple of function names for resilience
+# ---------- Advisory orchestrator (prefer chat_handler) ----------
 _advisor_callable = None
 try:
-    from advisor import handle_user_query as _advisor_callable
+    # full payload: returns { reply, alerts, plan, usage, session_id }
+    from chat_handler import handle_user_query as _advisor_callable
 except Exception:
     try:
-        from advisor import generate_advisory as _advisor_callable
-    except Exception as e:
-        logger.error("advisor import failed: %s", e)
-        _advisor_callable = None
+        # fallback: if someone provided a matching entrypoint in advisor.py
+        from advisor import handle_user_query as _advisor_callable
+    except Exception:
+        try:
+            # last-gasp fallbacks to legacy names
+            from advisor import generate_advice as _advisor_callable
+        except Exception as e:
+            logger.error("advisor/chat_handler import failed: %s", e)
+            _advisor_callable = None
 
 # RSS & Threat Engine
 try:
@@ -167,6 +173,8 @@ def _require_email(payload: Dict[str, Any]) -> Optional[str]:
 def _advisor_call(query: str, email: str, profile_data: Optional[Dict[str, Any]], input_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if _advisor_callable is None:
         raise RuntimeError("Advisor module is not available")
+    # Try payload style first (advisor shim / chat_handler both accept this),
+    # then fall back to legacy signatures.
     try:
         return _advisor_callable({"query": query, "profile_data": profile_data, "input_data": input_data}, email=email)
     except TypeError:

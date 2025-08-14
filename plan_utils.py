@@ -1,4 +1,4 @@
-# plan_utils.py — plans, usage & gating • v2025-08-13 (drop-in)
+# plan_utils.py — plans, usage & gating • v2025-08-13 (with is_active)
 
 from __future__ import annotations
 import os
@@ -56,8 +56,11 @@ def ensure_user_exists(email: str, plan: str = DEFAULT_PLAN) -> None:
         # users row
         cur.execute("SELECT 1 FROM users WHERE email=%s", (email,))
         if not cur.fetchone():
-            # match your current schema (no is_active column)
-            cur.execute("INSERT INTO users (email, plan) VALUES (%s, %s)", (email, plan))
+            # Your users table HAS is_active boolean default true — set it explicitly
+            cur.execute(
+                "INSERT INTO users (email, plan, is_active) VALUES (%s, %s, %s)",
+                (email, plan, True),
+            )
             log_security_event(event_type="user_created", email=email, details=f"Created new user with plan {plan}")
 
         # user_usage row (initialize period at start-of-month)
@@ -83,8 +86,8 @@ def get_plan(email: str) -> str | None:
 
 def get_plan_limits(email: str) -> dict:
     """
-    Returns { plan: PLAN, chat_messages_per_month: int }
-    Falls back to FREE with 0 limit if plan not found/misconfigured.
+    Returns { plan: PLAN, chat_messages_per_month: int }.
+    - If the user is missing or INACTIVE, falls back to FREE with 0 limit.
     """
     email = _sanitize_email(email)
     if not email:
@@ -92,15 +95,17 @@ def get_plan_limits(email: str) -> dict:
 
     try:
         with _conn() as conn, conn.cursor() as cur:
+            # Require active users to pick up their plan limits.
             cur.execute("""
                 SELECT u.plan, p.chat_messages_per_month
                 FROM users u
                 JOIN plans p ON UPPER(u.plan) = UPPER(p.name)
                 WHERE u.email = %s
+                  AND COALESCE(u.is_active, TRUE) = TRUE
             """, (email,))
             row = cur.fetchone()
             if not row:
-                log_security_event(event_type="plan_limits_default", email=email, details="Returned default limits")
+                log_security_event(event_type="plan_limits_default", email=email, details="Inactive or no plan; default limits")
                 return {"plan": "FREE", "chat_messages_per_month": 0}
             plan, msgs = row[0], row[1]
             limits = {"plan": (plan or "FREE").upper(), "chat_messages_per_month": int(msgs or 0)}
@@ -215,7 +220,7 @@ def increment_user_message_usage(email: str) -> None:
 
 def user_has_paid_plan(email: str) -> bool:
     """
-    Returns True if the user is on a paid plan (defaults: PRO/ENTERPRISE).
+    Returns True if the user is ACTIVE and on a paid plan (defaults: PRO/ENTERPRISE).
     Safe fallback to False on any error.
     """
     email = _sanitize_email(email)
@@ -223,13 +228,13 @@ def user_has_paid_plan(email: str) -> bool:
         return False
     try:
         with _conn() as conn, conn.cursor() as cur:
-            # your users table does NOT have is_active; keep it simple
-            cur.execute("SELECT plan FROM users WHERE email=%s LIMIT 1", (email,))
+            cur.execute("SELECT plan, COALESCE(is_active, TRUE) FROM users WHERE email=%s LIMIT 1", (email,))
             row = cur.fetchone()
             if not row:
                 return False
             plan = (row[0] or "").upper()
-            return plan in PAID_PLANS
+            is_active = bool(row[1])
+            return is_active and plan in PAID_PLANS
     except Exception as e:
         logger.error("user_has_paid_plan error: %s", e)
         return False

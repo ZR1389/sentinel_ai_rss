@@ -303,7 +303,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         execute_values(cur, sql, rows)
     return len(rows)
 
-# ---------- NEW: Alerts fetch for Advisor/Chat ----------
+# ---------- Alerts fetch for Advisor/Chat ----------
 def fetch_alerts_from_db(
     region: Optional[str] = None,
     country: Optional[str] = None,
@@ -353,6 +353,50 @@ def fetch_alerts_from_db(
     with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(q, tuple(params))
         return cur.fetchall()
+
+# ---------------------------------------------------------------------
+# User profile helpers (for chat/advisor and /profile endpoints)
+# ---------------------------------------------------------------------
+
+def fetch_user_profile(email: str) -> Dict[str, Any]:
+    """
+    Return merged profile from users + optional user_profiles.profile_json.
+    Matches what chat_handler expects.
+    """
+    try:
+        row = fetch_one(
+            "SELECT email, plan, name, employer, email_verified, "
+            "preferred_region, preferred_threat_type, home_location, extra_details "
+            "FROM users WHERE email=%s",
+            (email,),
+        )
+        if not row:
+            return {}
+
+        data: Dict[str, Any] = {
+            "email": row[0],
+            "plan": row[1],
+            "name": row[2],
+            "employer": row[3],
+            "email_verified": bool(row[4]),
+            "preferred_region": row[5],
+            "preferred_threat_type": row[6],
+            "home_location": row[7],
+            "extra_details": row[8] or {},
+        }
+
+        # Optional extended JSON profile
+        try:
+            pr = fetch_one("SELECT profile_json FROM user_profiles WHERE email=%s", (email,))
+            if pr and pr[0]:
+                data["profile"] = pr[0]
+        except Exception:
+            pass
+
+        return data
+    except Exception as e:
+        logger.error("fetch_user_profile error: %s", e)
+        return {}
 
 # ---------------------------------------------------------------------
 # Historical pulls for Threat Engine / Scoring

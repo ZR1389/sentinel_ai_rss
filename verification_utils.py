@@ -36,6 +36,12 @@ def _conn():
 def _now_utc():
     return datetime.now(timezone.utc)
 
+def _sanitize_email(email: Optional[str]) -> Optional[str]:
+    if not isinstance(email, str):
+        return None
+    e = email.strip().lower()
+    return e if e and "@" in e else None
+
 def _code_numeric(n: int) -> str:
     # returns zero-padded numeric code
     m = 10 ** n
@@ -48,8 +54,10 @@ def _hash_code(code: str, email: str) -> str:
 # ---------------- Rate limits ----------------
 
 def _count_recent(cur, table: str, column: str, value: str, minutes: int) -> int:
-    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE {column}=%s AND created_at >= NOW() - INTERVAL %s",
-                (value, f"{minutes} minutes"))
+    cur.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE {column}=%s AND created_at >= NOW() - INTERVAL %s",
+        (value, f"{minutes} minutes"),
+    )
     return int(cur.fetchone()[0])
 
 def ip_rate_limited(ip_address: Optional[str]) -> bool:
@@ -103,12 +111,22 @@ def _send_brevo(email: str, subject: str, text_body: str) -> bool:
         "textContent": text_body,
     }
     try:
-        r = requests.post("https://api.brevo.com/v3/smtp/email",
-                          headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
-                          json=payload, timeout=12)
+        r = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "api-key": BREVO_API_KEY,
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=12,
+        )
         ok = r.status_code in (200, 201, 202)
-        log_security_event(event_type="verify_email_sent" if ok else "verify_email_send_failed",
-                           email=email, details=f"status={r.status_code} body={r.text[:240]}")
+        log_security_event(
+            event_type="verify_email_sent" if ok else "verify_email_send_failed",
+            email=email,
+            details=f"status={r.status_code} body={r.text[:240]}",
+        )
         return ok
     except requests.RequestException as e:
         log_security_event(event_type="verify_email_http_error", email=email, details=str(e))
@@ -121,6 +139,10 @@ def issue_verification_code(email: str, ip_address: Optional[str] = None) -> Tup
     Creates or replaces a verification code for `email`, enforces rate limits, and sends via Brevo.
     Returns (ok, message).
     """
+    email = _sanitize_email(email)
+    if not email:
+        return False, "Invalid email."
+
     if ip_rate_limited(ip_address):
         return False, "Too many attempts from your IP. Try later."
     if email_rate_limited(email):
@@ -133,10 +155,13 @@ def issue_verification_code(email: str, ip_address: Optional[str] = None) -> Tup
     with _conn() as conn, conn.cursor() as cur:
         # Remove existing codes for this email
         cur.execute("DELETE FROM email_verification_codes WHERE email=%s", (email,))
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO email_verification_codes (email, code_hash, expires_at, created_at, attempts)
             VALUES (%s, %s, %s, NOW(), 0)
-        """, (email, code_hash, expires_at.replace(tzinfo=None)))
+            """,
+            (email, code_hash, expires_at.replace(tzinfo=None)),
+        )
         conn.commit()
 
     _log_ip(ip_address)
@@ -153,14 +178,21 @@ def verify_code(email: str, code: str) -> Tuple[bool, str]:
     """
     Verifies the code. On success, marks users.email_verified = TRUE and deletes the code row.
     """
+    email = _sanitize_email(email)
+    if not email or not isinstance(code, str) or not code.strip():
+        return False, "Missing email or code."
+
     h = _hash_code(code, email)
     with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT email, code_hash, expires_at, attempts
             FROM email_verification_codes
             WHERE email=%s
             LIMIT 1
-        """, (email,))
+            """,
+            (email,),
+        )
         row = cur.fetchone()
         if not row:
             return False, "No verification code found."
@@ -169,10 +201,8 @@ def verify_code(email: str, code: str) -> Tuple[bool, str]:
             conn.commit()
             return False, "Code expired. Request a new one."
 
-        # constant-time compare via hashing + check_password_hash equivalent
         ok = (h == row["code_hash"])
         if not ok:
-            # bump attempts
             cur.execute("UPDATE email_verification_codes SET attempts = attempts + 1 WHERE email=%s", (email,))
             conn.commit()
             return False, "Invalid code."
@@ -190,6 +220,9 @@ def verification_status(email: str) -> Tuple[bool, Optional[str]]:
     """
     Returns (is_verified, reason_if_false)
     """
+    email = _sanitize_email(email)
+    if not email:
+        return False, "Invalid email."
     try:
         with _conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT email_verified FROM users WHERE email=%s", (email,))
@@ -197,5 +230,5 @@ def verification_status(email: str) -> Tuple[bool, Optional[str]]:
             if not row:
                 return False, "User not found."
             return bool(row[0]), None
-    except Exception as e:
+    except Exception:
         return False, "Lookup failed"

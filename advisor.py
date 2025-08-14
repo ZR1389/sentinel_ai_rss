@@ -540,3 +540,26 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     out = ensure_sections(out)
     out = ensure_has_playbook_or_alts(out, hits, alts)
     return out
+
+def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
+    """
+    Compatibility wrapper so callers expecting advisor.handle_user_query() still work.
+    payload: { query, profile_data, input_data }
+    Returns a dict with at least { reply }.
+    """
+    query = (payload.get("query") or "").strip()
+    profile = payload.get("profile_data") or {}
+    alerts = (payload.get("input_data") or {}).get("alerts") or []
+    try:
+        # if your module exposes generate_advice(query, alerts, **kwargs)
+        result = generate_advice(query, alerts, user_profile=profile, **kwargs)  # type: ignore
+        if isinstance(result, str):
+            return {"reply": result, "alerts": alerts}
+        if isinstance(result, dict) and "reply" in result:
+            return result
+        return {"reply": json.dumps(result, ensure_ascii=False), "alerts": alerts}
+    except Exception:
+        # minimal fallback: render using first alert (or blank)
+        alert = alerts[0] if alerts else {}
+        advisory = render_advisory(alert, query, profile)
+        return {"reply": advisory, "alerts": alerts}
