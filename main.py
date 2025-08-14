@@ -5,6 +5,7 @@
 # - Newsletter is UNMETERED; requires verified login.
 # - PDF/Email/Push/Telegram are UNMETERED but require a PAID plan.
 # - Auth/verification endpoints added and left unmetered.
+# - Chat now REQUIRES verified email (403 if not verified).
 
 from __future__ import annotations
 import os
@@ -370,6 +371,24 @@ def _chat_impl():
         return _build_cors_response(make_response(jsonify({"error": "Missing 'query'"}), 400))
     if _advisor_callable is None:
         return _build_cors_response(make_response(jsonify({"error": "Advisor unavailable"}), 503))
+
+    # ✅ Require verified email for chat
+    try:
+        verified = False
+        if verification_status:
+            try:
+                verified, _ = verification_status(email)
+            except Exception:
+                verified = _is_verified(email)
+        else:
+            verified = _is_verified(email)
+        if not verified:
+            return _build_cors_response(
+                make_response(jsonify({"error": "Email not verified", "verification_required": True}), 403)
+            )
+    except Exception as e:
+        logger.error("verification check failed: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Verification check failed"}), 500))
 
     # ----- Plan usage (chat-only) -----
     try:
