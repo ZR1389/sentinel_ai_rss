@@ -1,4 +1,4 @@
-# plan_utils.py — plans, usage & gating • v2025-08-13
+# plan_utils.py — plans, usage & gating • v2025-08-13 (drop-in)
 
 from __future__ import annotations
 import os
@@ -12,12 +12,14 @@ from security_log_utils import log_security_event  # keep your existing logger
 DATABASE_URL = os.getenv("DATABASE_URL")
 DEFAULT_PLAN = os.getenv("DEFAULT_PLAN", "FREE").upper()
 # Which plans count as “paid” for feature gating (Telegram/Email/Push/PDF)
-PAID_PLANS = set(p.strip().upper() for p in os.getenv("PAID_PLANS", "PRO,ENTERPRISE").split(",") if p.strip())
+PAID_PLANS = set(
+    p.strip().upper() for p in os.getenv("PAID_PLANS", "PRO,ENTERPRISE").split(",") if p.strip()
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,8 @@ def ensure_user_exists(email: str, plan: str = DEFAULT_PLAN) -> None:
         # users row
         cur.execute("SELECT 1 FROM users WHERE email=%s", (email,))
         if not cur.fetchone():
-            cur.execute("INSERT INTO users (email, plan, is_active) VALUES (%s, %s, %s)", (email, plan, True))
+            # match your current schema (no is_active column)
+            cur.execute("INSERT INTO users (email, plan) VALUES (%s, %s)", (email, plan))
             log_security_event(event_type="user_created", email=email, details=f"Created new user with plan {plan}")
 
         # user_usage row (initialize period at start-of-month)
@@ -65,6 +68,7 @@ def ensure_user_exists(email: str, plan: str = DEFAULT_PLAN) -> None:
                 (email, 0, _first_of_month_utc().replace(tzinfo=None)),
             )
             log_security_event(event_type="usage_row_created", email=email, details="Initialized user_usage row")
+        conn.commit()
 
 
 def get_plan(email: str) -> str | None:
@@ -211,21 +215,21 @@ def increment_user_message_usage(email: str) -> None:
 
 def user_has_paid_plan(email: str) -> bool:
     """
-    Returns True if the user is active and on a paid plan (PRO/ENTERPRISE by default).
+    Returns True if the user is on a paid plan (defaults: PRO/ENTERPRISE).
     Safe fallback to False on any error.
     """
     email = _sanitize_email(email)
     if not email:
         return False
     try:
-        with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT plan, COALESCE(is_active, TRUE) AS is_active FROM users WHERE email=%s LIMIT 1", (email,))
+        with _conn() as conn, conn.cursor() as cur:
+            # your users table does NOT have is_active; keep it simple
+            cur.execute("SELECT plan FROM users WHERE email=%s LIMIT 1", (email,))
             row = cur.fetchone()
             if not row:
                 return False
-            plan = (row.get("plan") or "").upper()
-            is_active = bool(row.get("is_active"))
-            return is_active and plan in PAID_PLANS
+            plan = (row[0] or "").upper()
+            return plan in PAID_PLANS
     except Exception as e:
         logger.error("user_has_paid_plan error: %s", e)
         return False

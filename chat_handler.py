@@ -1,7 +1,8 @@
 # chat_handler.py — unmetered advisory orchestrator (client-facing helper) • v2025-08-13
 # Notes:
-# - Do NOT meter or gate here. /chat route in main.py handles quota after success.
-# - This module fetches alerts, context, and calls advisor; returns a JSON-serializable dict.
+# - Do NOT meter or plan-gate here. /chat route in main.py handles quota after success.
+# - This module now includes a *soft* verification guard (defense-in-depth):
+#   if user email isn’t verified, we return a structured message with next steps.
 
 from __future__ import annotations
 import json
@@ -16,18 +17,22 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
 # DB helpers
-# Expect these to be provided by your db_utils
 from db_utils import (
     fetch_alerts_from_db,
     fetch_past_incidents,
     fetch_user_profile,
 )
 
+# Optional single-value fetch for verification fallback
+try:
+    from db_utils import fetch_one
+except Exception:
+    fetch_one = None  # best-effort fallback
+
 # Advisor entrypoint (LLM)
-# Keep flexible: generate_advice should accept (query, alerts, **kwargs)
 from advisor import generate_advice
 
-# Plan/usage are for INFO only here (no gating / no metering)
+# Plan/usage are INFO-only here (no gating / no metering)
 try:
     from plan_utils import get_plan, get_usage
 except Exception:
@@ -42,6 +47,12 @@ try:
 except Exception:
     fuzzy_match_city = None
     normalize_city = None
+
+# Optional verification util (preferred)
+try:
+    from verification_utils import verification_status as _verification_status
+except Exception:
+    _verification_status = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,7 +118,6 @@ def _ensure_list(val) -> List[Any]:
         return []
     if isinstance(val, list):
         return val
-    # handle JSONB that might arrive as dict in some drivers—normalize to list if possible
     return list(val) if isinstance(val, (set, tuple)) else [val]
 
 def _iso_date(val) -> str:
@@ -135,7 +145,6 @@ def _iso_date(val) -> str:
         if not s:
             return ""
         try:
-            # handle 'Z'
             if s.endswith("Z"):
                 s = s[:-1] + "+00:00"
             dt = datetime.fromisoformat(s)
@@ -177,6 +186,25 @@ def _session_id(email: str, body: Optional[Dict[str, Any]]) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_DNS, email.strip().lower()))
     return str(uuid.uuid4())
 
+def _is_verified(email: str) -> bool:
+    """
+    Preferred: verification_utils.verification_status
+    Fallback: SELECT users.email_verified
+    """
+    try:
+        if _verification_status:
+            ok, _ = _verification_status(email)
+            return bool(ok)
+    except Exception:
+        pass
+    if fetch_one:
+        try:
+            row = fetch_one("SELECT email_verified FROM users WHERE email=%s", (email,))
+            return bool(row and row[0])
+        except Exception:
+            return False
+    return False
+
 # ---------------- Core ----------------
 def handle_user_query(
     message: str | Dict[str, Any],
@@ -189,14 +217,27 @@ def handle_user_query(
     """
     Entry: assemble context, fetch alerts, call advisor, and return a structured response.
     - NO metering/gating here — /chat endpoint meters AFTER success.
+    - Soft verification guard here (defense-in-depth). If not verified, we return an instruction payload.
     - `threat_type` maps to `alerts.category` (Option A schema).
     """
-    log.info("handle_user_query: ENTERED")
-    log.info("Received query | email=%s", email)
+    log.info("handle_user_query: ENTERED | email=%s", email)
 
     if not email:
         log_security_event(event_type="missing_email", details="handle_user_query called without email")
         raise ValueError("handle_user_query requires a valid authenticated user email.")
+
+    # ---- Soft verification guard (defense-in-depth) ----
+    if not _is_verified(email):
+        log_security_event(
+            event_type="chat_denied_unverified",
+            email=email,
+            details="Soft guard in chat_handler blocked unverified user",
+        )
+        return {
+            "error": "Email not verified. Please verify your email to use chat.",
+            "verify_required": True,
+            "actions": {"send_code": "/auth/verify/send", "confirm_code": "/auth/verify/confirm"},
+        }
 
     # Plan/usage are informational only
     plan_name = "FREE"
@@ -229,7 +270,7 @@ def handle_user_query(
     # Session
     session_id = _session_id(email, body)
 
-    # Cache key
+    # Cache key (after filters)
     cache_key = sha1(json.dumps(
         {"query": query, "region": region, "category": threat_type, "session_id": session_id},
         sort_keys=True, default=json_default
@@ -243,10 +284,9 @@ def handle_user_query(
     # ---------------- Fetch alerts ----------------
     try:
         log.info("DB: fetch_alerts_from_db(...)")
-        # Align with Option A schema: filter by category (not threat_level)
         db_alerts: List[Dict[str, Any]] = fetch_alerts_from_db(
             region=region,
-            category=threat_type,
+            category=threat_type,  # align with Option A schema
             limit=int(os.getenv("CHAT_ALERTS_LIMIT", "20")),
         )
         count = len(db_alerts or [])
@@ -306,7 +346,7 @@ def handle_user_query(
             "region": region,
             "threat_type": threat_type,
             "user_profile": user_profile,
-            "historical_alerts": historical_alerts,   # make it available to the advisor
+            "historical_alerts": historical_alerts,
         }
         if db_alerts and (all_low or alerts_stale):
             log.info("[Proactive Mode] All alerts low or stale → proactive advisory")
@@ -337,7 +377,7 @@ def handle_user_query(
             "threat_label": _ensure_label(alert.get("threat_label") or alert.get("label") or ""),
             "score": _ensure_num(alert.get("score", 0)),
             "confidence": _ensure_num(alert.get("confidence", 0)),
-            "published": _iso_date(alert),  # handles dict/field lookups
+            "published": _iso_date(alert),
             "city": _ensure_str(alert.get("city", "")),
             "country": _ensure_str(alert.get("country", "")),
             "region": _ensure_str(alert.get("region", "")),
@@ -348,7 +388,7 @@ def handle_user_query(
             "legal_risk": _ensure_str(alert.get("legal_risk", "")),
             "cyber_ot_risk": _ensure_str(alert.get("cyber_ot_risk", "")),
             "environmental_epidemic_risk": _ensure_str(alert.get("environmental_epidemic_risk", "")),
-            # Newer schema fields
+            # New schema fields
             "domains": _ensure_list(alert.get("domains")),
             "trend_direction": _ensure_str(alert.get("trend_direction", "")),
             "trend_score": _ensure_num(alert.get("trend_score", 0)),
@@ -357,13 +397,13 @@ def handle_user_query(
             "anomaly_flag": bool(alert.get("anomaly_flag") or alert.get("is_anomaly") or False),
             "early_warning_indicators": _ensure_list(alert.get("early_warning_indicators")),
             "reports_analyzed": int(alert.get("reports_analyzed") or 0),
-            "sources": _ensure_list(alert.get("sources")),  # list of {name,url,...} if present
+            "sources": _ensure_list(alert.get("sources")),
         })
 
     log.info("Alerts processed: %d", len(results))
     log_security_event(event_type="alerts_processed", email=email, plan=plan_name, details=f"count={len(results)}")
 
-    # Simple label histogram (optional telemetry)
+    # Optional telemetry
     try:
         label_counts: Dict[str, int] = {}
         for a in results:

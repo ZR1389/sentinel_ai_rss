@@ -303,6 +303,57 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         execute_values(cur, sql, rows)
     return len(rows)
 
+# ---------- NEW: Alerts fetch for Advisor/Chat ----------
+def fetch_alerts_from_db(
+    region: Optional[str] = None,
+    country: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 20
+) -> List[Dict[str, Any]]:
+    """
+    Pull recent enriched alerts (Option A schema).
+    Filters:
+      - region: matches any of region/city/country
+      - country, city: exact
+      - category: alerts.category (NOT threat_level)
+    """
+    where = []
+    params: List[Any] = []
+
+    if region:
+        where.append("(region = %s OR city = %s OR country = %s)")
+        params.extend([region, region, region])
+    if country:
+        where.append("country = %s")
+        params.append(country)
+    if city:
+        where.append("city = %s")
+        params.append(city)
+    if category:
+        where.append("category = %s")
+        params.append(category)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    q = f"""
+      SELECT uuid, title, summary, gpt_summary, link, source, published,
+             region, country, city, category, subcategory,
+             threat_level, threat_label, score, confidence, reasoning,
+             sentiment, forecast, legal_risk, cyber_ot_risk, environmental_epidemic_risk,
+             tags, trend_score, trend_score_msg, trend_direction, is_anomaly, anomaly_flag,
+             early_warning_indicators, series_id, incident_series, historical_context,
+             domains, incident_count_30d, recent_count_7d, baseline_avg_7d,
+             baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id
+      FROM alerts
+      {where_sql}
+      ORDER BY published DESC NULLS LAST
+      LIMIT %s
+    """
+    params.append(limit)
+    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(q, tuple(params))
+        return cur.fetchall()
+
 # ---------------------------------------------------------------------
 # Historical pulls for Threat Engine / Scoring
 # ---------------------------------------------------------------------

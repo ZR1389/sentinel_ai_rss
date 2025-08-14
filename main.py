@@ -5,7 +5,7 @@
 # - Newsletter is UNMETERED; requires verified login.
 # - PDF/Email/Push/Telegram are UNMETERED but require a PAID plan.
 # - Auth/verification endpoints added and left unmetered.
-# - Chat now REQUIRES verified email (403 if not verified).
+# - Profile endpoints added: /profile/me (GET), /profile/update (POST).
 
 from __future__ import annotations
 import os
@@ -138,12 +138,19 @@ except Exception as e:
     logger.error("verification_utils import failed: %s", e)
     issue_verification_code = verify_email_code = verification_status = None
 
-# DB utils for some handy reads
+# DB utils for some handy reads / writes
 try:
-    from db_utils import fetch_all, fetch_one
+    from db_utils import fetch_all, fetch_one, execute
 except Exception:
     fetch_all = None
     fetch_one = None
+    execute = None
+
+# psycopg2 Json helper for jsonb updates
+try:
+    from psycopg2.extras import Json
+except Exception:
+    Json = lambda x: x  # best-effort fallback if extras is unavailable
 
 # ---------- Helpers ----------
 def _json_request() -> Dict[str, Any]:
@@ -176,6 +183,41 @@ def _is_verified(email: str) -> bool:
         return bool(row and row[0])
     except Exception:
         return False
+
+def _load_user_profile(email: str) -> Dict[str, Any]:
+    """Return merged profile data from users + optional user_profiles.profile_json."""
+    if not fetch_one:
+        return {}
+    row = fetch_one(
+        "SELECT email, plan, name, employer, email_verified, "
+        "preferred_region, preferred_threat_type, home_location, extra_details "
+        "FROM users WHERE email=%s",
+        (email,),
+    )
+    if not row:
+        return {}
+
+    data: Dict[str, Any] = {
+        "email": row[0],
+        "plan": row[1],
+        "name": row[2],
+        "employer": row[3],
+        "email_verified": bool(row[4]),
+        "preferred_region": row[5],
+        "preferred_threat_type": row[6],
+        "home_location": row[7],
+        "extra_details": row[8] or {},
+    }
+
+    # Optional extended profile
+    try:
+        pr = fetch_one("SELECT profile_json FROM user_profiles WHERE email=%s", (email,))
+        if pr and pr[0]:
+            data["profile"] = pr[0]
+    except Exception:
+        pass
+
+    return data
 
 # ---------- Routes ----------
 @app.route("/healthz", methods=["GET"])
@@ -350,7 +392,74 @@ def auth_status():
             pass
     return _build_cors_response(jsonify({"ok": True, "email_verified": bool(verified), "plan": plan_name}))
 
-# ---------- Chat (metered AFTER success) ----------
+# ---------- Profile (login required; unmetered) ----------
+@app.route("/profile/me", methods=["GET"])
+@login_required
+def profile_me():
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+    email = get_logged_in_email()
+    user = _load_user_profile(email)
+    return _build_cors_response(jsonify({"ok": True, "user": user}))
+
+@app.route("/profile/update", methods=["POST", "OPTIONS"])
+def profile_update_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _profile_update_impl()
+
+@app.route("/profile/update", methods=["POST"])
+@login_required
+def _profile_update_impl():
+    if execute is None or fetch_one is None:
+        return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
+    email = get_logged_in_email()
+    payload = _json_request()
+
+    # Only update fields that were provided
+    updatable = ("name", "employer", "preferred_region", "preferred_threat_type", "home_location")
+    fields = {k: (payload.get(k) or "").strip() for k in updatable if k in payload}
+    extra_details = payload.get("extra_details")  # dict (optional)
+    profile_json = payload.get("profile")         # dict (optional; stored in user_profiles if present)
+
+    # Build dynamic UPDATE for users
+    if fields or (extra_details is not None):
+        sets = []
+        params = []
+        for k, v in fields.items():
+            sets.append(f"{k}=%s")
+            params.append(v)
+        if extra_details is not None:
+            sets.append("extra_details=%s")
+            try:
+                params.append(Json(extra_details))
+            except Exception:
+                params.append(extra_details)
+        sets_sql = ", ".join(sets)
+        try:
+            execute(f"UPDATE users SET {sets_sql} WHERE email=%s", tuple(params + [email]))
+        except Exception as e:
+            logger.error("profile update failed: %s", e)
+            return _build_cors_response(make_response(jsonify({"error": "Profile update failed"}), 500))
+
+    # Optional: upsert into user_profiles if provided
+    if profile_json is not None:
+        try:
+            execute(
+                "INSERT INTO user_profiles (email, profile_json) "
+                "VALUES (%s, %s) "
+                "ON CONFLICT (email) DO UPDATE SET profile_json = EXCLUDED.profile_json",
+                (email, Json(profile_json)),
+            )
+        except Exception as e:
+            # Non-fatal if table/column doesn't exist
+            logger.info("user_profiles upsert skipped: %s", e)
+
+    user = _load_user_profile(email)
+    return _build_cors_response(jsonify({"ok": True, "user": user}))
+
+# ---------- Chat (metered AFTER success; VERIFIED required) ----------
 @app.route("/chat", methods=["POST", "OPTIONS"])
 def chat_options():
     # keep preflight separate to preserve decorator behavior below
@@ -372,23 +481,24 @@ def _chat_impl():
     if _advisor_callable is None:
         return _build_cors_response(make_response(jsonify({"error": "Advisor unavailable"}), 503))
 
-    # ✅ Require verified email for chat
-    try:
-        verified = False
-        if verification_status:
-            try:
-                verified, _ = verification_status(email)
-            except Exception:
-                verified = _is_verified(email)
-        else:
+    # ----- Enforce VERIFIED email for chat -----
+    verified = False
+    if verification_status:
+        try:
+            verified, _ = verification_status(email)
+        except Exception:
             verified = _is_verified(email)
-        if not verified:
-            return _build_cors_response(
-                make_response(jsonify({"error": "Email not verified", "verification_required": True}), 403)
-            )
-    except Exception as e:
-        logger.error("verification check failed: %s", e)
-        return _build_cors_response(make_response(jsonify({"error": "Verification check failed"}), 500))
+    else:
+        verified = _is_verified(email)
+
+    if not verified:
+        return _build_cors_response(make_response(jsonify({
+            "error": "Email not verified. Please verify your email to use chat.",
+            "action": {
+                "send_code": "/auth/verify/send",
+                "confirm_code": "/auth/verify/confirm"
+            }
+        }), 403))
 
     # ----- Plan usage (chat-only) -----
     try:
@@ -546,7 +656,7 @@ def telegram_send_options():
 @login_required
 def _telegram_send_impl():
     if send_telegram_message is None or require_paid_feature is None:
-        return _build_cors_response(make_response(jsonify({"error": "Telegram dispatcher unavailable"}), 503))
+        return _build_cors_response(make_response(jsonify({"error": "Telegram send unavailable"}), 503))
 
     email = get_logged_in_email()
     ok, msg = require_paid_feature(email)
