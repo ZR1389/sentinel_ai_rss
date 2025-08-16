@@ -11,9 +11,12 @@ from __future__ import annotations
 import os
 import logging
 import traceback
+import base64
 from typing import Any, Dict, Optional
 
 from flask import Flask, request, jsonify, make_response
+
+from webpush_endpoints import webpush_bp
 
 # ---------- Logging ----------
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -21,6 +24,7 @@ logger = logging.getLogger("sentinel.main")
 
 # ---------- App ----------
 app = Flask(__name__)
+app.register_blueprint(webpush_bp)
 
 # ---------- Optional CORS (simple) ----------
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
@@ -157,6 +161,75 @@ try:
     from psycopg2.extras import Json
 except Exception:
     Json = lambda x: x  # best-effort fallback if extras is unavailable
+
+# ---------- Optional psycopg2 fallback for Telegram linking ----------
+DATABASE_URL = os.getenv("DATABASE_URL")
+_psql_ok = True
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except Exception as e:
+    _psql_ok = False
+    RealDictCursor = None
+
+def _psql_conn():
+    if not DATABASE_URL or not _psql_ok:
+        raise RuntimeError("psycopg2 or DATABASE_URL not available")
+    return psycopg2.connect(DATABASE_URL)
+
+def _ensure_telegram_table():
+    """
+    Creates the telegram_links table if not present.
+    Tries db_utils.execute first; falls back to psycopg2.
+    """
+    sql = """
+    CREATE TABLE IF NOT EXISTS telegram_links (
+      user_email TEXT PRIMARY KEY,
+      chat_id    TEXT NOT NULL,
+      handle     TEXT,
+      linked_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    try:
+        if execute is not None:
+            execute(sql, ())  # params tuple for helpers that require it
+            return
+    except Exception as e:
+        logger.info("db_utils.execute failed creating telegram_links, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                cur.execute(sql)
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to create telegram_links via psycopg2: %s", e)
+
+def _ensure_email_alerts_table():
+    """
+    Stores a user's incident email alerts preference.
+    """
+    sql = """
+    CREATE TABLE IF NOT EXISTS email_alerts (
+      user_email TEXT PRIMARY KEY,
+      enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """
+    try:
+        if execute is not None:
+            execute(sql, ())  # params tuple for helpers that require it
+            return
+    except Exception as e:
+        logger.info("db_utils.execute failed creating email_alerts, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                cur.execute(sql)
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to create email_alerts via psycopg2: %s", e)
 
 # ---------- Helpers ----------
 def _json_request() -> Dict[str, Any]:
@@ -683,6 +756,324 @@ def _telegram_send_impl():
         return _build_cors_response(make_response(jsonify({"error": "Telegram send failed"}), 500))
     return _build_cors_response(jsonify({"ok": True}))
 
+# ---------- Telegram pairing/status (paid gating happens when sending) ----------
+@app.route("/telegram_status", methods=["GET", "OPTIONS"])
+def telegram_status_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _telegram_status_impl()
+
+@app.route("/telegram_status", methods=["GET"])
+@login_required
+def _telegram_status_impl():
+    # Table ensure (safe if exists)
+    _ensure_telegram_table()
+
+    email = get_logged_in_email()
+
+    # Try db_utils first
+    if fetch_one is not None:
+        try:
+            row = fetch_one("SELECT chat_id, handle FROM telegram_links WHERE user_email=%s LIMIT 1", (email,))
+            if row:
+                # row may be tuple or dict depending on db_utils; handle both
+                chat_id = row[0] if isinstance(row, tuple) else row.get("chat_id")
+                handle = row[1] if isinstance(row, tuple) else row.get("handle")
+                payload = {"linked": True}
+                if handle:
+                    payload["handle"] = handle
+                return _build_cors_response(jsonify(payload))
+            return _build_cors_response(jsonify({"linked": False}))
+        except Exception as e:
+            logger.info("telegram_status via db_utils failed, falling back: %s", e)
+
+    # Fallback psycopg2
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT chat_id, handle FROM telegram_links WHERE user_email=%s LIMIT 1", (email,))
+                row = cur.fetchone()
+            payload = {"linked": bool(row)}
+            if row and row.get("handle"):
+                payload["handle"] = row["handle"]
+            return _build_cors_response(jsonify(payload))
+        except Exception as e:
+            logger.exception("telegram_status psycopg2 failed: %s", e)
+
+    # Soft-fail
+    return _build_cors_response(jsonify({"linked": False}))
+
+@app.route("/telegram_unlink", methods=["POST", "OPTIONS"])
+def telegram_unlink_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _telegram_unlink_impl()
+
+@app.route("/telegram_unlink", methods=["POST"])
+@login_required
+def _telegram_unlink_impl():
+    _ensure_telegram_table()
+    email = get_logged_in_email()
+
+    # Try db_utils first
+    if execute is not None:
+        try:
+            execute("DELETE FROM telegram_links WHERE user_email=%s", (email,))
+            return _build_cors_response(jsonify({"ok": True}))
+        except Exception as e:
+            logger.info("telegram_unlink via db_utils failed, falling back: %s", e)
+
+    # Fallback psycopg2
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM telegram_links WHERE user_email=%s", (email,))
+                conn.commit()
+            return _build_cors_response(jsonify({"ok": True}))
+        except Exception as e:
+            logger.exception("telegram_unlink psycopg2 failed: %s", e)
+            return _build_cors_response(make_response(jsonify({"error": "unlink failed"}), 500))
+
+    # If neither path worked:
+    return _build_cors_response(make_response(jsonify({"error": "unlink unavailable"}), 503))
+
+@app.route("/telegram_opt_in", methods=["GET", "OPTIONS"])
+def telegram_opt_in_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _telegram_opt_in_impl()
+
+@app.route("/telegram_opt_in", methods=["GET"])
+@login_required
+def _telegram_opt_in_impl():
+    username = (os.getenv("TELEGRAM_BOT_USERNAME") or "").lstrip("@")
+    if not username:
+        return _build_cors_response(make_response(jsonify({"error": "Bot not configured"}), 503))
+
+    email = get_logged_in_email()
+    token = base64.urlsafe_b64encode(email.encode()).decode().rstrip("=")
+    url = f"https://t.me/{username}?start={token}"
+
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Connect Telegram</title>
+<meta http-equiv="refresh" content="0;url={url}">
+</head><body>
+<p>Opening Telegram… If nothing happens, tap <a href="{url}">@{username}</a>.</p>
+</body></html>"""
+
+    resp = make_response(html, 200)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return _build_cors_response(resp)
+
+# ---------- PLAN & FEATURES for frontend ----------
+@app.route("/user_plan", methods=["GET"])
+@login_required
+def user_plan():
+    email = get_logged_in_email()
+
+    # Plan
+    plan_name = "FREE"
+    if get_plan:
+        try:
+            p = get_plan(email)
+            if isinstance(p, str) and p:
+                plan_name = p.upper()
+        except Exception:
+            pass
+
+    paid = plan_name in ("PRO", "ENTERPRISE")
+
+    # Features expected by frontend
+    features = {
+        "alerts": paid,      # umbrella for Push + incident Email + Telegram
+        "telegram": paid,
+        "pdf": paid,
+        "newsletter": True,  # newsletter is unmetered but requires verified login elsewhere
+    }
+
+    # Limits (normalize keys your UI reads)
+    limits = {}
+    if get_plan_limits:
+        try:
+            pl = get_plan_limits(email) or {}
+            limits["chat_messages_per_month"] = pl.get("chat_messages_per_month")
+            limits["max_alert_channels"] = pl.get("max_alert_channels")
+        except Exception:
+            pass
+
+    return _build_cors_response(
+        jsonify({"plan": plan_name, "features": features, "limits": limits})
+    )
+
+# ---------- Incident Email Alerts (preference, paid-gated when enabling) ----------
+@app.route("/email_alerts_status", methods=["GET", "OPTIONS"])
+def email_alerts_status_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _email_alerts_status_impl()
+
+@app.route("/email_alerts_status", methods=["GET"])
+@login_required
+def _email_alerts_status_impl():
+    _ensure_email_alerts_table()
+    email = get_logged_in_email()
+
+    enabled = False
+
+    if fetch_one is not None:
+        try:
+            row = fetch_one("SELECT enabled FROM email_alerts WHERE user_email=%s LIMIT 1", (email,))
+            if row is not None:
+                enabled = bool(row[0] if isinstance(row, tuple) else row.get("enabled"))
+            return _build_cors_response(jsonify({"enabled": enabled}))
+        except Exception as e:
+            logger.info("email_alerts_status via db_utils failed, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT enabled FROM email_alerts WHERE user_email=%s LIMIT 1", (email,))
+                r = cur.fetchone()
+                if r is not None:
+                    enabled = bool(r.get("enabled"))
+            return _build_cors_response(jsonify({"enabled": enabled}))
+        except Exception as e:
+            logger.exception("email_alerts_status psycopg2 failed: %s", e)
+
+    return _build_cors_response(jsonify({"enabled": False}))
+
+@app.route("/email_alerts_enable", methods=["POST", "OPTIONS"])
+def email_alerts_enable_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _email_alerts_enable_impl()
+
+@app.route("/email_alerts_enable", methods=["POST"])
+@login_required
+def _email_alerts_enable_impl():
+    _ensure_email_alerts_table()
+    if require_paid_feature is None:
+        return _build_cors_response(make_response(jsonify({"error": "Plan gate unavailable"}), 503))
+
+    email = get_logged_in_email()
+    ok, msg = require_paid_feature(email)
+    if not ok:
+        return _build_cors_response(make_response(jsonify({"error": msg}), 403))
+
+    # Upsert true
+    try:
+        if execute is not None:
+            execute(
+                "INSERT INTO email_alerts (user_email, enabled) VALUES (%s, TRUE) "
+                "ON CONFLICT (user_email) DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=now()",
+                (email,),
+            )
+            return _build_cors_response(jsonify({"ok": True}))
+    except Exception as e:
+        logger.info("email_alerts_enable via db_utils failed, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO email_alerts (user_email, enabled) VALUES (%s, TRUE) "
+                    "ON CONFLICT (user_email) DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=now()",
+                    (email,),
+                )
+                conn.commit()
+            return _build_cors_response(jsonify({"ok": True}))
+        except Exception as e:
+            logger.exception("email_alerts_enable psycopg2 failed: %s", e)
+            return _build_cors_response(make_response(jsonify({"error": "enable failed"}), 500))
+
+    return _build_cors_response(make_response(jsonify({"error": "enable unavailable"}), 503))
+
+@app.route("/email_alerts_disable", methods=["POST", "OPTIONS"])
+def email_alerts_disable_options():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _email_alerts_disable_impl()
+
+@app.route("/email_alerts_disable", methods=["POST"])
+@login_required
+def _email_alerts_disable_impl():
+    _ensure_email_alerts_table()
+    email = get_logged_in_email()
+
+    try:
+        if execute is not None:
+            execute(
+                "INSERT INTO email_alerts (user_email, enabled) VALUES (%s, FALSE) "
+                "ON CONFLICT (user_email) DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=now()",
+                (email,),
+            )
+            return _build_cors_response(jsonify({"ok": True}))
+    except Exception as e:
+        logger.info("email_alerts_disable via db_utils failed, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO email_alerts (user_email, enabled) VALUES (%s, FALSE) "
+                    "ON CONFLICT (user_email) DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=now()",
+                    (email,),
+                )
+                conn.commit()
+            return _build_cors_response(jsonify({"ok": True}))
+        except Exception as e:
+            logger.exception("email_alerts_disable psycopg2 failed: %s", e)
+            return _build_cors_response(make_response(jsonify({"error": "disable failed"}), 500))
+
+    return _build_cors_response(make_response(jsonify({"error": "disable unavailable"}), 503))
+
+# ---------- Alerts (paid-gated list for frontend) ----------
+@app.route("/alerts", methods=["GET"])
+@login_required
+def alerts_list():
+    email = get_logged_in_email()
+    if require_paid_feature is None:
+        return _build_cors_response(make_response(jsonify({"error": "Plan gate unavailable"}), 503))
+    ok, msg = require_paid_feature(email)
+    if not ok:
+        return _build_cors_response(make_response(jsonify({"error": msg}), 403))
+
+    limit = int(request.args.get("limit", 100))
+
+    sql = """
+        SELECT
+          uuid, title, summary, gpt_summary, link, source,
+          published, region, country, city,
+          category, subcategory,
+          threat_level, score, confidence,
+          reasoning, forecast,
+          tags, early_warning_indicators
+        FROM alerts
+        ORDER BY published DESC NULLS LAST
+        LIMIT %s
+    """
+
+    # Try db_utils first
+    if fetch_all is not None:
+        try:
+            rows = fetch_all(sql, (limit,))
+            return _build_cors_response(jsonify({"alerts": rows}))
+        except Exception as e:
+            logger.info("/alerts via db_utils failed, falling back: %s", e)
+
+    # Fallback psycopg2
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, (limit,))
+                rows = cur.fetchall()
+            return _build_cors_response(jsonify({"alerts": rows}))
+        except Exception as e:
+            logger.exception("/alerts psycopg2 failed: %s", e)
+            return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+    return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
 # ---------- RSS & Engine (unmetered) ----------
 @app.route("/rss/run", methods=["POST", "OPTIONS"])
 def rss_run():
@@ -737,13 +1128,28 @@ def engine_run():
         logger.error("engine_run error: %s\n%s", e, traceback.format_exc())
         return _build_cors_response(make_response(jsonify({"error": "Threat Engine failed"}), 500))
 
-# ---------- Alerts debug ----------
+# ---------- Alerts (richer payload for frontend) ----------
 @app.route("/alerts/latest", methods=["GET"])
+@login_required
 def alerts_latest():
+    # Paid gate (consistent with /alerts)
+    if require_paid_feature is None:
+        return _build_cors_response(make_response(jsonify({"error": "Plan gate unavailable"}), 503))
+    email = get_logged_in_email()
+    ok, msg = require_paid_feature(email)
+    if not ok:
+        return _build_cors_response(make_response(jsonify({"error": msg}), 403))
+
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
 
-    limit = int(request.args.get("limit", 20))
+    # Cap limit defensively
+    try:
+        limit = int(request.args.get("limit", 20))
+    except Exception:
+        limit = 20
+    limit = max(1, min(limit, 500))
+
     region = request.args.get("region")
     country = request.args.get("country")
     city = request.args.get("city")
@@ -751,6 +1157,7 @@ def alerts_latest():
     where = []
     params = []
     if region:
+        # Keep original behavior: region param can match region OR city
         where.append("(region = %s OR city = %s)")
         params.extend([region, region])
     if country:
@@ -762,14 +1169,35 @@ def alerts_latest():
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     q = f"""
-        SELECT uuid, published, source, title, city, country, category, subcategory,
-               threat_level, score, trend_direction, anomaly_flag, domains
+        SELECT
+          uuid,
+          published,
+          source,
+          title,
+          link,
+          region,
+          country,
+          city,
+          category,
+          subcategory,
+          threat_level,
+          threat_label,
+          score,
+          confidence,
+          gpt_summary,
+          summary,
+          en_snippet,
+          trend_direction,
+          anomaly_flag,
+          domains,
+          tags
         FROM alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST
         LIMIT %s
     """
     params.append(limit)
+
     try:
         rows = fetch_all(q, tuple(params))
         return _build_cors_response(jsonify({"ok": True, "items": rows}))

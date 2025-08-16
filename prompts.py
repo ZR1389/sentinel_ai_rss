@@ -273,30 +273,6 @@ FOLLOWUP_REMINDER_PROMPT = (
     "If the user acts on urgent advice, offer a follow-up prompt after a suitable delay: 'Would you like a check-in reminder or further situational monitoring?'"
 )
 
-# --- Preset Questions (restored) ---
-SENTINEL_AI_PRESET_QUESTIONS = [
-    "What is the geopolitical impact of recent events in [country/region]?",
-    "Are there any travel advisories for [city/country] right now?",
-    "How could this incident affect supply chains or logistics?",
-    "Is there any medical or health risk related to this event?",
-    "Will weather disruption impact travel or safety in this area?",
-    "What’s the overall threat level for travelers to [destination]?",
-    "Compare current risks in [region] to last year.",
-    "What specific advice do you have for [profession] traveling to [country]?",
-    "What legal or regulatory risks should I know before traveling?",
-    "What should travelers with disabilities be aware of in [region]?",
-    "What should I do if violence breaks out in [city]?",
-    "What are the safest areas to stay near [destination]?",
-    "Could this be part of a broader pattern or trend?",
-    "Does this report show signs of propaganda or information warfare?",
-    "Is it safe to work with a local fixer in [region]?",
-    "Can you check the safety of this travel itinerary?",
-    "What’s the digital surveillance risk in [country]?",
-    "Are there any cyber or OT risks for my business in [region]?",
-    "Are wildfires, air quality, or epidemics affecting [destination]?",
-    "How can I improve Sentinel AI recommendations for my needs?"
-]
-
 # --- VIP / High-Tier Prompts (restored) ---
 DISINFORMATION_ANALYSIS_PROMPT = (
     "Evaluate this report for signs of misinformation/disinformation or influence activity. "

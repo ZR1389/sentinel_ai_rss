@@ -23,3 +23,5 @@ schedule==1.2.2
 marshmallow>=3.0
 flask-limiter>=3.5
 PyJWT>=2.8
+cryptography>=42.0.0
+python-telegram-bot==21.6
