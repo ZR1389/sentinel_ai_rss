@@ -1205,6 +1205,108 @@ def alerts_latest():
         logger.error("alerts_latest error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
+# ---------- Alert Feedback ----------
+def _ensure_alert_feedback_table():
+    """
+    Creates the alert_feedback table if not present.
+    Columns:
+      id           BIGSERIAL PK
+      alert_id     TEXT (uuid or any identifying string from alerts)
+      user_email   TEXT (if logged in; else NULL)
+      text         TEXT (user feedback)
+      meta         JSONB (optional client metadata)
+      created_at   TIMESTAMPTZ default now()
+    """
+    sql = """
+    CREATE TABLE IF NOT EXISTS alert_feedback (
+      id          BIGSERIAL PRIMARY KEY,
+      alert_id    TEXT,
+      user_email  TEXT,
+      text        TEXT NOT NULL,
+      meta        JSONB,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """
+    try:
+        if execute is not None:
+            execute(sql)
+            return
+    except Exception as e:
+        logger.info("db_utils.execute failed creating alert_feedback, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                cur.execute(sql)
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to create alert_feedback via psycopg2: %s", e)
+
+
+@app.route("/feedback/alert", methods=["POST", "OPTIONS"])
+def feedback_alert():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+
+    _ensure_alert_feedback_table()
+    payload = _json_request()
+
+    alert_id = (payload.get("alert_id") or "").strip() or None
+    text = (payload.get("text") or "").strip()
+    meta = payload.get("meta")  # optional dict with ui_version, filters, etc.
+
+    if not text:
+        return _build_cors_response(make_response(jsonify({"error": "Missing text"}), 400))
+    # keep it sane
+    if len(text) > 4000:
+        text = text[:4000]
+
+    # Try to capture who sent it (JWT if present; else fall back)
+    user_email = None
+    try:
+        if get_logged_in_email:
+            user_email = get_logged_in_email()
+    except Exception:
+        pass
+    if not user_email:
+        hdr_email = request.headers.get("X-User-Email")
+        if hdr_email:
+            user_email = hdr_email.strip().lower()
+
+    # Insert (db_utils first, then psycopg2)
+    try:
+        if execute is not None:
+            try:
+                m = Json(meta) if isinstance(meta, dict) else None
+            except Exception:
+                m = meta if isinstance(meta, dict) else None
+            execute(
+                "INSERT INTO alert_feedback (alert_id, user_email, text, meta) VALUES (%s, %s, %s, %s)",
+                (alert_id, user_email, text, m),
+            )
+            return _build_cors_response(jsonify({"ok": True}))
+    except Exception as e:
+        logger.info("feedback_alert via db_utils failed, falling back: %s", e)
+
+    if _psql_ok and DATABASE_URL:
+        try:
+            with _psql_conn() as conn, conn.cursor() as cur:
+                try:
+                    m = Json(meta) if isinstance(meta, dict) else None
+                except Exception:
+                    m = meta if isinstance(meta, dict) else None
+                cur.execute(
+                    "INSERT INTO alert_feedback (alert_id, user_email, text, meta) VALUES (%s, %s, %s, %s)",
+                    (alert_id, user_email, text, m),
+                )
+                conn.commit()
+            return _build_cors_response(jsonify({"ok": True}))
+        except Exception as e:
+            logger.exception("feedback_alert psycopg2 failed: %s", e)
+            return _build_cors_response(make_response(jsonify({"error": "Feedback store failed"}), 500))
+
+    return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
 # ---------- Entrypoint ----------
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
