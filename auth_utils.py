@@ -15,6 +15,9 @@ from psycopg2.extras import RealDictCursor
 
 from security_log_utils import log_security_event
 
+# INJECT: Password strength check
+from password_strength_utils import is_strong_password
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET = os.getenv("JWT_SECRET")  # DO NOT default in production
 JWT_ALGORITHM = os.getenv("JWT_ALG", "HS256")
@@ -169,6 +172,9 @@ def register_user(email: str, password: Optional[str], name: Optional[str] = Non
     """
     Creates user, sets password, initializes profile. Returns (ok, msg).
     """
+    # ENFORCE strong password
+    if not password or not is_strong_password(password):
+        return False, "Password does not meet strength requirements."
     try:
         created = create_user(email, password, name, employer, plan)
         ensure_user_profile(email)
@@ -197,6 +203,10 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, str, Optional[st
             # Block disabled accounts
             if not row.get("is_active", True):
                 return False, "Account disabled", None, None
+
+            # ENFORCE: only allow login if email is verified!
+            if not row.get("email_verified"):
+                return False, "Email not verified. Please verify your email to log in.", None, None
 
             if not verify_password(password, row["password_hash"]):
                 return False, "Invalid credentials", None, None
