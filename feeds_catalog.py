@@ -125,6 +125,7 @@ COUNTRY_FEEDS = {
     "iran": ["https://www.tehrantimes.com/rss"],
     "iraq": ["https://www.iraqinews.com/feed/"],
     "syria": ["http://sana.sy/en/?feed=rss2"],
+    "serbia": ["https://www.danas.rs/feed/"],
     "lebanon": ["https://www.dailystar.com.lb/RSS.aspx?id=1"],
     "israel": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
     "uae": ["https://gulfnews.com/rss/1.454509"],

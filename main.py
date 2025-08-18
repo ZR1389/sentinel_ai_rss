@@ -298,6 +298,16 @@ def _load_user_profile(email: str) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # --- NEW: Attach usage ---
+    try:
+        # This function must return a dict, e.g. {'chat_messages_used': 2}
+        from plan_utils import get_usage
+        usage = get_usage(email) if get_usage else None
+        if usage:
+            data["usage"] = usage
+    except Exception:
+        data["usage"] = {}  
+
     return data
 
 # ---------- Routes ----------
