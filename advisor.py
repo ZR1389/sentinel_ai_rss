@@ -411,6 +411,9 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         "next_review_hours": next_review,
         "profile_data": profile_data or {},
         "user_message": user_message,
+        # PATCH: Provide incident_count and threat_type for prompt formatting
+        "incident_count": alert.get("incident_count", alert.get("incident_count_30d", "n/a")),
+        "threat_type": alert.get("category", alert.get("threat_type", "risk")),
     }
     return payload, roles, hits
 
@@ -438,6 +441,8 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         trend_citation_line=trend_line,
         trend_direction=input_data.get("trend_direction", "stable"),
         incident_count_30d=input_data.get("incident_count_30d", "n/a"),
+        incident_count=input_data.get("incident_count", input_data.get("incident_count_30d", "n/a")),
+        threat_type=input_data.get("threat_type", "risk"),
         recent_count_7d=input_data.get("recent_count_7d", "n/a"),
         baseline_avg_7d=input_data.get("baseline_avg_7d", "n/a"),
         baseline_ratio=input_data.get("baseline_ratio", "n/a"),
