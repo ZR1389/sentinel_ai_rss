@@ -438,6 +438,7 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         recent_count_7d=input_data.get("recent_count_7d", "n/a"),
         baseline_avg_7d=input_data.get("baseline_avg_7d", "n/a"),
         baseline_ratio=input_data.get("baseline_ratio", "n/a"),
+        anomaly_flag=input_data.get("anomaly_flag", False),
         # Add more keys here if your template uses them
     )
 
