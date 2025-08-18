@@ -327,7 +327,7 @@ def _normalize_sources(sources: Any) -> List[Dict[str, str]]:
     return out
 
 # ---------- Trend-citation line ----------
-def _build_trend_citation_line(alert: Dict[str, Any]) -> str:
+def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
     td = str(alert.get("trend_direction") or "stable")
     br = alert.get("baseline_ratio")
     ic30 = alert.get("incident_count_30d")
@@ -366,7 +366,8 @@ def _build_trend_citation_line(alert: Dict[str, Any]) -> str:
     elif primary == "ot_ics":
         action = "isolate OT segments, block external remote access, and restrict to break-glass accounts"
 
-    return f"Because {x} for {cat}, do {action}."
+    trend_line = f"Because {x} for {cat}, do {action}."
+    return trend_line, action
 
 # ---------- Input payload for LLM ----------
 def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str], Dict[str, List[str]]]:
@@ -415,9 +416,11 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
 
 # ---------- Main entry ----------
 def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Optional[Dict[str, Any]] = None, plan: str = "FREE") -> str:
-    trend_line = _build_trend_citation_line(alert)
+    trend_line, action = _build_trend_citation_line(alert)
     input_data, roles, hits = _build_input_payload(alert, user_message, profile_data)
     input_data["trend_citation_line"] = trend_line
+    input_data["action"] = action
+    input_data["specific_action"] = action  # For prompts using {specific action}
 
     system_content = "\n\n".join([
         SYSTEM_INFO_PROMPT,
@@ -439,6 +442,8 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         baseline_avg_7d=input_data.get("baseline_avg_7d", "n/a"),
         baseline_ratio=input_data.get("baseline_ratio", "n/a"),
         anomaly_flag=input_data.get("anomaly_flag", False),
+        action=action,
+        specific_action=action,
         # Add more keys here if your template uses them
     )
 
