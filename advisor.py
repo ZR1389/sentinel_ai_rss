@@ -541,6 +541,14 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     out = ensure_has_playbook_or_alts(out, hits, alts)
     return out
 
+def generate_advice(query, alerts, user_profile=None, **kwargs):
+    """
+    Generates advice based on the query and alert list.
+    """
+    alert = alerts[0] if alerts else {}
+    advisory = render_advisory(alert, query, user_profile)
+    return {"reply": advisory, "alerts": alerts}
+
 def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
     """
     Compatibility wrapper so callers expecting advisor.handle_user_query() still work.
