@@ -153,7 +153,6 @@ COUNTRY_FEEDS = {
     "greece": ["https://www.ekathimerini.com/rss"],
     "ukraine": ["https://www.kyivpost.com/feed"],
     "belarus": ["https://eng.belta.by/rss_en"],
-    # More can be added as needed...
 }
 
 # Global news/alerts for fallback
@@ -166,6 +165,10 @@ GLOBAL_FEEDS = [
     "https://feeds.feedburner.com/TheHackersNews",
     "https://www.csoonline.com/feed/",
     "https://intel471.com/blog/feed",
-    "https://www.aljazeera.com/xml/rss/all.xml",
     "https://www.gov.uk/foreign-travel-advice.atom",
+    "https://travel.state.gov/_res/rss/TAsTWs.xml",
+    "https://www.smartraveller.gov.au/countries/documents/do-not-travel.rss",
+    "https://www.smartraveller.gov.au/countries/documents/reconsider-your-need-to-travel.rss",
+    "https://www.gdacs.org/xml/rss_24h.xml",
+    "https://www.emro.who.int/index.php?option=com_mediarss&feed_id=3&format=raw",
 ]

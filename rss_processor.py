@@ -269,6 +269,7 @@ def _core_fallback_feeds() -> List[str]:
         "https://www.rt.com/rss/news/",
         "https://www.france24.com/en/rss",
         "https://www.scmp.com/rss/5/feed/",
+        "https://www.smartraveller.gov.au/countries/documents/index.rss",
   
     ]
 

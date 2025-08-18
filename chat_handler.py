@@ -304,6 +304,28 @@ def handle_user_query(
             "session_id": session_id,
         }
 
+    # ----------- SMARTER NO-DATA / NO ALERTS GUARD -----------
+    if not db_alerts:
+        log.info("No alerts found for query='%s', region='%s', threat_type='%s'", query, region, threat_type)
+        return {
+            "reply": (
+                "No relevant security alerts or credible intelligence were found for your query at this time. "
+                "Try rewording your question, specifying a different location or category, or check back later as new intelligence becomes available. "
+                "If you believe this is an error, please contact support or try again with more details."
+            ),
+            "plan": plan_name,
+            "alerts": [],
+            "usage": usage_info,
+            "session_id": session_id,
+            "no_data": True,
+            "suggestions": [
+                "Rephrase your question with more specifics (e.g., city, threat type).",
+                "Try a different location or topic.",
+                "Check back in a few hours for new intelligence.",
+                "Contact support if you believe this is a mistake."
+            ]
+        }
+
     # ---------------- Historical context ----------------
     historical_alerts: List[Dict[str, Any]] = []
     history_category = None

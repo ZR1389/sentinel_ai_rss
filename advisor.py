@@ -1,4 +1,4 @@
-# advisor.py — Sentinel Advisor (Final v2025-08-12) (patched for safe .format() and missing keys)
+# advisor.py — Sentinel Advisor (Final v2025-08-12) (patched for safe .format() and missing keys, and strips excessive blank lines)
 # - Reads enriched alerts (schema aligned)
 # - Enforces PHYSICAL+DIGITAL, NOW+PREP, role-specific sections
 # - Programmatic domain playbook hits, richer alternatives
@@ -169,6 +169,14 @@ def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) 
     if ("ALTERNATIVES —" not in out) and alts:
         out += "\n\nALTERNATIVES —\n" + "\n".join(f"• {a}" for a in alts)
     return out
+
+def clean_auto_sections(advisory: str) -> str:
+    # Remove lines like '• [auto] Section added (no content)' for cleaner UI
+    return re.sub(r"\n?• \[auto\] Section added \(no content\)", "", advisory)
+
+def strip_excessive_blank_lines(text: str) -> str:
+    # Replace 3+ consecutive newlines with 2 newlines, and strip trailing whitespace
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 # ---------- Utilities ----------
 def _first_present(domains: List[str]) -> Optional[str]:
@@ -411,7 +419,6 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         "next_review_hours": next_review,
         "profile_data": profile_data or {},
         "user_message": user_message,
-        # PATCH: Provide incident_count and threat_type for prompt formatting
         "incident_count": alert.get("incident_count", alert.get("incident_count_30d", "n/a")),
         "threat_type": alert.get("category", alert.get("threat_type", "risk")),
     }
@@ -434,7 +441,6 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         ADVISOR_STRUCTURED_SYSTEM_PROMPT,
     ])
 
-    # Patch: Always supply all fields your prompt expects, with safe defaults
     user_content = ADVISOR_STRUCTURED_USER_PROMPT.format(
         user_message=user_message,
         input_data=json.dumps(input_data, ensure_ascii=False),
@@ -449,7 +455,6 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         anomaly_flag=input_data.get("anomaly_flag", False),
         action=action,
         specific_action=action,
-        # Add more keys here if your template uses them
     )
 
     messages = [
@@ -463,7 +468,6 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         logger.error(f"[Advisor] LLM failed: {e}")
         return _fallback_advisory(alert, trend_line, input_data)
 
-    # Guards
     if trend_line not in advisory:
         advisory += ("\n\n" + trend_line)
 
@@ -479,11 +483,11 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
             for it in items:
                 advisory += f"\n• [{title}] {it}"
 
-    # Ensure sections + at least one domain hit/alternatives
     advisory = ensure_sections(advisory)
     advisory = ensure_has_playbook_or_alts(advisory, hits, alts)
-
-    return advisory.strip()
+    advisory = clean_auto_sections(advisory)
+    advisory = strip_excessive_blank_lines(advisory)
+    return advisory
 
 def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[str, Any]) -> str:
     region = input_data.get("region") or "Unknown location"
@@ -553,10 +557,11 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     lines.append("ANALYST CTA —")
     lines.append("• Reply ‘monitor 12h’ for an auto-check, or request a routed analyst review if risk increases.")
 
-    # Final guard
     out = "\n".join(lines)
     out = ensure_sections(out)
     out = ensure_has_playbook_or_alts(out, hits, alts)
+    out = clean_auto_sections(out)
+    out = strip_excessive_blank_lines(out)
     return out
 
 def generate_advice(query, alerts, user_profile=None, **kwargs):
@@ -577,7 +582,6 @@ def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
     profile = payload.get("profile_data") or {}
     alerts = (payload.get("input_data") or {}).get("alerts") or []
     try:
-        # if your module exposes generate_advice(query, alerts, **kwargs)
         result = generate_advice(query, alerts, user_profile=profile, **kwargs)  # type: ignore
         if isinstance(result, str):
             return {"reply": result, "alerts": alerts}
@@ -585,7 +589,6 @@ def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
             return result
         return {"reply": json.dumps(result, ensure_ascii=False), "alerts": alerts}
     except Exception:
-        # minimal fallback: render using first alert (or blank)
         alert = alerts[0] if alerts else {}
         advisory = render_advisory(alert, query, profile)
         return {"reply": advisory, "alerts": alerts}
