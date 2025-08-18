@@ -1,4 +1,4 @@
-# threat_engine.py — Sentinel Threat Engine (Final v2025-08-12)
+# threat_engine.py — Sentinel Threat Engine (Final v2025-08-12) (patched for incident_* safe defaults)
 # - Reads raw_alerts -> enriches -> writes alerts (client-facing)
 # - Aligns with your alerts schema (domains, baseline metrics, trend, sources, etc.)
 # - Defensive defaults + backward compatibility (is_anomaly -> anomaly_flag, series_id/incident_series -> cluster_id)
@@ -184,12 +184,13 @@ def _baseline_metrics(alert) -> dict:
         else:
             trend_direction = "stable"
 
+    # PATCH: Provide safe defaults for all fields if missing
     return {
-        "incident_count_30d": int(incident_count_30d),
-        "recent_count_7d": int(recent_count_7d),
-        "baseline_avg_7d": round(float(baseline_avg_7d), 3),
-        "baseline_ratio": round(float(baseline_ratio), 3),
-        "trend_direction": trend_direction,
+        "incident_count_30d": int(incident_count_30d) if incident_count_30d is not None else 0,
+        "recent_count_7d": int(recent_count_7d) if recent_count_7d is not None else 0,
+        "baseline_avg_7d": round(float(baseline_avg_7d), 3) if baseline_avg_7d is not None else 0.0,
+        "baseline_ratio": round(float(baseline_ratio), 3) if baseline_ratio is not None else 1.0,
+        "trend_direction": trend_direction if trend_direction is not None else "stable",
     }
 
 # ---------- Domain Tagging ----------
@@ -370,6 +371,18 @@ def summarize_single_alert(alert):
     base = _baseline_metrics(alert)
     alert.update(base)
 
+    # PATCH: Defensive defaults for incident/trend fields
+    if alert.get("incident_count_30d") is None:
+        alert["incident_count_30d"] = 0
+    if alert.get("recent_count_7d") is None:
+        alert["recent_count_7d"] = 0
+    if alert.get("baseline_avg_7d") is None:
+        alert["baseline_avg_7d"] = 0.0
+    if alert.get("baseline_ratio") is None:
+        alert["baseline_ratio"] = 1.0
+    if alert.get("trend_direction") is None:
+        alert["trend_direction"] = "stable"
+
     # Early warnings
     ewi = early_warning_indicators(historical_incidents) or []
     alert["early_warning_indicators"] = ewi
@@ -455,6 +468,17 @@ def summarize_alerts(alerts):
         h = alert_hash(alert)
         if h not in seen:
             alert["label"] = alert.get("label", alert.get("threat_label", "Unknown"))
+            # Defensive patch: incident/trend defaults
+            if alert.get("incident_count_30d") is None:
+                alert["incident_count_30d"] = 0
+            if alert.get("recent_count_7d") is None:
+                alert["recent_count_7d"] = 0
+            if alert.get("baseline_avg_7d") is None:
+                alert["baseline_avg_7d"] = 0.0
+            if alert.get("baseline_ratio") is None:
+                alert["baseline_ratio"] = 1.0
+            if alert.get("trend_direction") is None:
+                alert["trend_direction"] = "stable"
             unique_alerts.append(alert)
             seen.add(h)
 
@@ -475,6 +499,17 @@ def summarize_alerts(alerts):
                 h = alert_hash(alert)
                 if h not in failed_hashes:
                     alert["label"] = alert.get("label", alert.get("threat_label", "Unknown"))
+                    # Defensive patch: incident/trend defaults
+                    if alert.get("incident_count_30d") is None:
+                        alert["incident_count_30d"] = 0
+                    if alert.get("recent_count_7d") is None:
+                        alert["recent_count_7d"] = 0
+                    if alert.get("baseline_avg_7d") is None:
+                        alert["baseline_avg_7d"] = 0.0
+                    if alert.get("baseline_ratio") is None:
+                        alert["baseline_ratio"] = 1.0
+                    if alert.get("trend_direction") is None:
+                        alert["trend_direction"] = "stable"
                     old_failed.append(alert)
                     failed_hashes.add(h)
             with open(failed_cache_path, "w", encoding="utf-8") as f:
@@ -504,8 +539,11 @@ def _normalize_for_db(a: dict) -> dict:
     a["trend_direction"] = a.get("trend_direction") or "stable"
     a["baseline_ratio"] = a.get("baseline_ratio", 1.0)
     a["baseline_avg_7d"] = a.get("baseline_avg_7d", 0.0)
-    a["incident_count_30d"] = a.get("incident_count_30d")
-    a["recent_count_7d"] = a.get("recent_count_7d")
+    # PATCH: Defensive defaults for incident/trend fields
+    if a.get("incident_count_30d") is None:
+        a["incident_count_30d"] = 0
+    if a.get("recent_count_7d") is None:
+        a["recent_count_7d"] = 0
     return a
 
 def enrich_and_store_alerts(region=None, country=None, city=None, limit=1000):

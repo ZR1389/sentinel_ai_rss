@@ -1,4 +1,4 @@
-# db_utils.py — drop-in (Sentinel AI) • v2025-08-13
+# db_utils.py — drop-in (Sentinel AI) • v2025-08-13 (patched for safe defaults on alert keys)
 # Postgres helpers for RSS ingest, Threat Engine, and Advisor pipeline.
 
 from __future__ import annotations
@@ -194,6 +194,23 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         is_anomaly   = bool(a.get("is_anomaly") or a.get("anomaly_flag") or False)
         anomaly_flag = bool(a.get("anomaly_flag") or False)
 
+        # PATCH: provide safe defaults for commonly missing fields
+        incident_count_30d = a.get("incident_count_30d")
+        if incident_count_30d is None:
+            incident_count_30d = 0
+        recent_count_7d = a.get("recent_count_7d")
+        if recent_count_7d is None:
+            recent_count_7d = 0
+        baseline_avg_7d = a.get("baseline_avg_7d")
+        if baseline_avg_7d is None:
+            baseline_avg_7d = 0
+        baseline_ratio = a.get("baseline_ratio")
+        if baseline_ratio is None:
+            baseline_ratio = 1.0
+        trend_direction = a.get("trend_direction")
+        if trend_direction is None:
+            trend_direction = "stable"
+
         return (
             aid,
             a.get("title"),
@@ -233,11 +250,11 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("historical_context"),
             a.get("subcategory"),
             _json(domains),   # jsonb
-            a.get("incident_count_30d"),
-            a.get("recent_count_7d"),
-            a.get("baseline_avg_7d"),
-            a.get("baseline_ratio"),
-            a.get("trend_direction"),
+            incident_count_30d,
+            recent_count_7d,
+            baseline_avg_7d,
+            baseline_ratio,
+            trend_direction,
             bool(anomaly_flag),
             a.get("future_risk_probability"),
             a.get("reports_analyzed"),
@@ -352,7 +369,20 @@ def fetch_alerts_from_db(
     params.append(limit)
     with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(q, tuple(params))
-        return cur.fetchall()
+        rows = cur.fetchall()
+        # PATCH: supply safe defaults for missing keys
+        for r in rows:
+            if r.get("incident_count_30d") is None:
+                r["incident_count_30d"] = 0
+            if r.get("recent_count_7d") is None:
+                r["recent_count_7d"] = 0
+            if r.get("baseline_avg_7d") is None:
+                r["baseline_avg_7d"] = 0
+            if r.get("baseline_ratio") is None:
+                r["baseline_ratio"] = 1.0
+            if r.get("trend_direction") is None:
+                r["trend_direction"] = "stable"
+        return rows
 
 # ---------------------------------------------------------------------
 # User profile helpers (for chat/advisor and /profile endpoints)

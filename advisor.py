@@ -1,4 +1,4 @@
-# advisor.py — Sentinel Advisor (Final v2025-08-12)
+# advisor.py — Sentinel Advisor (Final v2025-08-12) (patched for safe .format() and missing keys)
 # - Reads enriched alerts (schema aligned)
 # - Enforces PHYSICAL+DIGITAL, NOW+PREP, role-specific sections
 # - Programmatic domain playbook hits, richer alternatives
@@ -394,14 +394,14 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         "domains": domains,
         "reports_analyzed": alert.get("reports_analyzed") or alert.get("num_reports") or 1,
         "sources": _normalize_sources(alert.get("sources") or []),
-        "incident_count_30d": alert.get("incident_count_30d"),
-        "recent_count_7d": alert.get("recent_count_7d"),
-        "baseline_avg_7d": alert.get("baseline_avg_7d"),
-        "baseline_ratio": alert.get("baseline_ratio"),
-        "trend_direction": alert.get("trend_direction"),
-        "anomaly_flag": anomaly,
+        "incident_count_30d": alert.get("incident_count_30d") if alert.get("incident_count_30d") is not None else "n/a",
+        "recent_count_7d": alert.get("recent_count_7d") if alert.get("recent_count_7d") is not None else "n/a",
+        "baseline_avg_7d": alert.get("baseline_avg_7d") if alert.get("baseline_avg_7d") is not None else "n/a",
+        "baseline_ratio": alert.get("baseline_ratio") if alert.get("baseline_ratio") is not None else "n/a",
+        "trend_direction": alert.get("trend_direction") if alert.get("trend_direction") is not None else "stable",
+        "anomaly_flag": anomaly if anomaly is not None else False,
         "cluster_id": alert.get("cluster_id"),
-        "early_warning_indicators": alert.get("early_warning_indicators"),
+        "early_warning_indicators": alert.get("early_warning_indicators") or [],
         "future_risk_probability": alert.get("future_risk_probability"),
         "domain_playbook_hits": hits,
         "alternatives": _alternatives_if_needed(alert),
@@ -428,11 +428,17 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         ADVISOR_STRUCTURED_SYSTEM_PROMPT,
     ])
 
+    # Patch: Always supply all fields your prompt expects, with safe defaults
     user_content = ADVISOR_STRUCTURED_USER_PROMPT.format(
-    user_message=user_message,
-    input_data=json.dumps(input_data, ensure_ascii=False),
-    trend_citation_line=trend_line,
-    trend_direction=input_data.get("trend_direction") or "stable",
+        user_message=user_message,
+        input_data=json.dumps(input_data, ensure_ascii=False),
+        trend_citation_line=trend_line,
+        trend_direction=input_data.get("trend_direction", "stable"),
+        incident_count_30d=input_data.get("incident_count_30d", "n/a"),
+        recent_count_7d=input_data.get("recent_count_7d", "n/a"),
+        baseline_avg_7d=input_data.get("baseline_avg_7d", "n/a"),
+        baseline_ratio=input_data.get("baseline_ratio", "n/a"),
+        # Add more keys here if your template uses them
     )
 
     messages = [
