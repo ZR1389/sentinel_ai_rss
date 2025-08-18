@@ -13,7 +13,7 @@ SYSTEM_INFO_PROMPT = (
     "WHAT TO DO NOW (immediate) and HOW TO PREPARE (near-term). "
     "For each relevant domain (travel, personal, corporate, residential, family, VIP, diplomatic, business continuity, cyber/OT, digital hygiene, anti-kidnap, emergency/medical, counter-surveillance), "
     "include at least one proactive best practice. ALWAYS cite threat-engine trend logic explicitly with a sentence like: "
-    "‘Because {trend_direction}/{baseline_ratio}x/{incident_count_30d}/anomaly_flag={value}, do {specific action}.’"
+    "‘Because {trend_direction}/{baseline_ratio}x/{incident_count_30d}/anomaly_flag={anomaly_flag}, do {specific action}.’"
     "\nIf trend data is missing, use the most recent incident_count_30d, baseline_ratio, or anomaly_flag as fallback and state so explicitly."
 )
 
@@ -84,7 +84,7 @@ ADVISOR_STRUCTURED_SYSTEM_PROMPT = (
     "(d) early warning signs, (e) historical parallels supporting the prediction, (f) reference if risk is part of a developing series/cluster, "
     "and (g) mention batch anomaly flags if present.\n"
     "- EXPLANATION: clear reasoning citing context, operational realities, and patterns, including batch-level or trend-based escalation analysis. "
-    "Include at least one sentence of the form: ‘Because {trend_direction}/{baseline_ratio}x/{incident_count_30d}/anomaly_flag={value}, do {specific action}.’ "
+    "Include at least one sentence of the form: ‘Because {trend_direction}/{baseline_ratio}x/{incident_count_30d}/anomaly_flag={anomaly_flag}, do {specific action}.’ "
     "If trend data is missing, state so and cite the fallback signal explicitly.\n"
     "- ANALYST CTA: direct, time-bound call-to-action.\n"
     "If no new alerts exist, deliver region/threat/profession-specific proactive advice: what to watch, how to prepare, "
@@ -106,7 +106,7 @@ ADVISOR_STRUCTURED_USER_PROMPT = (
     "11. DOMAIN PLAYBOOK HITS — ≥1 proactive best practice per relevant domain. If no data for a domain, state 'No current actionable risk detected for [domain].'\n"
     "12. FORECAST: probability %, trend direction, next review time, early warning signs, historical context, anomaly/cluster if present\n"
     "13. EXPLANATION: reasoning based on experience, precedent, recent trend data, and anomaly/batch context if present. "
-    "Include a sentence like: ‘Because {trend_direction}/{incident_count_30d}/anomaly_flag={value} and baseline={baseline_ratio}x, do {action}.’ "
+    "Include a sentence like: ‘Because {trend_direction}/{incident_count_30d}/anomaly_flag={anomaly_flag} and baseline={baseline_ratio}x, do {action}.’ "
     "If trend data is missing, use available fallback and say so explicitly.\n"
     "14. ANALYST CTA\n"
     "\nUser query: {user_message}\nInput data: {input_data}\n"
