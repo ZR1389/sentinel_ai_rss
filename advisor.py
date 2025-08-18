@@ -429,9 +429,10 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     ])
 
     user_content = ADVISOR_STRUCTURED_USER_PROMPT.format(
-        user_message=user_message,
-        input_data=json.dumps(input_data, ensure_ascii=False),
-        trend_citation_line=trend_line,
+    user_message=user_message,
+    input_data=json.dumps(input_data, ensure_ascii=False),
+    trend_citation_line=trend_line,
+    trend_direction=input_data.get("trend_direction") or "stable",
     )
 
     messages = [
