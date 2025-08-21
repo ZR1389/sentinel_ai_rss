@@ -1,7 +1,7 @@
 # rss_processor.py — Catalog ingest with health/backoff & throttling • v2025-08-20
 # Backend job (NOT metered): fetch feeds -> parse -> filter -> dedupe -> raw_alerts
 # Extras: per-host token bucket, feed health table support, geo infer via city_utils
-# Note: SaaS-grade: now filters old news (timedelta), and skips DB duplicates by uuid.
+# Note: SaaS-grade: now filters old news (timedelta, recalculated per batch), and skips DB duplicates by uuid.
 
 from __future__ import annotations
 import os
@@ -47,7 +47,7 @@ FAILURE_THRESHOLD  = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
 
 # Freshness cutoff for news items (in days): SaaS best practice = 3
 FRESHNESS_DAYS = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
-FRESHNESS_CUTOFF = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)
+# Don't set FRESHNESS_CUTOFF at module load—calculate it per batch in _parse_feed_text
 
 # Try to import canonical keywords from risk_shared
 FILTER_KEYWORDS_FALLBACK = [
@@ -354,6 +354,7 @@ def _infer_location(title: str, summary: str) -> Tuple[Optional[str], Optional[s
     return None, None
 
 def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
+    FRESHNESS_CUTOFF = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)  # <-- PATCHED: always current
     fp = feedparser.parse(text)
     out: List[Dict[str, Any]] = []
     for e in fp.entries:
@@ -374,7 +375,7 @@ def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
         if not _filter_relevance(text_blob):
             continue
 
-        # --------- PATCH: SaaS freshness filter ---------
+        # --------- PATCH: always up-to-date SaaS freshness filter ---------
         if published < FRESHNESS_CUTOFF:
             continue  # skip old item
 
@@ -383,7 +384,7 @@ def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
         uuid = _uuid_for(source, title, link)
         tags = _auto_tags(text_blob)
 
-        # --------- PATCH: DB-level deduplication ---------
+        # --------- DB-level deduplication ---------
         if fetch_one is not None:
             exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
             if exists:
