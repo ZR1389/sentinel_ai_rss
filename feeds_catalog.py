@@ -1,6 +1,12 @@
+"""
+feeds_catalog.py — Curated news/alert feed catalogs
+Used by rss_processor.py with native-first priority (local > country > global).
+"""
+
+# ---------------------- Local city feeds ----------------------
 # Major cities/local news feeds (100+ cities globally)
 LOCAL_FEEDS = {
-    "belgrade": ["https://www.blic.rs/rss/Vesti/Drustvo"],
+    "belgrade": ["https://www.novosti.rs/rss/beograd"],
     "hong kong": ["https://www.scmp.com/rss/2/feed/"],
     "paris": ["https://www.lemonde.fr/rss/une.xml"],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
@@ -30,7 +36,12 @@ LOCAL_FEEDS = {
     "copenhagen": ["https://www.dr.dk/nyheder/service/feeds/allenyheder"],
     "prague": ["https://english.radio.cz/rcz-rss/en"],
     "budapest": ["https://dailynewshungary.com/feed/"],
+    "cluj": ["https://opiniatransilvana.ro/feed/"],
+    "arad": ["https://www.newsarad.ro/newsarad.ro/feed/"],
+    "bucharest": ["https://www.bursa.ro/_rss/?t=tzs"],
     "sofia": ["https://stolica.bg/rss.xml"],
+    "plovdiv": ["https://www.plovdiv24.bg/novini/rss.html"],
+    "haskovo": ["https://haskovo.info/feed/"],
     "athens": ["https://www.athensvoice.gr/rss/echobox/"],
     "ankara": ["https://www.hurriyet.com.tr/rss/ankara"],
     "berlin": ["https://www.rbb24.de/aktuell/index.xml/feed=rss.xml"],
@@ -87,8 +98,9 @@ LOCAL_FEEDS = {
     "novi sad": ["https://www.021.rs/rss/all"],
     "nis": ["https://niskevesti.rs/feed/"],
     "sankt petersburg": ["https://rssexport.rbc.ru/rbcnews/news/30/full.rss"],
+    "tallinn": ["https://www.ohtuleht.ee/rss"],
 }
-
+# ---------------------- Country-level feeds ----------------------
 # Country-level news feeds for fallback
 COUNTRY_FEEDS = {
     "united kingdom": ["https://feeds.bbci.co.uk/news/uk/rss.xml"],
@@ -126,6 +138,12 @@ COUNTRY_FEEDS = {
     "iraq": ["https://www.iraqinews.com/feed/"],
     "syria": ["http://sana.sy/en/?feed=rss2"],
     "serbia": ["https://www.danas.rs/feed/"],
+    "montenegro": ["https://www.novosti.rs/rss/crna-gora"],
+    "republika srpska": ["https://www.novosti.rs/rss/republika-srpska"],
+    "bosnia and herzegovina": ["https://www.kurir.rs/rss/region/bosna-i-hercegovina"],
+    "kosovo": ["https://www.kurir.rs/rss/vesti/srbi-na-kim"],
+    "north macedonia": ["https://www.kurir.rs/rss/region/severna-makedonija"],
+    "croatia": ["https://www.kurir.rs/rss/region/hrvatska"],
     "lebanon": ["https://www.dailystar.com.lb/RSS.aspx?id=1"],
     "israel": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
     "uae": ["https://gulfnews.com/rss/1.454509"],
@@ -144,19 +162,22 @@ COUNTRY_FEEDS = {
     "norway": ["https://www.aftenposten.no/rss"],
     "denmark": ["https://www.dr.dk/nyheder/service/feeds/allenyheder"],
     "finland": ["https://www.hs.fi/rss/tuoreimmat.xml"],
+    "estonia": ["https://www.aripaev.ee/rss"],
     "switzerland": ["https://www.nzz.ch/rss"],
     "austria": ["https://www.derstandard.at/rss/international"],
     "czech republic": ["https://english.radio.cz/rss"],
+    "slovakia": ["https://www.sme.sk/rss-title"],
     "hungary": ["https://dailynewshungary.com/feed/"],
     "poland": ["https://www.thefirstnews.com/rss"],
     "romania": ["https://www.romania-insider.com/rss"],
+    "moldovia": ["https://timpul.md/feed"],
     "bulgaria": ["https://www.novinite.com/rss.php"],
     "greece": ["https://www.ekathimerini.com/rss"],
     "ukraine": ["https://www.kyivpost.com/feed"],
     "belarus": ["https://eng.belta.by/rss_en"],
 }
-
-# Global news/alerts for fallback
+# ---------------------- Global feeds ----------------------
+# Global advisories, cyber alerts, international agencies, etc. for fallback
 GLOBAL_FEEDS = [
     "https://www.cisa.gov/news.xml",
     "https://www.darkreading.com/rss.xml",

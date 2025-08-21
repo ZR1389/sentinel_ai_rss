@@ -1,6 +1,7 @@
-# rss_processor.py — Catalog+FCDO ingest with health/backoff & throttling • v2025-08-12
+# rss_processor.py — Catalog ingest with health/backoff & throttling • v2025-08-20
 # Backend job (NOT metered): fetch feeds -> parse -> filter -> dedupe -> raw_alerts
 # Extras: per-host token bucket, feed health table support, geo infer via city_utils
+# Note: SaaS-grade: now filters old news (timedelta), and skips DB duplicates by uuid.
 
 from __future__ import annotations
 import os
@@ -44,6 +45,10 @@ BACKOFF_BASE_MIN   = int(os.getenv("RSS_BACKOFF_BASE_MIN", "15"))
 BACKOFF_MAX_MIN    = int(os.getenv("RSS_BACKOFF_MAX_MIN", "180"))
 FAILURE_THRESHOLD  = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
 
+# Freshness cutoff for news items (in days): SaaS best practice = 3
+FRESHNESS_DAYS = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
+FRESHNESS_CUTOFF = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)
+
 # Try to import canonical keywords from risk_shared
 FILTER_KEYWORDS_FALLBACK = [
     # physical/civil
@@ -64,6 +69,24 @@ try:
     FILTER_KEYWORDS = sorted({kw for lst in _MERGED for kw in lst})
 except Exception:
     FILTER_KEYWORDS = FILTER_KEYWORDS_FALLBACK
+
+# ---------------------------- Catalog imports & priorities ----------------------------
+try:
+    from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+except Exception:
+    LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS = {}, {}, []
+
+# Priority knobs (lower number = higher priority)
+NATIVE_PRIORITY   = 10
+FALLBACK_PRIORITY = 30
+
+# Map item kind -> numeric preference for de-dupe
+KIND_PRIORITY = {
+    "native": NATIVE_PRIORITY,
+    "env": NATIVE_PRIORITY,
+    "fallback": FALLBACK_PRIORITY,
+    "unknown": 999,
+}
 
 # ---------------------------- Utils ----------------------------
 def _now_utc() -> datetime:
@@ -111,18 +134,6 @@ def _parse_published(entry) -> Optional[datetime]:
             with contextlib.suppress(Exception):
                 return datetime(*val[:6], tzinfo=timezone.utc)
     return _now_utc()
-
-def _dedupe(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Lexical de-dupe within batch using sha(title|summary); prefer newest 'published'.
-    """
-    by_hash: Dict[str, Dict[str, Any]] = {}
-    for a in alerts:
-        key = _sha(((a.get("title") or "") + "|" + (a.get("summary") or "")).lower())
-        prev = by_hash.get(key)
-        if not prev or (a.get("published") or _now_utc()) > (prev.get("published") or _now_utc()):
-            by_hash[key] = a
-    return list(by_hash.values())
 
 # ----------------------- Feed health / Backoff -----------------------
 def _host(url: str) -> str:
@@ -220,7 +231,7 @@ def _bucket_for(url: str) -> TokenBucket:
         HOST_BUCKETS[host] = TokenBucket(HOST_RATE_PER_SEC, HOST_BURST)
     return HOST_BUCKETS[host]
 
-# ----------------------- Feeds: env + catalog + FCDO + core -----------------------
+# ----------------------- Legacy env helpers (kept) -----------------------
 def _env_groups() -> List[str]:
     env = os.getenv("SENTINEL_FEED_GROUPS") or ""
     return [g.strip() for g in env.split(",") if g.strip()]
@@ -245,45 +256,69 @@ def _load_catalog(group_names: Optional[Iterable[str]] = None) -> List[str]:
         pass
     return feeds
 
-def _load_fcdo_json() -> List[str]:
-    candidates = [
-        "fcdo_country_feeds.json",
-        os.path.join(os.getcwd(), "fcdo_country_feeds.json"),
-        "/mnt/data/fcdo_country_feeds.json",
-    ]
-    for path in candidates:
-        try:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f) or {}
-                    return [url for _, url in data.items() if url]
-        except Exception:
-            continue
-    return []
-
 def _core_fallback_feeds() -> List[str]:
+    # Lowest-priority global safety nets
     return [
         "https://feeds.bbci.co.uk/news/world/rss.xml",
         "https://www.aljazeera.com/xml/rss/all.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
-        "https://www.rt.com/rss/news/",
         "https://www.france24.com/en/rss",
         "https://www.scmp.com/rss/5/feed/",
         "https://www.smartraveller.gov.au/countries/documents/index.rss",
-  
     ]
 
-def _coalesce_feed_urls(group_names: Optional[Iterable[str]] = None) -> List[str]:
-    urls: List[str] = []
-    urls += _load_env_feeds()
-    urls += _load_catalog(group_names=group_names or _env_groups())
-    urls += _load_fcdo_json()
-    urls += _core_fallback_feeds()
-    urls = [u.strip() for u in urls if u and u.strip()]
-    cleaned = []
-    for u in urls:
-        cleaned.append(re.sub(r"[?#].*$", "", u))  # trim tracking params to dedupe
-    return sorted(set(cleaned))
+# ----------------------- Feed spec builders -----------------------
+def _wrap_spec(url: str, priority: int, kind: str, tag: str = "") -> Dict[str, Any]:
+    return {"url": url.strip(), "priority": priority, "kind": kind, "tag": tag}
+
+def _build_native_specs() -> List[Dict[str, Any]]:
+    specs: List[Dict[str, Any]] = []
+    # 1) LOCAL_FEEDS: dict[str, list[str]]
+    for city, urls in (LOCAL_FEEDS or {}).items():
+        for u in (urls or []):
+            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"local:{city}"))
+
+    # 2) COUNTRY_FEEDS: dict[str, list[str]]
+    for country, urls in (COUNTRY_FEEDS or {}).items():
+        for u in (urls or []):
+            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"country:{country}"))
+
+    # 3) GLOBAL_FEEDS: list[str]
+    for u in (GLOBAL_FEEDS or []):
+        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", "global"))
+    return specs
+
+def _coalesce_all_feed_specs(group_names: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+    specs: List[Dict[str, Any]] = []
+
+    # 1–3) Native catalog
+    specs.extend(_build_native_specs())
+
+    # 4) Env-provided feeds (user knows best)
+    for u in _load_env_feeds():
+        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "env", "env"))
+
+    # 5) Core fallbacks (lowest)
+    for u in _core_fallback_feeds():
+        specs.append(_wrap_spec(u, FALLBACK_PRIORITY, "fallback", "core"))
+
+    # Sort by priority (stable), then dedupe by cleaned URL (first wins)
+    specs.sort(key=lambda s: s.get("priority", 100))
+    seen = set()
+    out: List[Dict[str, Any]] = []
+    for s in specs:
+        u = s["url"]
+        cleaned = re.sub(r"[?#].*$", "", u)
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        s["url"] = cleaned
+        out.append(s)
+    return out
+
+def _coalesce_all_feed_urls(group_names: Optional[Iterable[str]] = None) -> List[str]:
+    specs = _coalesce_all_feed_specs(group_names)
+    return [s["url"] for s in specs]
 
 # ----------------------- Parsing & tagging -----------------------
 def _auto_tags(text: str) -> List[str]:
@@ -339,10 +374,20 @@ def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
         if not _filter_relevance(text_blob):
             continue
 
+        # --------- PATCH: SaaS freshness filter ---------
+        if published < FRESHNESS_CUTOFF:
+            continue  # skip old item
+
         city, country = _infer_location(title, summary)
         lang = _safe_lang(text_blob)
         uuid = _uuid_for(source, title, link)
         tags = _auto_tags(text_blob)
+
+        # --------- PATCH: DB-level deduplication ---------
+        if fetch_one is not None:
+            exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
+            if exists:
+                continue  # already ingested in db
 
         out.append({
             "uuid": uuid,
@@ -376,48 +421,73 @@ async def _fetch_text(client: httpx.AsyncClient, url: str) -> Optional[str]:
         _record_health(url, ok=False, latency_ms=(time.perf_counter()-start)*1000.0, error=str(e))
         return None
 
-async def ingest_feeds(feed_urls: List[str], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
-    if not feed_urls:
+async def ingest_feeds(feed_urls_or_specs: List[Any], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
+    if not feed_urls_or_specs:
         return []
-    # keep a safety cap (some catalogs can be huge)
-    feed_urls = feed_urls[: max(1, limit)]
+    slice_n = max(1, limit)
+    specs: List[Dict[str, Any]] = []
+    if feed_urls_or_specs and isinstance(feed_urls_or_specs[0], dict):
+        specs = feed_urls_or_specs[:slice_n]
+    else:
+        specs = [{"url": u, "priority": 999, "kind": "unknown", "tag": ""} for u in feed_urls_or_specs[:slice_n]]
+
     results_alerts: List[Dict[str, Any]] = []
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY, max_keepalive_connections=MAX_CONCURRENCY)
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
-        tasks = [ _fetch_text(client, u) for u in feed_urls ]
+        tasks = [_fetch_text(client, s["url"]) for s in specs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for u, res in zip(feed_urls, results):
+        for spec, res in zip(specs, results):
             if isinstance(res, Exception) or not res:
                 continue
-            parsed = _parse_feed_text(res, feed_url=u)
+            parsed = _parse_feed_text(res, feed_url=spec["url"])
+            kind = spec.get("kind", "unknown")
+            tag  = spec.get("tag", "")
+            src_pri = KIND_PRIORITY.get(kind, 999)
+            for it in parsed:
+                it.setdefault("source_kind", kind)
+                it.setdefault("source_priority", src_pri)
+                if tag:
+                    it.setdefault("source_tag", tag)
             results_alerts.extend(parsed)
     return _dedupe(results_alerts)
 
-def _coalesce_all_feeds(group_names: Optional[Iterable[str]] = None) -> List[str]:
-    urls: List[str] = []
-    urls += _load_env_feeds()
-    urls += _load_catalog(group_names=group_names or _env_groups())
-    urls += _load_fcdo_json()
-    urls += _core_fallback_feeds()
-    urls = [u.strip() for u in urls if u and u.strip()]
-    cleaned = [re.sub(r"[?#].*$", "", u) for u in urls]
-    return sorted(set(cleaned))
+def _dedupe(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_hash: Dict[str, Dict[str, Any]] = {}
 
+    def published_dt(a: Dict[str, Any]) -> datetime:
+        return a.get("published") or _now_utc()
+
+    def pri(a: Dict[str, Any]) -> int:
+        return int(a.get("source_priority", 999))
+
+    for a in alerts:
+        key = _sha(((a.get("title") or "") + "|" + (a.get("summary") or "")).lower())
+        prev = by_hash.get(key)
+        if not prev:
+            by_hash[key] = a
+            continue
+        if pri(a) < pri(prev):
+            by_hash[key] = a
+        elif pri(a) == pri(prev) and published_dt(a) > published_dt(prev):
+            by_hash[key] = a
+    return list(by_hash.values())
+
+# ----------------------- Top-level ingest -----------------------
 async def ingest_all_feeds_to_db(
     group_names: Optional[List[str]] = None,
     limit: int = BATCH_LIMIT,
     write_to_db: bool = True
 ) -> Dict[str, Any]:
-    feeds = _coalesce_all_feeds(group_names)
-    alerts = await ingest_feeds(feeds, limit=limit)
+    specs = _coalesce_all_feed_specs(group_names)
+    alerts = await ingest_feeds(specs, limit=limit)
     alerts = alerts[:limit]
     if write_to_db and alerts and save_raw_alerts_to_db:
         save_raw_alerts_to_db(alerts)
-    return {"count": len(alerts), "feeds_used": len(feeds), "sample": alerts[:8]}
+    return {"count": len(alerts), "feeds_used": len(specs), "sample": alerts[:8]}
 
 # ----------------------- CLI -----------------------
 if __name__ == "__main__":
-    print("🔍 Running RSS processor (catalog + FCDO + health/backoff)...")
+    print("🔍 Running RSS processor (native-first + health/backoff)...")
     loop = asyncio.get_event_loop()
     res = loop.run_until_complete(ingest_all_feeds_to_db(group_names=None, limit=BATCH_LIMIT, write_to_db=False))
     print(f"Fetched {res['count']} alerts from {res['feeds_used']} feeds (sample {len(res['sample'])}).")
