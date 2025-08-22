@@ -16,10 +16,12 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, request, jsonify, make_response
 
+from map_api import map_api
 from webpush_endpoints import webpush_bp
 
-from map_api import map_api
+app = Flask(__name__)
 app.register_blueprint(map_api)
+app.register_blueprint(webpush_bp)
 
 # ---------- Logging ----------
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
