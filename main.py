@@ -27,10 +27,6 @@ app.register_blueprint(webpush_bp)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sentinel.main")
 
-# ---------- App ----------
-app = Flask(__name__)
-app.register_blueprint(webpush_bp)
-
 # ---------- Optional CORS (simple) ----------
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 
