@@ -29,6 +29,15 @@ except Exception:  # soft-fallbacks so the script still runs
     fetch_one = None
     execute = None
 
+# --- geocoding function ---
+try:
+    # get_city_coords(city, country) -> (lat, lon) or (None, None)
+    from city_utils import get_city_coords
+except Exception:
+    def get_city_coords(city, country):
+        # fallback, always None
+        return None, None
+
 # Deterministic language detection
 DetectorFactory.seed = 42
 load_dotenv()
@@ -384,6 +393,14 @@ def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
         uuid = _uuid_for(source, title, link)
         tags = _auto_tags(text_blob)
 
+        # --------- Geocode: get latitude/longitude ---------
+        latitude, longitude = None, None
+        if city and country:
+            try:
+                latitude, longitude = get_city_coords(city, country)
+            except Exception:
+                latitude, longitude = None, None
+
         # --------- DB-level deduplication ---------
         if fetch_one is not None:
             exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
@@ -403,6 +420,8 @@ def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
             "country": country,
             "city": city,
             "language": lang,
+            "latitude": latitude,
+            "longitude": longitude,
         })
     return out
 

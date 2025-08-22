@@ -479,6 +479,9 @@ def summarize_alerts(alerts):
                 alert["baseline_ratio"] = 1.0
             if alert.get("trend_direction") is None:
                 alert["trend_direction"] = "stable"
+            # ----------- PATCH: Pass through latitude/longitude if present -----------
+            alert["latitude"] = alert.get("latitude")
+            alert["longitude"] = alert.get("longitude")
             unique_alerts.append(alert)
             seen.add(h)
 
@@ -510,6 +513,9 @@ def summarize_alerts(alerts):
                         alert["baseline_ratio"] = 1.0
                     if alert.get("trend_direction") is None:
                         alert["trend_direction"] = "stable"
+                    # ----------- PATCH: Pass through latitude/longitude if present -----------
+                    alert["latitude"] = alert.get("latitude")
+                    alert["longitude"] = alert.get("longitude")
                     old_failed.append(alert)
                     failed_hashes.add(h)
             with open(failed_cache_path, "w", encoding="utf-8") as f:
@@ -544,6 +550,9 @@ def _normalize_for_db(a: dict) -> dict:
         a["incident_count_30d"] = 0
     if a.get("recent_count_7d") is None:
         a["recent_count_7d"] = 0
+    # PATCH: Pass through latitude/longitude if present
+    a["latitude"] = a.get("latitude")
+    a["longitude"] = a.get("longitude")
     return a
 
 def enrich_and_store_alerts(region=None, country=None, city=None, limit=1000):

@@ -60,13 +60,15 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     """
     Bulk upsert raw alerts. Expected fields:
     uuid, title, summary, en_snippet, link, source, published (datetime or iso),
-    region, country, city, tags (list[str]), language
+    region, country, city, tags (list[str]), language,
+    latitude, longitude  <-- NEW
     """
     if not alerts:
         return 0
     cols = [
         "uuid","title","summary","en_snippet","link","source","published",
-        "region","country","city","tags","language","ingested_at"
+        "region","country","city","tags","language","ingested_at",
+        "latitude","longitude"  # <<-- NEW
     ]
 
     def _coerce(a: Dict[str, Any]) -> Tuple:
@@ -96,6 +98,8 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             tags,
             a.get("language") or "en",
             a.get("ingested_at") or datetime.utcnow(),
+            a.get("latitude"),   # <<-- NEW
+            a.get("longitude"),  # <<-- NEW
         )
 
     rows = [_coerce(a) for a in alerts]
@@ -132,7 +136,8 @@ def fetch_raw_alerts_from_db(
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     q = f"""
         SELECT uuid, title, summary, en_snippet, link, source, published,
-               region, country, city, tags, language, ingested_at
+               region, country, city, tags, language, ingested_at,
+               latitude, longitude      -- NEW
         FROM raw_alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST, ingested_at DESC
@@ -166,7 +171,8 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "early_warning_indicators","series_id","incident_series","historical_context",
         "subcategory","domains","incident_count_30d","recent_count_7d","baseline_avg_7d",
         "baseline_ratio","trend_direction","anomaly_flag","future_risk_probability",
-        "reports_analyzed","sources","cluster_id"
+        "reports_analyzed","sources","cluster_id",
+        "latitude","longitude"  # <<-- NEW
     ]
 
     def _json(v):
@@ -260,6 +266,8 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("reports_analyzed"),
             _json(sources),   # jsonb
             a.get("cluster_id"),
+            a.get("latitude"),   # <<-- NEW
+            a.get("longitude"),  # <<-- NEW
         )
 
     rows = [_coerce_row(a) for a in alerts]
@@ -314,7 +322,9 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         future_risk_probability = EXCLUDED.future_risk_probability,
         reports_analyzed = EXCLUDED.reports_analyzed,
         sources = EXCLUDED.sources,
-        cluster_id = EXCLUDED.cluster_id
+        cluster_id = EXCLUDED.cluster_id,
+        latitude = EXCLUDED.latitude,      -- NEW
+        longitude = EXCLUDED.longitude     -- NEW
     """
     with _conn() as conn, conn.cursor() as cur:
         execute_values(cur, sql, rows)
@@ -360,7 +370,8 @@ def fetch_alerts_from_db(
              tags, trend_score, trend_score_msg, trend_direction, is_anomaly, anomaly_flag,
              early_warning_indicators, series_id, incident_series, historical_context,
              domains, incident_count_30d, recent_count_7d, baseline_avg_7d,
-             baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id
+             baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id,
+             latitude, longitude    -- NEW
       FROM alerts
       {where_sql}
       ORDER BY published DESC NULLS LAST
@@ -456,7 +467,8 @@ def fetch_past_incidents(
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     q = f"""
         SELECT uuid, title, summary, score, published, category, subcategory,
-               city, country, region, threat_level, threat_label, tags
+               city, country, region, threat_level, threat_label, tags,
+               latitude, longitude    -- NEW
         FROM alerts
         {where_sql}
         ORDER BY published DESC

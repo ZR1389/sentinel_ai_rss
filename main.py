@@ -18,6 +18,9 @@ from flask import Flask, request, jsonify, make_response
 
 from webpush_endpoints import webpush_bp
 
+from map_api import map_api
+app.register_blueprint(map_api)
+
 # ---------- Logging ----------
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sentinel.main")
