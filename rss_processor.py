@@ -1,103 +1,233 @@
-# rss_processor.py — Catalog ingest with health/backoff & throttling • v2025-08-20
-# Backend job (NOT metered): fetch feeds -> parse -> filter -> dedupe -> raw_alerts
-# Extras: per-host token bucket, feed health table support, geo infer via city_utils
-# Note: SaaS-grade: now filters old news (timedelta, recalculated per batch), and skips DB duplicates by uuid.
+# rss_processor.py — Keyword-filtered ingest with fulltext fallback • v2025-08-22
+# Fetch feeds -> parse -> (keyword filter on title+summary, else fetch full article and filter fulltext)
+# -> freshness -> dedupe -> write raw_alerts
+#
+# Returns: {"ok", "count", "wrote", "feeds_used", "elapsed_sec", "errors", "sample", "filter_strict", "use_fulltext"}
 
 from __future__ import annotations
-import os
-import asyncio
-import contextlib
-import hashlib
-import json
-import re
-import time
+import os, re, time, hashlib, contextlib, asyncio, json, sys
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Iterable, Tuple
 from urllib.parse import urlparse
+from dotenv import load_dotenv; load_dotenv()
+
 
 import feedparser
 import httpx
 from langdetect import detect, DetectorFactory
 from unidecode import unidecode
-from dotenv import load_dotenv
 
-# --- project deps
+# ---- logging ---------------------------------------------------------
+import logging
+logger = logging.getLogger("rss_processor")
+if not logger.handlers:
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+
+# ---- project deps ----------------------------------------------------
 try:
     from db_utils import save_raw_alerts_to_db, fetch_one, execute
-except Exception:  # soft-fallbacks so the script still runs
+except Exception as e:
+    logger.error("db_utils import failed: %s", e)
     save_raw_alerts_to_db = None
     fetch_one = None
     execute = None
 
-# --- geocoding function ---
+# Optional geocoder
 try:
-    # get_city_coords(city, country) -> (lat, lon) or (None, None)
-    from city_utils import get_city_coords
+    from city_utils import get_city_coords, fuzzy_match_city, normalize_city
 except Exception:
-    def get_city_coords(city, country):
-        # fallback, always None
-        return None, None
+    def get_city_coords(city, country): return (None, None)
+    def fuzzy_match_city(text): return None
+    def normalize_city(city): return (None, None)
 
 # Deterministic language detection
 DetectorFactory.seed = 42
-load_dotenv()
 
-# ---------------------------- Config ----------------------------
-DEFAULT_TIMEOUT   = float(os.getenv("RSS_TIMEOUT_SEC", "20"))
-MAX_CONCURRENCY   = int(os.getenv("RSS_CONCURRENCY", "16"))
-BATCH_LIMIT       = int(os.getenv("RSS_BATCH_LIMIT", "400"))
-HOST_RATE_PER_SEC = float(os.getenv("RSS_HOST_RATE_PER_SEC", "0.5"))  # ~1 req / 2s
-HOST_BURST        = int(os.getenv("RSS_HOST_BURST", "2"))
+# ---------------------------- Config ---------------------------------
+DEFAULT_TIMEOUT        = float(os.getenv("RSS_TIMEOUT_SEC", "20"))
+MAX_CONCURRENCY        = int(os.getenv("RSS_CONCURRENCY", "16"))
+BATCH_LIMIT            = int(os.getenv("RSS_BATCH_LIMIT", "400"))
 
-# Backoff config
-BACKOFF_BASE_MIN   = int(os.getenv("RSS_BACKOFF_BASE_MIN", "15"))
-BACKOFF_MAX_MIN    = int(os.getenv("RSS_BACKOFF_MAX_MIN", "180"))
-FAILURE_THRESHOLD  = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
+HOST_RATE_PER_SEC      = float(os.getenv("RSS_HOST_RATE_PER_SEC", "0.5"))
+HOST_BURST             = int(os.getenv("RSS_HOST_BURST", "2"))
 
-# Freshness cutoff for news items (in days): SaaS best practice = 3
-FRESHNESS_DAYS = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
-# Don't set FRESHNESS_CUTOFF at module load—calculate it per batch in _parse_feed_text
+BACKOFF_BASE_MIN       = int(os.getenv("RSS_BACKOFF_BASE_MIN", "15"))
+BACKOFF_MAX_MIN        = int(os.getenv("RSS_BACKOFF_MAX_MIN", "180"))
+FAILURE_THRESHOLD      = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
 
-# Try to import canonical keywords from risk_shared
+FRESHNESS_DAYS         = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
+
+# Keyword filtering: ON by default (you asked for it)
+RSS_FILTER_STRICT      = str(os.getenv("RSS_FILTER_STRICT", "true")).lower() in ("1","true","yes","y")
+
+# Full-article text fetch: ON by default (to catch body-only matches)
+RSS_USE_FULLTEXT       = str(os.getenv("RSS_USE_FULLTEXT", "true")).lower() in ("1","true","yes","y")
+ARTICLE_TIMEOUT_SEC    = float(os.getenv("RSS_FULLTEXT_TIMEOUT_SEC", "12"))
+ARTICLE_MAX_BYTES      = int(os.getenv("RSS_FULLTEXT_MAX_BYTES", "800000"))
+ARTICLE_MAX_CHARS      = int(os.getenv("RSS_FULLTEXT_MAX_CHARS", "20000"))
+ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))  # per feed parse
+
+# ---------------------- Keywords / Loading ---------------------------
+# Built-in last-resort set (only used if JSON+risk_shared unavailable)
 FILTER_KEYWORDS_FALLBACK = [
-    # physical/civil
     "protest","riot","clash","strike","unrest","shooting","stabbing","robbery","kidnap","kidnapping","extortion",
-    # terror
     "ied","vbied","explosion","bomb",
-    # travel/mobility/infra
     "checkpoint","curfew","closure","detour","airport","border","rail","metro","highway","road",
     "substation","grid","pipeline","telecom","power outage",
-    # cyber/digital
     "ransomware","phishing","malware","breach","ddos","credential","zero-day","cve","surveillance","device check","spyware",
-    # environmental/epidemic
     "earthquake","flood","wildfire","hurricane","storm","heatwave","outbreak","epidemic","pandemic","cholera","dengue","covid","ebola",
 ]
-try:
-    from risk_shared import DOMAIN_KEYWORDS, CATEGORY_KEYWORDS
-    _MERGED = list(DOMAIN_KEYWORDS.values()) + list(CATEGORY_KEYWORDS.values())
-    FILTER_KEYWORDS = sorted({kw for lst in _MERGED for kw in lst})
-except Exception:
-    FILTER_KEYWORDS = FILTER_KEYWORDS_FALLBACK
 
-# ---------------------------- Catalog imports & priorities ----------------------------
+def _normalize(s: str) -> str:
+    """Lowercase, accent-strip, collapse spaces. Makes 'IED'=='ied', 'wild fire'=='wildfire'."""
+    if not s:
+        return ""
+    s = unidecode(s).lower()
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _load_keywords() -> Tuple[List[str], str]:
+    """
+    Load keywords with operator control and robust multilingual support.
+
+    Env:
+      - THREAT_KEYWORDS_PATH: path to threat_keywords.json (default: ./threat_keywords.json)
+      - KEYWORDS_SOURCE: one of:
+          * 'merge'     -> JSON + risk_shared (JSON wins);  (default)
+          * 'json_only' -> only threat_keywords.json
+          * 'risk_only' -> only risk_shared
+    Returns: (keywords_list, mode_string)
+    """
+    source_mode = (os.getenv("KEYWORDS_SOURCE", "merge") or "merge").lower()
+    use_json = source_mode in ("merge", "json_only")
+    use_risk = source_mode in ("merge", "risk_only")
+
+    kws: List[str] = []
+    seen: set[str] = set()
+
+    # 1) JSON (operator-curated) — supports top-level "keywords" and "translated" map
+    if use_json:
+        path = os.getenv("THREAT_KEYWORDS_PATH", "threat_keywords.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if isinstance(data, dict):
+                # a) top-level list under "keywords"
+                base = data.get("keywords") or []
+                if isinstance(base, list):
+                    for k in base:
+                        kk = _normalize(str(k))
+                        if kk and kk not in seen:
+                            seen.add(kk); kws.append(kk)
+
+                # b) multilingual "translated": { root_term: { lang: [phrases...] } }
+                translated = data.get("translated", {})
+                if isinstance(translated, dict):
+                    for _root, langmap in translated.items():
+                        if not isinstance(langmap, dict):
+                            continue
+                        for _lang, lst in langmap.items():
+                            if not isinstance(lst, list):
+                                continue
+                            for k in lst:
+                                kk = _normalize(str(k))
+                                if kk and kk not in seen:
+                                    seen.add(kk); kws.append(kk)
+
+            elif isinstance(data, list):
+                for k in data:
+                    kk = _normalize(str(k))
+                    if kk and kk not in seen:
+                        seen.add(kk); kws.append(kk)
+        except Exception as e:
+            logger.info("threat_keywords.json not loaded (%s); continuing", e)
+
+    # 2) risk_shared taxonomy (stable base)
+    if use_risk:
+        try:
+            from risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
+            for lst in list(CATEGORY_KEYWORDS.values()) + list(DOMAIN_KEYWORDS.values()):
+                for k in lst:
+                    kk = _normalize(str(k))
+                    if kk and kk not in seen:
+                        seen.add(kk); kws.append(kk)
+        except Exception:
+            pass
+
+    # 3) last-resort fallback
+    if not kws:
+        kws = [_normalize(k) for k in FILTER_KEYWORDS_FALLBACK]
+
+    return kws, source_mode
+
+KEYWORDS, KEYWORDS_MODE = _load_keywords()
+logger.info("Loaded %d keywords (mode=%s)", len(KEYWORDS), KEYWORDS_MODE)
+
+def _kw_match(text: str) -> bool:
+    """Accent-insensitive, case-insensitive substring match for any keyword/phrase."""
+    if not RSS_FILTER_STRICT:
+        return True
+    t = _normalize(text)
+    for kw in KEYWORDS:
+        if kw in t:
+            return True
+    return False
+
+# ---------------------- Catalog / Sources ----------------------------
 try:
     from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 except Exception:
     LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS = {}, {}, []
 
-# Priority knobs (lower number = higher priority)
 NATIVE_PRIORITY   = 10
 FALLBACK_PRIORITY = 30
+KIND_PRIORITY = {"native": NATIVE_PRIORITY, "env": NATIVE_PRIORITY, "fallback": FALLBACK_PRIORITY, "unknown": 999}
 
-# Map item kind -> numeric preference for de-dupe
-KIND_PRIORITY = {
-    "native": NATIVE_PRIORITY,
-    "env": NATIVE_PRIORITY,
-    "fallback": FALLBACK_PRIORITY,
-    "unknown": 999,
-}
+def _wrap_spec(url: str, priority: int, kind: str, tag: str = "") -> Dict[str, Any]:
+    return {"url": url.strip(), "priority": priority, "kind": kind, "tag": tag}
 
-# ---------------------------- Utils ----------------------------
+def _build_native_specs() -> List[Dict[str, Any]]:
+    specs: List[Dict[str, Any]] = []
+    for city, urls in (LOCAL_FEEDS or {}).items():
+        for u in (urls or []):
+            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"local:{city}"))
+    for country, urls in (COUNTRY_FEEDS or {}).items():
+        for u in (urls or []):
+            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"country:{country}"))
+    for u in (GLOBAL_FEEDS or []):
+        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", "global"))
+    return specs
+
+def _load_env_feeds() -> List[str]:
+    env = os.getenv("SENTINEL_FEEDS") or ""
+    return [u.strip() for u in env.split(",") if u.strip()]
+
+def _core_fallback_feeds() -> List[str]:
+    return [
+        "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "https://www.aljazeera.com/xml/rss/all.xml",
+        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        "https://www.france24.com/en/rss",
+        "https://www.smartraveller.gov.au/countries/documents/index.rss",
+    ]
+
+def _coalesce_all_feed_specs(group_names: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+    specs: List[Dict[str, Any]] = []
+    specs.extend(_build_native_specs())
+    for u in _load_env_feeds():
+        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "env", "env"))
+    for u in _core_fallback_feeds():
+        specs.append(_wrap_spec(u, FALLBACK_PRIORITY, "fallback", "core"))
+    specs.sort(key=lambda s: s.get("priority", 100))
+    seen, out = set(), []
+    for s in specs:
+        cleaned = re.sub(r"[?#].*$", "", s["url"])
+        if cleaned in seen: continue
+        seen.add(cleaned); s["url"] = cleaned; out.append(s)
+    return out
+
+# ---------------------- Helpers -------------------------------------
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -109,32 +239,22 @@ def _uuid_for(source: str, title: str, link: str) -> str:
 
 def _safe_lang(text: str, default: str = "en") -> str:
     t = (text or "").strip()
-    if not t:
-        return default
-    try:
-        return detect(t[:1000]) or default
-    except Exception:
-        return default
+    if not t: return default
+    try: return detect(t[:1000]) or default
+    except Exception: return default
 
 def _first_sentence(text: str) -> str:
     t = (text or "").strip()
-    if not t:
-        return ""
+    if not t: return ""
     parts = re.split(r'(?<=[.!?。！？])\s+', t)
     return parts[0] if parts else t
 
 def _normalize_summary(title: str, summary: str) -> str:
     return summary.strip() if summary and len(summary) >= 20 else (title or "").strip()
 
-def _filter_relevance(text: str) -> bool:
-    t = (text or "").lower()
-    return any(k in t for k in FILTER_KEYWORDS)
-
 def _extract_source(url: str) -> str:
-    try:
-        return re.sub(r"^www\.", "", urlparse(url).netloc)
-    except Exception:
-        return "unknown"
+    try: return re.sub(r"^www\.", "", urlparse(url).netloc)
+    except Exception: return "unknown"
 
 def _parse_published(entry) -> Optional[datetime]:
     for key in ("published_parsed", "updated_parsed"):
@@ -144,34 +264,25 @@ def _parse_published(entry) -> Optional[datetime]:
                 return datetime(*val[:6], tzinfo=timezone.utc)
     return _now_utc()
 
-# ----------------------- Feed health / Backoff -----------------------
+# ---------------------- Backoff / Health ----------------------------
 def _host(url: str) -> str:
-    with contextlib.suppress(Exception):
-        return urlparse(url).netloc
+    with contextlib.suppress(Exception): return urlparse(url).netloc
     return "unknown"
 
 def _db_fetch_one(q: str, args: tuple) -> Optional[tuple]:
-    if fetch_one is None:
-        return None
-    try:
-        return fetch_one(q, args)
-    except Exception:
-        return None
+    if fetch_one is None: return None
+    try: return fetch_one(q, args)
+    except Exception: return None
 
 def _db_execute(q: str, args: tuple) -> None:
-    if execute is None:
-        return
-    with contextlib.suppress(Exception):
-        execute(q, args)
+    if execute is None: return
+    with contextlib.suppress(Exception): execute(q, args)
 
 def _should_skip_by_backoff(url: str) -> bool:
     row = _db_fetch_one("SELECT backoff_until FROM feed_health WHERE feed_url=%s", (url,))
-    if not row or not row[0]:
-        return False
-    try:
-        return datetime.utcnow() < row[0]
-    except Exception:
-        return False
+    if not row or not row[0]: return False
+    try: return datetime.utcnow() < row[0]
+    except Exception: return False
 
 def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] = None):
     host = _host(url)
@@ -203,7 +314,6 @@ def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] =
           consecutive_fail=feed_health.consecutive_fail+1,
           host=EXCLUDED.host
         """, (url, host, (error or "")[:240]))
-
         _db_execute("""
         UPDATE feed_health
            SET backoff_until = CASE
@@ -214,17 +324,15 @@ def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] =
          WHERE feed_url=%s
         """, (FAILURE_THRESHOLD, BACKOFF_MAX_MIN, BACKOFF_BASE_MIN, FAILURE_THRESHOLD, url))
 
-# ----------------------- Token bucket per host -----------------------
+# ---------------------- Token bucket per host -----------------------
 class TokenBucket:
     def __init__(self, rate_per_sec: float, burst: int):
         self.rate = max(rate_per_sec, 0.0001)
         self.capacity = max(burst, 1)
         self.tokens = float(self.capacity)
         self.updated = _now_utc().timestamp()
-
     async def acquire(self):
         now = _now_utc().timestamp()
-        # refill
         self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate)
         self.updated = now
         if self.tokens < 1.0:
@@ -233,103 +341,147 @@ class TokenBucket:
         self.tokens -= 1.0
 
 HOST_BUCKETS: Dict[str, TokenBucket] = {}
-
 def _bucket_for(url: str) -> TokenBucket:
     host = _host(url)
     if host not in HOST_BUCKETS:
         HOST_BUCKETS[host] = TokenBucket(HOST_RATE_PER_SEC, HOST_BURST)
     return HOST_BUCKETS[host]
 
-# ----------------------- Legacy env helpers (kept) -----------------------
-def _env_groups() -> List[str]:
-    env = os.getenv("SENTINEL_FEED_GROUPS") or ""
-    return [g.strip() for g in env.split(",") if g.strip()]
+# ---------------------- Fulltext extraction -------------------------
+def _strip_html_basic(html: str) -> str:
+    # very basic fallback if no parser available
+    text = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
+    text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-def _load_env_feeds() -> List[str]:
-    env = os.getenv("SENTINEL_FEEDS") or ""
-    return [u.strip() for u in env.split(",") if u.strip()]
-
-def _load_catalog(group_names: Optional[Iterable[str]] = None) -> List[str]:
-    feeds: List[str] = []
+async def _fetch_article_fulltext(client: httpx.AsyncClient, url: str) -> str:
+    if not RSS_USE_FULLTEXT or not url:
+        return ""
     try:
-        import feeds_catalog as fc
-        if hasattr(fc, "get_all_feeds"):
-            feeds.extend(list(getattr(fc, "get_all_feeds")() or []))
-        if group_names and hasattr(fc, "FEED_GROUPS"):
-            groups = getattr(fc, "FEED_GROUPS") or {}
-            for g in group_names:
-                feeds.extend(groups.get(g, []))
-        if hasattr(fc, "FEEDS"):
-            feeds.extend(list(getattr(fc, "FEEDS") or []))
-    except Exception:
-        pass
-    return feeds
+        r = await client.get(url, timeout=ARTICLE_TIMEOUT_SEC)
+        r.raise_for_status()
+        html = r.text
+        if len(html) > ARTICLE_MAX_BYTES:
+            html = html[:ARTICLE_MAX_BYTES]
+        # Try trafilatura if available
+        try:
+            import trafilatura
+            extracted = trafilatura.extract(html, include_comments=False, favor_recall=True) or ""
+            if extracted:
+                return extracted[:ARTICLE_MAX_CHARS]
+        except Exception:
+            pass
+        # Try BeautifulSoup if available
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "lxml")
+            for tag in soup(["script","style","noscript"]): tag.decompose()
+            txt = soup.get_text(separator=" ", strip=True)
+            return txt[:ARTICLE_MAX_CHARS]
+        except Exception:
+            pass
+        # Fallback: crude strip
+        return _strip_html_basic(html)[:ARTICLE_MAX_CHARS]
+    except Exception as e:
+        logger.debug("Fulltext fetch failed for %s: %s", url, e)
+        return ""
 
-def _core_fallback_feeds() -> List[str]:
-    # Lowest-priority global safety nets
-    return [
-        "https://feeds.bbci.co.uk/news/world/rss.xml",
-        "https://www.aljazeera.com/xml/rss/all.xml",
-        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
-        "https://www.france24.com/en/rss",
-        "https://www.scmp.com/rss/5/feed/",
-        "https://www.smartraveller.gov.au/countries/documents/index.rss",
-    ]
-
-# ----------------------- Feed spec builders -----------------------
-def _wrap_spec(url: str, priority: int, kind: str, tag: str = "") -> Dict[str, Any]:
-    return {"url": url.strip(), "priority": priority, "kind": kind, "tag": tag}
-
-def _build_native_specs() -> List[Dict[str, Any]]:
-    specs: List[Dict[str, Any]] = []
-    # 1) LOCAL_FEEDS: dict[str, list[str]]
-    for city, urls in (LOCAL_FEEDS or {}).items():
-        for u in (urls or []):
-            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"local:{city}"))
-
-    # 2) COUNTRY_FEEDS: dict[str, list[str]]
-    for country, urls in (COUNTRY_FEEDS or {}).items():
-        for u in (urls or []):
-            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"country:{country}"))
-
-    # 3) GLOBAL_FEEDS: list[str]
-    for u in (GLOBAL_FEEDS or []):
-        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", "global"))
-    return specs
-
-def _coalesce_all_feed_specs(group_names: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
-    specs: List[Dict[str, Any]] = []
-
-    # 1–3) Native catalog
-    specs.extend(_build_native_specs())
-
-    # 4) Env-provided feeds (user knows best)
-    for u in _load_env_feeds():
-        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "env", "env"))
-
-    # 5) Core fallbacks (lowest)
-    for u in _core_fallback_feeds():
-        specs.append(_wrap_spec(u, FALLBACK_PRIORITY, "fallback", "core"))
-
-    # Sort by priority (stable), then dedupe by cleaned URL (first wins)
-    specs.sort(key=lambda s: s.get("priority", 100))
-    seen = set()
-    out: List[Dict[str, Any]] = []
-    for s in specs:
-        u = s["url"]
-        cleaned = re.sub(r"[?#].*$", "", u)
-        if cleaned in seen:
+# ---------------------- Ingest core ---------------------------------
+def _dedupe_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set(); out = []
+    for it in items:
+        key = it.get("link") or it.get("title") or ""
+        h = hashlib.sha1(key.encode("utf-8", "ignore")).hexdigest()
+        if h in seen:
             continue
-        seen.add(cleaned)
-        s["url"] = cleaned
-        out.append(s)
+        seen.add(h)
+        out.append(it)
     return out
 
-def _coalesce_all_feed_urls(group_names: Optional[Iterable[str]] = None) -> List[str]:
-    specs = _coalesce_all_feed_specs(group_names)
-    return [s["url"] for s in specs]
+def _extract_entries(feed_text: str, feed_url: str) -> Tuple[List[Dict[str, Any]], str]:
+    fp = feedparser.parse(feed_text)
+    entries = []
+    source_url = fp.feed.get("link") if fp and fp.feed else feed_url
+    for e in fp.entries or []:
+        entries.append({
+            "title": (e.get("title") or "").strip(),
+            "summary": (e.get("summary") or e.get("description") or "").strip(),
+            "link": (e.get("link") or feed_url or "").strip(),
+            "published": _parse_published(e),
+        })
+    return entries, (source_url or feed_url)
 
-# ----------------------- Parsing & tagging -----------------------
+async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client: httpx.AsyncClient) -> Optional[Dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)
+
+    title = entry["title"]
+    summary = _normalize_summary(title, entry["summary"])
+    link = entry["link"]
+    published = entry["published"] or _now_utc()
+    if published and published < cutoff:
+        return None
+
+    source = _extract_source(source_url or link)
+
+    # First pass: title + summary
+    text_blob = f"{title}\n{summary}"
+    if not _kw_match(text_blob):
+        # Second pass: fetch full article and test again
+        fulltext = await _fetch_article_fulltext(client, link)
+        if not fulltext:
+            return None
+        text_blob = f"{title}\n{summary}\n{fulltext}"
+        if not _kw_match(text_blob):
+            return None
+
+    # Location inference + geocode (best effort)
+    city = None; country = None
+    try:
+        guess_city = fuzzy_match_city(f"{title} {summary}")
+        if guess_city:
+            city, country = normalize_city(guess_city)
+    except Exception:
+        pass
+
+    latitude = longitude = None
+    if city:
+        with contextlib.suppress(Exception):
+            latitude, longitude = get_city_coords(city, country)
+        
+    lang = _safe_lang(text_blob)
+    uuid = _uuid_for(source, title, link)
+
+    # db-level dedupe if fetch_one present
+    if fetch_one is not None:
+        try:
+            exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
+            if exists:
+                return None
+        except Exception:
+            pass
+
+    snippet = _first_sentence(unidecode(summary))
+    tags = _auto_tags(text_blob)
+
+    return {
+        "uuid": uuid,
+        "title": title,
+        "summary": summary,
+        "en_snippet": snippet,
+        "link": link,
+        "source": source,
+        "published": (published or _now_utc()).replace(tzinfo=None),
+        "tags": tags,
+        "region": None,
+        "country": country,
+        "city": city,
+        "language": lang,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+
 def _auto_tags(text: str) -> List[str]:
     t = (text or "").lower()
     tags: List[str] = []
@@ -350,164 +502,132 @@ def _auto_tags(text: str) -> List[str]:
             tags.append(tag)
     return tags
 
-def _infer_location(title: str, summary: str) -> Tuple[Optional[str], Optional[str]]:
-    try:
-        from city_utils import fuzzy_match_city, normalize_city
-        text = f"{title} {summary}"
-        city = fuzzy_match_city(text)
-        if city:
-            city_norm, country = normalize_city(city)
-            return city_norm, country
-    except Exception:
-        pass
-    return None, None
-
-def _parse_feed_text(text: str, feed_url: str) -> List[Dict[str, Any]]:
-    FRESHNESS_CUTOFF = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)  # <-- PATCHED: always current
-    fp = feedparser.parse(text)
-    out: List[Dict[str, Any]] = []
-    for e in fp.entries:
-        title = (e.get("title") or "").strip()
-        summary = (e.get("summary") or e.get("description") or "").strip()
-        link = (e.get("link") or feed_url or "").strip()
-        published = _parse_published(e)
-        source_url = (fp.feed.get("link") or link or feed_url or "").strip()
-        source = _extract_source(source_url or link)
-
-        if not title and not summary:
-            continue
-
-        summary = _normalize_summary(title, summary)
-        snippet = _first_sentence(unidecode(summary))
-        text_blob = f"{title}\n{summary}"
-
-        if not _filter_relevance(text_blob):
-            continue
-
-        # --------- PATCH: always up-to-date SaaS freshness filter ---------
-        if published < FRESHNESS_CUTOFF:
-            continue  # skip old item
-
-        city, country = _infer_location(title, summary)
-        lang = _safe_lang(text_blob)
-        uuid = _uuid_for(source, title, link)
-        tags = _auto_tags(text_blob)
-
-        # --------- Geocode: get latitude/longitude ---------
-        latitude, longitude = None, None
-        if city and country:
-            try:
-                latitude, longitude = get_city_coords(city, country)
-            except Exception:
-                latitude, longitude = None, None
-
-        # --------- DB-level deduplication ---------
-        if fetch_one is not None:
-            exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
-            if exists:
-                continue  # already ingested in db
-
-        out.append({
-            "uuid": uuid,
-            "title": title,
-            "summary": summary,
-            "en_snippet": snippet,
-            "link": link,
-            "source": source,
-            "published": (published or _now_utc()).replace(tzinfo=None),  # store UTC-naive
-            "tags": tags,
-            "region": None,
-            "country": country,
-            "city": city,
-            "language": lang,
-            "latitude": latitude,
-            "longitude": longitude,
-        })
-    return out
-
-# ----------------------- Fetch & ingest -----------------------
-async def _fetch_text(client: httpx.AsyncClient, url: str) -> Optional[str]:
-    if _should_skip_by_backoff(url):
-        return None
-    await _bucket_for(url).acquire()
-    start = time.perf_counter()
-    try:
-        r = await client.get(url, timeout=DEFAULT_TIMEOUT)
-        r.raise_for_status()
-        text = r.text
-        _record_health(url, ok=True, latency_ms=(time.perf_counter()-start)*1000.0)
-        return text
-    except Exception as e:
-        _record_health(url, ok=False, latency_ms=(time.perf_counter()-start)*1000.0, error=str(e))
-        return None
-
-async def ingest_feeds(feed_urls_or_specs: List[Any], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
-    if not feed_urls_or_specs:
-        return []
-    slice_n = max(1, limit)
-    specs: List[Dict[str, Any]] = []
-    if feed_urls_or_specs and isinstance(feed_urls_or_specs[0], dict):
-        specs = feed_urls_or_specs[:slice_n]
-    else:
-        specs = [{"url": u, "priority": 999, "kind": "unknown", "tag": ""} for u in feed_urls_or_specs[:slice_n]]
-
+# ---------------------- Top-level ingest ----------------------------
+async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
+    if not feed_specs: return []
     results_alerts: List[Dict[str, Any]] = []
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY, max_keepalive_connections=MAX_CONCURRENCY)
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
-        tasks = [_fetch_text(client, s["url"]) for s in specs]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for spec, res in zip(specs, results):
-            if isinstance(res, Exception) or not res:
+        # Fetch feeds concurrently
+        async def _fetch_feed(spec):
+            if _should_skip_by_backoff(spec["url"]): return None, spec
+            await _bucket_for(spec["url"]).acquire()
+            start = time.perf_counter()
+            try:
+                r = await client.get(spec["url"], timeout=DEFAULT_TIMEOUT)
+                r.raise_for_status()
+                txt = r.text
+                _record_health(spec["url"], ok=True, latency_ms=(time.perf_counter()-start)*1000.0)
+                return txt, spec
+            except Exception as e:
+                _record_health(spec["url"], ok=False, latency_ms=(time.perf_counter()-start)*1000.0, error=str(e))
+                logger.warning("Feed fetch failed for %s: %s", spec["url"], e)
+                return None, spec
+
+        feed_results = await asyncio.gather(*[_fetch_feed(s) for s in feed_specs], return_exceptions=False)
+
+        sem = asyncio.Semaphore(max(1, ARTICLE_CONCURRENCY))
+        async def _process_entry(entry, source_url):
+            async with sem:
+                return await _build_alert_from_entry(entry, source_url, client)
+
+        # For each feed, parse entries, then process entries (fulltext if needed)
+        for txt, spec in feed_results:
+            if not txt:
                 continue
-            parsed = _parse_feed_text(res, feed_url=spec["url"])
-            kind = spec.get("kind", "unknown")
-            tag  = spec.get("tag", "")
-            src_pri = KIND_PRIORITY.get(kind, 999)
-            for it in parsed:
-                it.setdefault("source_kind", kind)
-                it.setdefault("source_priority", src_pri)
-                if tag:
-                    it.setdefault("source_tag", tag)
-            results_alerts.extend(parsed)
-    return _dedupe(results_alerts)
+            entries, source_url = _extract_entries(txt, spec["url"])
+            # Process entries sequentially with per-feed concurrency limit
+            tasks = [asyncio.create_task(_process_entry(e, source_url)) for e in entries]
+            for coro in asyncio.as_completed(tasks):
+                res = await coro
+                if res:
+                    # annotate source kind/priority
+                    kind = spec.get("kind", "unknown"); tag = spec.get("tag", "")
+                    res.setdefault("source_kind", kind)
+                    res.setdefault("source_priority", KIND_PRIORITY.get(kind, 999))
+                    if tag: res.setdefault("source_tag", tag)
+                    results_alerts.append(res)
+                    if len(results_alerts) >= limit:
+                        break
+            if len(results_alerts) >= limit:
+                break
 
-def _dedupe(alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    by_hash: Dict[str, Dict[str, Any]] = {}
+    return _dedupe_batch(results_alerts)[:limit]
 
-    def published_dt(a: Dict[str, Any]) -> datetime:
-        return a.get("published") or _now_utc()
-
-    def pri(a: Dict[str, Any]) -> int:
-        return int(a.get("source_priority", 999))
-
-    for a in alerts:
-        key = _sha(((a.get("title") or "") + "|" + (a.get("summary") or "")).lower())
-        prev = by_hash.get(key)
-        if not prev:
-            by_hash[key] = a
-            continue
-        if pri(a) < pri(prev):
-            by_hash[key] = a
-        elif pri(a) == pri(prev) and published_dt(a) > published_dt(prev):
-            by_hash[key] = a
-    return list(by_hash.values())
-
-# ----------------------- Top-level ingest -----------------------
 async def ingest_all_feeds_to_db(
     group_names: Optional[List[str]] = None,
     limit: int = BATCH_LIMIT,
     write_to_db: bool = True
 ) -> Dict[str, Any]:
+    start = time.time()
     specs = _coalesce_all_feed_specs(group_names)
     alerts = await ingest_feeds(specs, limit=limit)
     alerts = alerts[:limit]
-    if write_to_db and alerts and save_raw_alerts_to_db:
-        save_raw_alerts_to_db(alerts)
-    return {"count": len(alerts), "feeds_used": len(specs), "sample": alerts[:8]}
 
-# ----------------------- CLI -----------------------
+    errors: List[str] = []
+    wrote = 0
+    if write_to_db:
+        if save_raw_alerts_to_db is None:
+            errors.append("DB writer unavailable: db_utils.save_raw_alerts_to_db import failed or DATABASE_URL not set")
+        elif alerts:
+            try:
+                wrote = save_raw_alerts_to_db(alerts)
+            except Exception as e:
+                errors.append(f"DB write failed: {e}")
+                logger.exception("DB write failed")
+        else:
+            logger.info("No alerts to write (count=0)")
+
+    return {
+        "ok": True,
+        "count": len(alerts),
+        "wrote": wrote,
+        "feeds_used": len(specs),
+        "elapsed_sec": round(time.time() - start, 2),
+        "errors": errors,
+        "sample": alerts[:5],
+        "filter_strict": RSS_FILTER_STRICT,
+        "use_fulltext": RSS_USE_FULLTEXT,
+    }
+
+# ---------------------- CLI -----------------------------------------
+
+# ---- write control (safe default = write) ----
+WRITE_TO_DB_DEFAULT = str(os.getenv("RSS_WRITE_TO_DB", "true")).lower() in ("1","true","yes","y")
+FAIL_CLOSED = str(os.getenv("RSS_FAIL_CLOSED", "true")).lower() in ("1","true","yes","y")
+
 if __name__ == "__main__":
-    print("🔍 Running RSS processor (native-first + health/backoff)...")
-    loop = asyncio.get_event_loop()
-    res = loop.run_until_complete(ingest_all_feeds_to_db(group_names=None, limit=BATCH_LIMIT, write_to_db=False))
-    print(f"Fetched {res['count']} alerts from {res['feeds_used']} feeds (sample {len(res['sample'])}).")
+    if not WRITE_TO_DB_DEFAULT and FAIL_CLOSED:
+        raise SystemExit("Refusing to run with RSS_WRITE_TO_DB=false; set RSS_WRITE_TO_DB=true")
+
+    if not WRITE_TO_DB_DEFAULT:
+        logger.warning("RSS_WRITE_TO_DB is FALSE — raw_alerts will NOT be written. "
+                       "Set RSS_WRITE_TO_DB=true to enable inserts into raw_alerts.")
+
+    print("🔍 Running RSS processor…")
+    try:
+        res = asyncio.run(
+            ingest_all_feeds_to_db(group_names=None, limit=BATCH_LIMIT, write_to_db=WRITE_TO_DB_DEFAULT)
+        )
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except Exception:
+        logger.exception("Fatal error in rss_processor")
+        sys.exit(1)
+
+    # Full result and compact summary for ops logs
+    print(res)
+    try:
+        print(
+            f"ok={res.get('ok')} count={res.get('count')} wrote={res.get('wrote')} "
+            f"feeds={res.get('feeds_used')} elapsed={res.get('elapsed_sec')}s "
+            f"errors={len(res.get('errors') or [])} "
+            f"filter_strict={res.get('filter_strict')} fulltext={res.get('use_fulltext')}"
+        )
+    except Exception:
+        pass
+
+    # Guard: found alerts but didn't write while write-to-db enabled
+    if WRITE_TO_DB_DEFAULT and res.get("count", 0) > 0 and res.get("wrote", 0) == 0:
+        logger.error("Alerts found but no rows written — investigate DB writer.")
+        sys.exit(2)

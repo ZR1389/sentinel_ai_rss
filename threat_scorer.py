@@ -1,10 +1,12 @@
-# threat_scorer.py — Deterministic risk scoring & signals (Final v2025-08-12)
+# threat_scorer.py — Deterministic risk scoring & signals (Final v2025-08-12 + norm/prob/aux v2025-08-22)
 # Used by Threat Engine (no LLM, no DB writes)
 
 from __future__ import annotations
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 import math
+import re
+from unidecode import unidecode
 
 # Shared heuristics/taxonomy
 from risk_shared import (
@@ -16,6 +18,16 @@ from risk_shared import (
 )
 
 # --------------------------- utilities ---------------------------
+
+def _norm(text: str) -> str:
+    """
+    Normalize text once for all checks:
+      - convert to lowercase
+      - strip accents (unidecode)
+      - collapse whitespace
+    Ensures 'IED', 'IÉD', 'ied' all match, etc.
+    """
+    return re.sub(r"\s+", " ", unidecode(text or "").lower()).strip()
 
 def _parse_dt(obj: Any) -> Optional[datetime]:
     """
@@ -85,7 +97,7 @@ def compute_now_risk(alert_text: str, triggers: Optional[List[str]] = None, loca
     Fast heuristic risk (0..100) based on keyword salience, trigger density, and severity terms.
     Deterministic and explainable; tuned for triage (not a medical device).
     """
-    text = (alert_text or "")
+    text = _norm(alert_text or "")
     kw = compute_keyword_weight(text)              # 0..1
     trig = min(len(triggers or []), 6) / 6.0       # 0..1
 
@@ -93,7 +105,7 @@ def compute_now_risk(alert_text: str, triggers: Optional[List[str]] = None, loca
         "ied","vbied","suicide","explosion","mass shooting","kidnap","kidnapping","armed","gunfire",
         "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage","ransomware","breach"
     ]
-    sev_hits = sum(1 for k in severe_terms if k in text.lower())
+    sev_hits = sum(1 for k in severe_terms if k in text)
     sev = _clamp(sev_hits / 5.0, 0.0, 1.0)
 
     # Weighted blend → 0..100 (bias slightly high for safety)
@@ -120,8 +132,10 @@ def assess_threat_level(
       - reasoning (short string)
       - threat_label (duplicate of label)
       - threat_level (duplicate of label)
+      - sentiment (aux)
+      - domains (aux)
     """
-    text = alert_text or ""
+    text = _norm(alert_text or "")
     score = compute_now_risk(text, triggers, location)
 
     # Minimal deterministic confidence:
@@ -131,14 +145,14 @@ def assess_threat_level(
     conf = 0.60 + 0.20 * (abs(score - 50.0) / 50.0) + 0.10 * (1.0 if kw > 0.6 else 0.0) + 0.05 * (1.0 if trig > 0.5 else 0.0)
     confidence = round(_clamp(conf, 0.40, 0.95), 2)
 
-    # Sentiment band for human-readable reasoning
+    # Sentiment band + domains (aux fields)
     sentiment = run_sentiment_analysis(text)
     domains = detect_domains(text)
 
     # Escalation nudges for very specific phrases (bounded)
-    if any(k in text.lower() for k in ["suicide bomber","vbied","mass shooting","multiple explosions"]):
+    if any(k in text for k in ["suicide bomber","vbied","mass shooting","multiple explosions"]):
         score = min(100.0, score + 10.0)
-    if "curfew" in text.lower() and "checkpoint" in text.lower():
+    if "curfew" in text and "checkpoint" in text:
         score = min(100.0, score + 5.0)
 
     label = _label_from_score(score)
@@ -160,6 +174,8 @@ def assess_threat_level(
         "score": round(float(score), 1),
         "confidence": confidence,
         "reasoning": reasoning,
+        "sentiment": sentiment,
+        "domains": domains,
     }
 
 def compute_trend_direction(incidents: List[Dict[str, Any]]) -> str:
@@ -183,15 +199,16 @@ def compute_trend_direction(incidents: List[Dict[str, Any]]) -> str:
 def compute_future_risk_probability(incidents: List[Dict[str, Any]]) -> float:
     """
     Probability (0..1) of another incident within next 48h.
-    Based on recent 7d vs 56d baseline ratio + EWMA spike flag.
+    Based on recent 7d vs *previous 49d* baseline ratio (excludes leakage) + EWMA spike flag.
     """
     counts_56 = _bucket_daily_counts(incidents, days=56)
     if not counts_56:
         return 0.25  # conservative default
 
-    recent_7 = sum(counts_56[-7:])
-    past_56_total = sum(counts_56)  # inclusive of recent_7
-    base_avg_7, ratio, _ = baseline_from_counts(recent_7, past_56_total)
+    recent_7 = sum(counts_56[-7:])       # last week
+    prev_49 = sum(counts_56[:-7])        # exclude last week from baseline
+    base_avg_7 = (prev_49 / 7.0) if prev_49 else 0.0
+    ratio = (recent_7 / base_avg_7) if base_avg_7 > 0 else (1.0 if recent_7 > 0 else 0.0)
 
     # EWMA anomaly check on last 21 days
     ewma_spike = ewma_anomaly(counts_56[-21:], alpha=0.4, k=2.5)

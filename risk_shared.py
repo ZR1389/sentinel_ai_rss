@@ -1,10 +1,16 @@
-# risk_shared.py — Shared enrichment & analytics (canonical detectors + helpers) • v2025-08-12
+# risk_shared.py — Shared enrichment & analytics (canonical detectors + helpers) • v2025-08-22+patch1
 # Used by: RSS Processor, Threat Engine, Scorer, Advisor. No metered LLM calls here.
 
 from __future__ import annotations
 import re
 import math
 from typing import Dict, List, Tuple, Optional
+
+try:
+    from unidecode import unidecode
+except Exception:
+    def unidecode(s: str) -> str:  # no-op fallback
+        return s
 
 # ---------------------- Canonical taxonomies ----------------------
 CATEGORY_KEYWORDS: Dict[str, List[str]] = {
@@ -65,14 +71,44 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     "insider_threat": ["insider","employee","privileged access","badge","tailgating"],
     "residential_premises": ["residential","home invasion","burglary","apartment","compound"],
     "emergency_medical": ["casualty","injured","fatalities","triage","medical","ambulance"],
-    "counter_surveillance": ["surveillance","tail","followed","sdr","surveillance detection"],
+    "counter_surveillance": ["surveillance","tail","followed","sdr","sd r","surveillance detection"],  # added both 'sdr' and 'sd r'
     "terrorism": ["ied","vbied","suicide bomber","terrorist","bomb"]
 }
 
+# ---------------------- Text normalization ----------------------
+def _normalize(text: str) -> str:
+    """
+    Normalize text once for all checks:
+      - lowercase
+      - strip accents (unidecode)
+      - treat hyphens/emdashes as spaces so 'zero-day' == 'zero day'
+      - collapse whitespace
+    """
+    if not text:
+        return ""
+    t = unidecode(text).lower()
+    t = re.sub(r"[-–—]+", " ", t)   # <-- patch: hyphen/emdash normalization
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
 # ---------------------- Utilities ----------------------
 def _count_hits(text: str, keywords: List[str]) -> int:
-    t = (text or "").lower()
+    t = _normalize(text)
     return sum(1 for k in keywords if k in t)
+
+# Expose a flattened, deduped keyword list (useful for RSS processor)
+def get_all_keywords() -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for lst in list(CATEGORY_KEYWORDS.values()) + list(DOMAIN_KEYWORDS.values()):
+        for k in lst:
+            kk = _normalize(k)
+            if kk and kk not in seen:
+                seen.add(kk)
+                out.append(kk)
+    return out
+
+KEYWORD_SET = set(get_all_keywords())
 
 # ---------------------- Existing public API (kept) ----------------------
 def compute_keyword_weight(text: str) -> float:
@@ -92,7 +128,7 @@ def enrich_log_db(text: str) -> str:
     return enrich_log(text)
 
 def run_sentiment_analysis(text: str) -> str:
-    t = (text or "").lower()
+    t = _normalize(text)
     neg = ["killed","dead","fatal","attack","explosion","panic","riot","fear","threat","warning","evacuate","emergency"]
     pos = ["contained","stabilized","safe","secured","reopened","de-escalate","calm"]
     score = _count_hits(t, neg) - _count_hits(t, pos)
@@ -101,18 +137,25 @@ def run_sentiment_analysis(text: str) -> str:
     if score == 1: return "Notice"
     return "Neutral/Informational"
 
-def run_forecast(text: str) -> str:
-    t = (text or "").lower()
+def run_forecast(text: str, location: Optional[str] = None) -> str:
+    """
+    Lightweight rule-based forecast. Signature accepts optional `location`
+    to match threat_engine usage; ignored if None.
+    """
+    t = _normalize(text)
     if any(k in t for k in ["protest","riot","unrest","clash"]):
-        return "Short-term risk of renewed protests remains; expect pop-up roadblocks and police activity."
+        base = "Short-term risk of renewed protests remains; expect pop-up roadblocks and police activity."
+        return f"{base} ({location})" if location else base
     if any(k in t for k in ["ransomware","breach","phishing","malware"]):
-        return "Cyber threat remains elevated; harden MFA/passkeys and monitor admin anomalies."
+        base = "Cyber threat remains elevated; harden MFA/passkeys and monitor admin anomalies."
+        return f"{base} ({location})" if location else base
     if any(k in t for k in ["flood","storm","wildfire","hurricane"]):
-        return "Weather-related disruption likely; plan daylight moves and check closures hourly."
+        base = "Weather-related disruption likely; plan daylight moves and check closures hourly."
+        return f"{base} ({location})" if location else base
     return "No clear short-term escalation signal from content alone."
 
 def run_legal_risk(text: str, region: Optional[str] = None) -> str:
-    t = (text or "").lower()
+    t = _normalize(text)
     if "curfew" in t or "checkpoint" in t:
         return "Verify curfew windows and checkpoint orders; carry ID/permits where applicable."
     if "visa" in t or "immigration" in t or "border" in t:
@@ -120,7 +163,7 @@ def run_legal_risk(text: str, region: Optional[str] = None) -> str:
     return "No immediate legal or regulatory constraints identified."
 
 def run_cyber_ot_risk(text: str) -> str:
-    t = (text or "").lower()
+    t = _normalize(text)
     if any(k in t for k in ["ransomware","malware","breach","data","ddos","phishing","credential","cve","zero-day","exploit"]):
         return "Prioritize passkeys/MFA, patching of exposed services, and geo-fencing of admin access."
     if any(k in t for k in ["scada","ics","ot","plc","hmi"]):
@@ -128,7 +171,7 @@ def run_cyber_ot_risk(text: str) -> str:
     return "No priority cyber/OT actions from the text alone."
 
 def run_environmental_epidemic_risk(text: str) -> str:
-    t = (text or "").lower()
+    t = _normalize(text)
     if any(k in t for k in ["flood","wildfire","hurricane","storm","heatwave","earthquake","landslide"]):
         return "Prepare for environmental disruptions: closures, air quality, and power issues."
     if any(k in t for k in ["epidemic","pandemic","cholera","dengue","covid","ebola","avian flu","outbreak"]):
@@ -136,7 +179,7 @@ def run_environmental_epidemic_risk(text: str) -> str:
     return "No immediate environmental or epidemic flags."
 
 def extract_threat_category(text: str) -> Tuple[str, float]:
-    t = (text or "").lower()
+    t = _normalize(text)
     best_cat, best_hits = "Other", 0
     for cat, kws in CATEGORY_KEYWORDS.items():
         hits = _count_hits(t, kws)
@@ -146,7 +189,7 @@ def extract_threat_category(text: str) -> Tuple[str, float]:
     return best_cat, conf
 
 def extract_threat_subcategory(text: str, category: str) -> str:
-    t = (text or "").lower()
+    t = _normalize(text)
     mapping = SUBCATEGORY_MAP.get(category, {})
     for k, sub in mapping.items():
         if k in t:
@@ -157,7 +200,7 @@ def extract_threat_subcategory(text: str, category: str) -> str:
 def detect_domains(text: str) -> List[str]:
     """Detect all relevant domains from content (stable order)."""
     if not text: return []
-    t = text.lower()
+    t = _normalize(text)
     hits = []
     for dom, kws in DOMAIN_KEYWORDS.items():
         if any(k in t for k in kws):
@@ -181,7 +224,7 @@ def detect_domains(text: str) -> List[str]:
 
 _TRUSTED_HOSTS = {
     "reuters.com","apnews.com","bbc.co.uk","bbc.com","nytimes.com","osac.gov","who.int",
-    "emsc-csem.org","cdc.gov","ecdc.europa.eu"
+    "emsc-csem.org","cdc.gov","ecdc.europa.eu","france24.com","aljazeera.com","scmp.com"
 }
 def source_reliability(source_name: Optional[str], source_url: Optional[str]) -> Tuple[str, str]:
     """Returns (rating, reason)."""
@@ -192,8 +235,12 @@ def source_reliability(source_name: Optional[str], source_url: Optional[str]) ->
         host = urlparse(source_url or "").netloc.lower()
     except Exception:
         pass
-    if host.endswith(".gov") or host.endswith(".mil") or host.endswith(".eu"):
+
+    # <-- patch: handle composite government domains like gov.uk, gov.br, etc.
+    parts = host.split(".") if host else []
+    if ("gov" in parts) or ("mil" in parts) or (parts[-1:] and parts[-1] in {"eu", "int"}):
         return "High", "Official government/institutional source"
+
     if any(h in host for h in _TRUSTED_HOSTS):
         return "High", "Reputable international outlet"
     if any(k in host for k in ["twitter.com","x.com","t.me","telegram","facebook.com","medium.com","substack.com"]):
@@ -208,7 +255,7 @@ _INFOOPS_PATTERNS = [
 ]
 def info_ops_flags(text: str) -> List[str]:
     if not text: return []
-    t = text.lower()
+    t = _normalize(text)
     flags = []
     for pat in _INFOOPS_PATTERNS:
         if re.search(pat, t):

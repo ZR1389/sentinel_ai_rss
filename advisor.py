@@ -1,4 +1,4 @@
-# advisor.py — Sentinel Advisor (Final v2025-08-12) (patched for safe .format() and missing keys, and strips excessive blank lines)
+# advisor.py — Sentinel Advisor (Final v2025-08-12 + patches v2025-08-22)
 # - Reads enriched alerts (schema aligned)
 # - Enforces PHYSICAL+DIGITAL, NOW+PREP, role-specific sections
 # - Programmatic domain playbook hits, richer alternatives
@@ -12,22 +12,42 @@ import re
 from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from xai_client import grok_chat
-from openai import OpenAI
 
-from prompts import (
-    SYSTEM_INFO_PROMPT,
-    GLOBAL_GUARDRAILS_PROMPT,
-    ADVISOR_STRUCTURED_SYSTEM_PROMPT,
-    ADVISOR_STRUCTURED_USER_PROMPT,
-    ROLE_MATRIX_PROMPT,
-    DOMAIN_PLAYBOOKS_PROMPT,
-    TREND_CITATION_PROTOCOL,
-)
+# -------- LLM clients / prompts (soft imports so advisor always loads) --------
+try:
+    from xai_client import grok_chat  # type: ignore
+except Exception:
+    def grok_chat(messages, temperature=0.2):
+        return None  # graceful no-op
+
+try:
+    from openai import OpenAI  # type: ignore
+except Exception:
+    OpenAI = None  # type: ignore
+
+try:
+    from prompts import (  # type: ignore
+        SYSTEM_INFO_PROMPT,
+        GLOBAL_GUARDRAILS_PROMPT,
+        ADVISOR_STRUCTURED_SYSTEM_PROMPT,
+        ADVISOR_STRUCTURED_USER_PROMPT,
+        ROLE_MATRIX_PROMPT,
+        DOMAIN_PLAYBOOKS_PROMPT,
+        TREND_CITATION_PROTOCOL,
+    )
+except Exception:
+    # Minimal safe fallbacks; keep keys used in .format()
+    SYSTEM_INFO_PROMPT = "You are Sentinel Advisor."
+    GLOBAL_GUARDRAILS_PROMPT = ""
+    ADVISOR_STRUCTURED_SYSTEM_PROMPT = ""
+    ADVISOR_STRUCTURED_USER_PROMPT = "{input_data}"
+    ROLE_MATRIX_PROMPT = ""
+    DOMAIN_PLAYBOOKS_PROMPT = ""
+    TREND_CITATION_PROTOCOL = ""
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and OpenAI) else None
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +61,7 @@ DOMAIN_PRIORITY = [
     "digital_privacy_surveillance",
     "physical_safety",
     "civil_unrest",
+    "terrorism",  # added to ensure terrorism-only cases get a specific primary action
     "kfr_extortion",
     "infrastructure_utilities",
     "environmental_hazards",
@@ -160,14 +181,23 @@ def ensure_sections(advisory: str) -> str:
     return out
 
 def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) -> str:
+    """
+    Domain-aware guard: only consider domain-tagged lines as satisfying the 'playbook present' check.
+    Prevents role tags like [Traveler] from skipping the additions.
+    """
     out = advisory
-    has_hits = ("DOMAIN PLAYBOOK HITS —" in out) or re.search(r"\[\w+\]\s", out)
-    if not has_hits and playbook_hits:
+
+    # Add playbook section if missing and we actually have hits
+    if ("DOMAIN PLAYBOOK HITS —" not in out) and playbook_hits:
         out += "\n\nDOMAIN PLAYBOOK HITS —\n" + "\n".join(
             f"• [{d}] {tip}" for d, tips in playbook_hits.items() for tip in tips
         )
-    if ("ALTERNATIVES —" not in out) and alts:
+
+    # If no domain-tagged lines present, ensure we at least add ALTERNATIVES
+    has_domain_tag = any(f'[{d}]' in out for d in (playbook_hits or {}).keys())
+    if ("ALTERNATIVES —" not in out) and (alts and not has_domain_tag):
         out += "\n\nALTERNATIVES —\n" + "\n".join(f"• {a}" for a in alts)
+
     return out
 
 def clean_auto_sections(advisory: str) -> str:
@@ -363,6 +393,8 @@ def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
         action = "avoid poorly lit choke points after 20:00, use well-lit arterials, and stage near 24/7 venues"
     elif primary == "civil_unrest":
         action = "bypass protest nodes via perimeter streets and adjust movement to off-peak windows"
+    elif primary == "terrorism":
+        action = "minimize dwell in predictable queues, avoid glass-heavy facades/atriums, and keep distance from crowd cores"
     elif primary == "kfr_extortion":
         action = "vary routes/timings by ±20 minutes, verify ride-hail, and keep hands free for control"
     elif primary == "infrastructure_utilities":
