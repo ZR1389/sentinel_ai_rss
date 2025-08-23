@@ -1,4 +1,4 @@
-# rss_processor.py — Keyword-filtered ingest with fulltext fallback • v2025-08-23 (polished, strict keywording, production-ready)
+# rss_processor.py — Keyword-filtered ingest with fulltext fallback • v2025-08-23 (polished, strict keywording, production-ready, improved error logging)
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -590,7 +590,7 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
                 return txt, spec
             except Exception as e:
                 _record_health(spec["url"], ok=False, latency_ms=(time.perf_counter()-start)*1000.0, error=str(e))
-                logger.warning("Feed fetch failed for %s: %s", spec["url"], e)
+                logger.warning("Feed fetch failed for %s: %r", spec["url"], e)  # PATCHED: show exception repr
                 return None, spec
 
         feed_results = await asyncio.gather(*[_fetch_feed(s) for s in feed_specs], return_exceptions=False)
