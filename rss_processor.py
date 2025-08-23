@@ -1,5 +1,5 @@
-# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-23 DEBUGGED)
-# Drop-in, maximal logging, never skips/quietly, shows every fetch/skip/fail result.
+# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-23 DEBUGGED, NO BACKOFF)
+# Drop-in, maximal logging, backoff logic fully disabled — all feeds will always be fetched.
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -155,7 +155,6 @@ FAILURE_THRESHOLD      = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
 
 FRESHNESS_DAYS         = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
 
-# Keyword filtering: ON by default (strict enforced)
 RSS_FILTER_STRICT      = True
 
 RSS_USE_FULLTEXT       = str(os.getenv("RSS_USE_FULLTEXT", "true")).lower() in ("1","true","yes","y")
@@ -350,11 +349,10 @@ def _db_execute(q: str, args: tuple) -> None:
     if execute is None: return
     with contextlib.suppress(Exception): execute(q, args)
 
+# ------------- PATCH: DISABLE BACKOFF LOGIC COMPLETELY --------------
 def _should_skip_by_backoff(url: str) -> bool:
-    row = _db_fetch_one("SELECT backoff_until FROM feed_health WHERE feed_url=%s", (url,))
-    if not row or not row[0]: return False
-    try: return datetime.utcnow() < row[0]
-    except Exception: return False
+    # Always return False: never skip any feed by backoff!
+    return False
 
 def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] = None):
     host = _host(url)
@@ -388,13 +386,9 @@ def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] =
         """, (url, host, (error or "")[:240]))
         _db_execute("""
         UPDATE feed_health
-           SET backoff_until = CASE
-               WHEN consecutive_fail >= %s
-               THEN NOW() + (LEAST(%s, %s * POWER(2, GREATEST(0, consecutive_fail - %s))) || ' minutes')::interval
-               ELSE NULL
-           END
+           SET backoff_until = NULL
          WHERE feed_url=%s
-        """, (FAILURE_THRESHOLD, BACKOFF_MAX_MIN, BACKOFF_BASE_MIN, FAILURE_THRESHOLD, url))
+        """, (url,))
 
 class TokenBucket:
     def __init__(self, rate_per_sec: float, burst: int):
@@ -563,9 +557,7 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
         async def _fetch_feed(spec):
             logger.info("Fetching feed: %s", spec["url"])
-            if _should_skip_by_backoff(spec["url"]):
-                logger.info("Feed skipped by backoff: %s", spec["url"])
-                return None, spec
+            # No backoff: always fetch
             await _bucket_for(spec["url"]).acquire()
             start = time.perf_counter()
             try:
