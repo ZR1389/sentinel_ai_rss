@@ -1,29 +1,45 @@
-# rss_processor.py — Keyword-filtered ingest with fulltext fallback • v2025-08-22
-# Fetch feeds -> parse -> (keyword filter on title+summary, else fetch full article and filter fulltext)
-# -> freshness -> dedupe -> write raw_alerts
-#
-# Returns: {"ok", "count", "wrote", "feeds_used", "elapsed_sec", "errors", "sample", "filter_strict", "use_fulltext"}
+# rss_processor.py — Keyword-filtered ingest with fulltext fallback • v2025-08-23 (polished, strict keywording, production-ready)
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Iterable, Tuple
 from urllib.parse import urlparse
-from dotenv import load_dotenv; load_dotenv()
 
+# .env loading (optional)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
+# ---- third-party (defensive imports) --------------------------------
 import feedparser
 import httpx
-from langdetect import detect, DetectorFactory
-from unidecode import unidecode
 
-# ---- logging ---------------------------------------------------------
+try:
+    from langdetect import detect, DetectorFactory
+    DetectorFactory.seed = 42
+except Exception:
+    def detect(_: str) -> str:  # type: ignore
+        return "en"
+    class DetectorFactory:       # type: ignore
+        seed = 42
+
+try:
+    from unidecode import unidecode
+except Exception:
+    def unidecode(s: str) -> str:  # type: ignore
+        return s
+
 import logging
 logger = logging.getLogger("rss_processor")
 if not logger.handlers:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-# ---- project deps ----------------------------------------------------
+# ---------------------------- Geocode switch -------------------------
+GEOCODE_ENABLED = (os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1","true","yes","y"))
+
 try:
     from db_utils import save_raw_alerts_to_db, fetch_one, execute
 except Exception as e:
@@ -32,16 +48,100 @@ except Exception as e:
     fetch_one = None
     execute = None
 
-# Optional geocoder
 try:
-    from city_utils import get_city_coords, fuzzy_match_city, normalize_city
+    from city_utils import get_city_coords as _cu_get_city_coords
+    from city_utils import fuzzy_match_city as _cu_fuzzy_match_city
+    from city_utils import normalize_city as _cu_normalize_city
 except Exception:
-    def get_city_coords(city, country): return (None, None)
-    def fuzzy_match_city(text): return None
-    def normalize_city(city): return (None, None)
+    _cu_get_city_coords = None
+    _cu_fuzzy_match_city = None
+    _cu_normalize_city = None
 
-# Deterministic language detection
-DetectorFactory.seed = 42
+def _titlecase(s: str) -> str:
+    return " ".join(p.capitalize() for p in (s or "").split())
+
+def _safe_norm_city_country(city_like: str) -> Tuple[Optional[str], Optional[str]]:
+    if not city_like:
+        return None, None
+    raw = (city_like or "").strip()
+    if "," in raw:
+        c, _, k = raw.partition(",")
+        return _titlecase(c.strip()), _titlecase(k.strip()) if k.strip() else None
+    return _titlecase(raw), None
+
+def fuzzy_match_city(text: str) -> Optional[str]:
+    if not text or _cu_fuzzy_match_city is None:
+        return None
+    try:
+        return _cu_fuzzy_match_city(text)
+    except Exception:
+        return None
+
+def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
+    if not city_like:
+        return (None, None)
+    if not GEOCODE_ENABLED or _cu_normalize_city is None:
+        return _safe_norm_city_country(city_like)
+    try:
+        return _cu_normalize_city(city_like)
+    except Exception:
+        return _safe_norm_city_country(city_like)
+
+def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    if (not GEOCODE_ENABLED) or (not city) or (_cu_get_city_coords is None):
+        return (None, None)
+    try:
+        return _cu_get_city_coords(city, country)
+    except Exception:
+        return (None, None)
+
+# ---- fallback DB writer (used if db_utils is unavailable) ----------
+if save_raw_alerts_to_db is None:
+    try:
+        import psycopg  # psycopg3
+    except Exception as e:
+        psycopg = None
+        logger.error("psycopg not available for fallback DB writes: %s", e)
+
+    def save_raw_alerts_to_db(alerts: list[dict]) -> int:
+        dsn = os.getenv("DATABASE_URL")
+        if not dsn or psycopg is None:
+            logger.error("No DATABASE_URL or psycopg; cannot write alerts.")
+            return 0
+
+        cols = [
+            "uuid","title","summary","en_snippet","link","source","published",
+            "tags","region","country","city","language","latitude","longitude"
+        ]
+        placeholders = "%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s"
+        sql = f"INSERT INTO raw_alerts ({','.join(cols)}) VALUES ({placeholders}) ON CONFLICT (uuid) DO NOTHING"
+
+        wrote = 0
+        try:
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    for a in alerts or []:
+                        cur.execute(sql, [
+                            a.get("uuid"),
+                            a.get("title"),
+                            a.get("summary"),
+                            a.get("en_snippet"),
+                            a.get("link"),
+                            a.get("source"),
+                            (a.get("published") or datetime.utcnow()),
+                            json.dumps(a.get("tags") or []),
+                            a.get("region"),
+                            a.get("country"),
+                            a.get("city"),
+                            a.get("language") or "en",
+                            a.get("latitude"),
+                            a.get("longitude"),
+                        ])
+                        wrote += getattr(cur, "rowcount", 0) or 0
+        except Exception as e:
+            logger.exception("Fallback DB write failed: %s", e)
+            return 0
+        return wrote
 
 # ---------------------------- Config ---------------------------------
 DEFAULT_TIMEOUT        = float(os.getenv("RSS_TIMEOUT_SEC", "20"))
@@ -57,18 +157,19 @@ FAILURE_THRESHOLD      = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
 
 FRESHNESS_DAYS         = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
 
-# Keyword filtering: ON by default (you asked for it)
-RSS_FILTER_STRICT      = str(os.getenv("RSS_FILTER_STRICT", "true")).lower() in ("1","true","yes","y")
+# Keyword filtering: ON by default (strict enforced)
+RSS_FILTER_STRICT      = True
 
-# Full-article text fetch: ON by default (to catch body-only matches)
 RSS_USE_FULLTEXT       = str(os.getenv("RSS_USE_FULLTEXT", "true")).lower() in ("1","true","yes","y")
 ARTICLE_TIMEOUT_SEC    = float(os.getenv("RSS_FULLTEXT_TIMEOUT_SEC", "12"))
 ARTICLE_MAX_BYTES      = int(os.getenv("RSS_FULLTEXT_MAX_BYTES", "800000"))
 ARTICLE_MAX_CHARS      = int(os.getenv("RSS_FULLTEXT_MAX_CHARS", "20000"))
-ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))  # per feed parse
+ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))
+
+if not GEOCODE_ENABLED:
+    logger.info("CITYUTILS_ENABLE_GEOCODE is FALSE — geocoding disabled in rss_processor.")
 
 # ---------------------- Keywords / Loading ---------------------------
-# Built-in last-resort set (only used if JSON+risk_shared unavailable)
 FILTER_KEYWORDS_FALLBACK = [
     "protest","riot","clash","strike","unrest","shooting","stabbing","robbery","kidnap","kidnapping","extortion",
     "ied","vbied","explosion","bomb",
@@ -79,7 +180,6 @@ FILTER_KEYWORDS_FALLBACK = [
 ]
 
 def _normalize(s: str) -> str:
-    """Lowercase, accent-strip, collapse spaces. Makes 'IED'=='ied', 'wild fire'=='wildfire'."""
     if not s:
         return ""
     s = unidecode(s).lower()
@@ -87,17 +187,6 @@ def _normalize(s: str) -> str:
     return s
 
 def _load_keywords() -> Tuple[List[str], str]:
-    """
-    Load keywords with operator control and robust multilingual support.
-
-    Env:
-      - THREAT_KEYWORDS_PATH: path to threat_keywords.json (default: ./threat_keywords.json)
-      - KEYWORDS_SOURCE: one of:
-          * 'merge'     -> JSON + risk_shared (JSON wins);  (default)
-          * 'json_only' -> only threat_keywords.json
-          * 'risk_only' -> only risk_shared
-    Returns: (keywords_list, mode_string)
-    """
     source_mode = (os.getenv("KEYWORDS_SOURCE", "merge") or "merge").lower()
     use_json = source_mode in ("merge", "json_only")
     use_risk = source_mode in ("merge", "risk_only")
@@ -105,23 +194,18 @@ def _load_keywords() -> Tuple[List[str], str]:
     kws: List[str] = []
     seen: set[str] = set()
 
-    # 1) JSON (operator-curated) — supports top-level "keywords" and "translated" map
     if use_json:
         path = os.getenv("THREAT_KEYWORDS_PATH", "threat_keywords.json")
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-
             if isinstance(data, dict):
-                # a) top-level list under "keywords"
                 base = data.get("keywords") or []
                 if isinstance(base, list):
                     for k in base:
                         kk = _normalize(str(k))
                         if kk and kk not in seen:
                             seen.add(kk); kws.append(kk)
-
-                # b) multilingual "translated": { root_term: { lang: [phrases...] } }
                 translated = data.get("translated", {})
                 if isinstance(translated, dict):
                     for _root, langmap in translated.items():
@@ -134,7 +218,6 @@ def _load_keywords() -> Tuple[List[str], str]:
                                 kk = _normalize(str(k))
                                 if kk and kk not in seen:
                                     seen.add(kk); kws.append(kk)
-
             elif isinstance(data, list):
                 for k in data:
                     kk = _normalize(str(k))
@@ -143,7 +226,6 @@ def _load_keywords() -> Tuple[List[str], str]:
         except Exception as e:
             logger.info("threat_keywords.json not loaded (%s); continuing", e)
 
-    # 2) risk_shared taxonomy (stable base)
     if use_risk:
         try:
             from risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
@@ -155,7 +237,6 @@ def _load_keywords() -> Tuple[List[str], str]:
         except Exception:
             pass
 
-    # 3) last-resort fallback
     if not kws:
         kws = [_normalize(k) for k in FILTER_KEYWORDS_FALLBACK]
 
@@ -165,9 +246,6 @@ KEYWORDS, KEYWORDS_MODE = _load_keywords()
 logger.info("Loaded %d keywords (mode=%s)", len(KEYWORDS), KEYWORDS_MODE)
 
 def _kw_match(text: str) -> bool:
-    """Accent-insensitive, case-insensitive substring match for any keyword/phrase."""
-    if not RSS_FILTER_STRICT:
-        return True
     t = _normalize(text)
     for kw in KEYWORDS:
         if kw in t:
@@ -349,7 +427,6 @@ def _bucket_for(url: str) -> TokenBucket:
 
 # ---------------------- Fulltext extraction -------------------------
 def _strip_html_basic(html: str) -> str:
-    # very basic fallback if no parser available
     text = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
     text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
     text = re.sub(r"(?is)<[^>]+>", " ", text)
@@ -365,7 +442,6 @@ async def _fetch_article_fulltext(client: httpx.AsyncClient, url: str) -> str:
         html = r.text
         if len(html) > ARTICLE_MAX_BYTES:
             html = html[:ARTICLE_MAX_BYTES]
-        # Try trafilatura if available
         try:
             import trafilatura
             extracted = trafilatura.extract(html, include_comments=False, favor_recall=True) or ""
@@ -373,7 +449,6 @@ async def _fetch_article_fulltext(client: httpx.AsyncClient, url: str) -> str:
                 return extracted[:ARTICLE_MAX_CHARS]
         except Exception:
             pass
-        # Try BeautifulSoup if available
         try:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html, "lxml")
@@ -382,7 +457,6 @@ async def _fetch_article_fulltext(client: httpx.AsyncClient, url: str) -> str:
             return txt[:ARTICLE_MAX_CHARS]
         except Exception:
             pass
-        # Fallback: crude strip
         return _strip_html_basic(html)[:ARTICLE_MAX_CHARS]
     except Exception as e:
         logger.debug("Fulltext fetch failed for %s: %s", url, e)
@@ -425,10 +499,8 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
 
     source = _extract_source(source_url or link)
 
-    # First pass: title + summary
     text_blob = f"{title}\n{summary}"
     if not _kw_match(text_blob):
-        # Second pass: fetch full article and test again
         fulltext = await _fetch_article_fulltext(client, link)
         if not fulltext:
             return None
@@ -436,24 +508,22 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         if not _kw_match(text_blob):
             return None
 
-    # Location inference + geocode (best effort)
     city = None; country = None
     try:
-        guess_city = fuzzy_match_city(f"{title} {summary}")
+        guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
         if guess_city:
             city, country = normalize_city(guess_city)
     except Exception:
         pass
 
     latitude = longitude = None
-    if city:
+    if city and GEOCODE_ENABLED:
         with contextlib.suppress(Exception):
             latitude, longitude = get_city_coords(city, country)
-        
+
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
 
-    # db-level dedupe if fetch_one present
     if fetch_one is not None:
         try:
             exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
@@ -508,7 +578,6 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     results_alerts: List[Dict[str, Any]] = []
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY, max_keepalive_connections=MAX_CONCURRENCY)
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
-        # Fetch feeds concurrently
         async def _fetch_feed(spec):
             if _should_skip_by_backoff(spec["url"]): return None, spec
             await _bucket_for(spec["url"]).acquire()
@@ -531,17 +600,14 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
             async with sem:
                 return await _build_alert_from_entry(entry, source_url, client)
 
-        # For each feed, parse entries, then process entries (fulltext if needed)
         for txt, spec in feed_results:
             if not txt:
                 continue
             entries, source_url = _extract_entries(txt, spec["url"])
-            # Process entries sequentially with per-feed concurrency limit
             tasks = [asyncio.create_task(_process_entry(e, source_url)) for e in entries]
             for coro in asyncio.as_completed(tasks):
                 res = await coro
                 if res:
-                    # annotate source kind/priority
                     kind = spec.get("kind", "unknown"); tag = spec.get("tag", "")
                     res.setdefault("source_kind", kind)
                     res.setdefault("source_priority", KIND_PRIORITY.get(kind, 999))
@@ -592,7 +658,6 @@ async def ingest_all_feeds_to_db(
 
 # ---------------------- CLI -----------------------------------------
 
-# ---- write control (safe default = write) ----
 WRITE_TO_DB_DEFAULT = str(os.getenv("RSS_WRITE_TO_DB", "true")).lower() in ("1","true","yes","y")
 FAIL_CLOSED = str(os.getenv("RSS_FAIL_CLOSED", "true")).lower() in ("1","true","yes","y")
 
@@ -615,7 +680,6 @@ if __name__ == "__main__":
         logger.exception("Fatal error in rss_processor")
         sys.exit(1)
 
-    # Full result and compact summary for ops logs
     print(res)
     try:
         print(
@@ -627,7 +691,6 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Guard: found alerts but didn't write while write-to-db enabled
     if WRITE_TO_DB_DEFAULT and res.get("count", 0) > 0 and res.get("wrote", 0) == 0:
         logger.error("Alerts found but no rows written — investigate DB writer.")
         sys.exit(2)

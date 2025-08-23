@@ -1,4 +1,4 @@
-# db_utils.py — drop-in (Sentinel AI) • v2025-08-13 (patched for safe defaults on alert keys)
+# db_utils.py — drop-in (Sentinel AI) • v2025-08-23 (patch: log/validate tags for raw_alerts insert)
 # Postgres helpers for RSS ingest, Threat Engine, and Advisor pipeline.
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     latitude, longitude  <-- NEW
     """
     if not alerts:
+        logger.info("No alerts to write.")
         return 0
     cols = [
         "uuid","title","summary","en_snippet","link","source","published",
@@ -84,6 +85,18 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
                 published = None
 
         tags = a.get("tags") or []
+        # Patch: ensure tags is always a Python list (never a string or JSON string)
+        if isinstance(tags, str):
+            import ast
+            try:
+                tags = ast.literal_eval(tags)
+                if not isinstance(tags, list):
+                    tags = [str(tags)]
+            except Exception:
+                tags = [str(tags)]
+        elif not isinstance(tags, list):
+            tags = [str(tags)]
+
         return (
             aid,
             a.get("title"),
@@ -104,14 +117,23 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
 
     rows = [_coerce(a) for a in alerts]
 
+    # Log type of tags for the first row for debugging
+    if rows:
+        logger.info("Attempting to insert %d rows to raw_alerts. First row tags: %r (type=%r)", len(rows), rows[0][10], type(rows[0][10]))
+
     sql = f"""
     INSERT INTO raw_alerts ({", ".join(cols)})
     VALUES %s
     ON CONFLICT (uuid) DO NOTHING
     """
-    with _conn() as conn, conn.cursor() as cur:
-        execute_values(cur, sql, rows)
-    return len(rows)
+    try:
+        with _conn() as conn, conn.cursor() as cur:
+            execute_values(cur, sql, rows)
+            logger.info("Insert to raw_alerts completed. Attempted: %d rows", len(rows))
+        return len(rows)
+    except Exception as e:
+        logger.error("DB insert to raw_alerts failed: %s", e)
+        return 0
 
 def fetch_raw_alerts_from_db(
     region: Optional[str] = None,
@@ -160,6 +182,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         raise RuntimeError("DATABASE_URL not set")
 
     if not alerts:
+        logger.info("No enriched alerts to write.")
         return 0
 
     columns = [
@@ -193,6 +216,17 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         ingested_at = a.get("ingested_at") or datetime.utcnow()
 
         tags    = a.get("tags") or []
+        if isinstance(tags, str):
+            import ast
+            try:
+                tags = ast.literal_eval(tags)
+                if not isinstance(tags, list):
+                    tags = [str(tags)]
+            except Exception:
+                tags = [str(tags)]
+        elif not isinstance(tags, list):
+            tags = [str(tags)]
+
         ewi     = a.get("early_warning_indicators") or []
         domains = a.get("domains") or []
         sources = a.get("sources") or []
@@ -229,7 +263,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("region"),
             a.get("country"),
             a.get("city"),
-            a.get("category") or a.get("type"),  # back-compat read
+            a.get("category") or a.get("type"),
             a.get("category_confidence") or a.get("type_confidence"),
             a.get("threat_level") or a.get("label"),
             a.get("threat_label") or a.get("label"),
@@ -266,11 +300,14 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("reports_analyzed"),
             _json(sources),   # jsonb
             a.get("cluster_id"),
-            a.get("latitude"),   # <<-- NEW
-            a.get("longitude"),  # <<-- NEW
+            a.get("latitude"),
+            a.get("longitude"),
         )
 
     rows = [_coerce_row(a) for a in alerts]
+
+    if rows:
+        logger.info("Attempting to insert %d rows to alerts. First row tags: %r (type=%r)", len(rows), rows[0][28], type(rows[0][28]))
 
     sql = f"""
     INSERT INTO alerts ({", ".join(columns)})
@@ -323,12 +360,17 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         reports_analyzed = EXCLUDED.reports_analyzed,
         sources = EXCLUDED.sources,
         cluster_id = EXCLUDED.cluster_id,
-        latitude = EXCLUDED.latitude,      -- NEW
-        longitude = EXCLUDED.longitude     -- NEW
+        latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude
     """
-    with _conn() as conn, conn.cursor() as cur:
-        execute_values(cur, sql, rows)
-    return len(rows)
+    try:
+        with _conn() as conn, conn.cursor() as cur:
+            execute_values(cur, sql, rows)
+            logger.info("Insert to alerts completed. Attempted: %d rows", len(rows))
+        return len(rows)
+    except Exception as e:
+        logger.error("DB insert to alerts failed: %s", e)
+        return 0
 
 # ---------- Alerts fetch for Advisor/Chat ----------
 def fetch_alerts_from_db(

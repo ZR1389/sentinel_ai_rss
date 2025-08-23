@@ -29,3 +29,5 @@ geopy>=2.4
 trafilatura
 beautifulsoup4
 lxml
+Unidecode
+
