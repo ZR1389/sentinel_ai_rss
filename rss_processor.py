@@ -1,4 +1,5 @@
-# rss_processor.py — Keyword-filtered ingest with fulltext fallback • v2025-08-23 (polished, strict keywording, production-ready, improved error logging)
+# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-23 DEBUGGED)
+# Drop-in, maximal logging, never skips/quietly, shows every fetch/skip/fail result.
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -6,17 +7,15 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Iterable, Tuple
 from urllib.parse import urlparse
 
-# .env loading (optional)
+# .env loading
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ---- third-party (defensive imports) --------------------------------
 import feedparser
 import httpx
-
 try:
     from langdetect import detect, DetectorFactory
     DetectorFactory.seed = 42
@@ -33,9 +32,8 @@ except Exception:
         return s
 
 import logging
+logging.basicConfig(level=logging.DEBUG, force=True)
 logger = logging.getLogger("rss_processor")
-if not logger.handlers:
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 # ---------------------------- Geocode switch -------------------------
 GEOCODE_ENABLED = (os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1","true","yes","y"))
@@ -98,7 +96,7 @@ def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Option
 # ---- fallback DB writer (used if db_utils is unavailable) ----------
 if save_raw_alerts_to_db is None:
     try:
-        import psycopg  # psycopg3
+        import psycopg
     except Exception as e:
         psycopg = None
         logger.error("psycopg not available for fallback DB writes: %s", e)
@@ -169,14 +167,13 @@ ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))
 if not GEOCODE_ENABLED:
     logger.info("CITYUTILS_ENABLE_GEOCODE is FALSE — geocoding disabled in rss_processor.")
 
-# ---------------------- Keywords / Loading ---------------------------
 FILTER_KEYWORDS_FALLBACK = [
     "protest","riot","clash","strike","unrest","shooting","stabbing","robbery","kidnap","kidnapping","extortion",
     "ied","vbied","explosion","bomb",
     "checkpoint","curfew","closure","detour","airport","border","rail","metro","highway","road",
     "substation","grid","pipeline","telecom","power outage",
     "ransomware","phishing","malware","breach","ddos","credential","zero-day","cve","surveillance","device check","spyware",
-    "earthquake","flood","wildfire","hurricane","storm","heatwave","outbreak","epidemic","pandemic","cholera","dengue","covid","ebola",
+    "earthquake","flood","wildfire","hurricane","storm","heatwave","outbreak","epidemic","pandemic","cholera","dengue","covid","ebola"
 ]
 
 def _normalize(s: str) -> str:
@@ -252,7 +249,6 @@ def _kw_match(text: str) -> bool:
             return True
     return False
 
-# ---------------------- Catalog / Sources ----------------------------
 try:
     from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 except Exception:
@@ -305,7 +301,6 @@ def _coalesce_all_feed_specs(group_names: Optional[Iterable[str]] = None) -> Lis
         seen.add(cleaned); s["url"] = cleaned; out.append(s)
     return out
 
-# ---------------------- Helpers -------------------------------------
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -342,7 +337,6 @@ def _parse_published(entry) -> Optional[datetime]:
                 return datetime(*val[:6], tzinfo=timezone.utc)
     return _now_utc()
 
-# ---------------------- Backoff / Health ----------------------------
 def _host(url: str) -> str:
     with contextlib.suppress(Exception): return urlparse(url).netloc
     return "unknown"
@@ -402,7 +396,6 @@ def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] =
          WHERE feed_url=%s
         """, (FAILURE_THRESHOLD, BACKOFF_MAX_MIN, BACKOFF_BASE_MIN, FAILURE_THRESHOLD, url))
 
-# ---------------------- Token bucket per host -----------------------
 class TokenBucket:
     def __init__(self, rate_per_sec: float, burst: int):
         self.rate = max(rate_per_sec, 0.0001)
@@ -425,7 +418,6 @@ def _bucket_for(url: str) -> TokenBucket:
         HOST_BUCKETS[host] = TokenBucket(HOST_RATE_PER_SEC, HOST_BURST)
     return HOST_BUCKETS[host]
 
-# ---------------------- Fulltext extraction -------------------------
 def _strip_html_basic(html: str) -> str:
     text = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
     text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
@@ -462,7 +454,6 @@ async def _fetch_article_fulltext(client: httpx.AsyncClient, url: str) -> str:
         logger.debug("Fulltext fetch failed for %s: %s", url, e)
         return ""
 
-# ---------------------- Ingest core ---------------------------------
 def _dedupe_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set(); out = []
     for it in items:
@@ -489,16 +480,13 @@ def _extract_entries(feed_text: str, feed_url: str) -> Tuple[List[Dict[str, Any]
 
 async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client: httpx.AsyncClient) -> Optional[Dict[str, Any]]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)
-
     title = entry["title"]
     summary = _normalize_summary(title, entry["summary"])
     link = entry["link"]
     published = entry["published"] or _now_utc()
     if published and published < cutoff:
         return None
-
     source = _extract_source(source_url or link)
-
     text_blob = f"{title}\n{summary}"
     if not _kw_match(text_blob):
         fulltext = await _fetch_article_fulltext(client, link)
@@ -507,7 +495,6 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         text_blob = f"{title}\n{summary}\n{fulltext}"
         if not _kw_match(text_blob):
             return None
-
     city = None; country = None
     try:
         guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
@@ -515,15 +502,12 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
             city, country = normalize_city(guess_city)
     except Exception:
         pass
-
     latitude = longitude = None
     if city and GEOCODE_ENABLED:
         with contextlib.suppress(Exception):
             latitude, longitude = get_city_coords(city, country)
-
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
-
     if fetch_one is not None:
         try:
             exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
@@ -531,10 +515,8 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
                 return None
         except Exception:
             pass
-
     snippet = _first_sentence(unidecode(summary))
     tags = _auto_tags(text_blob)
-
     return {
         "uuid": uuid,
         "title": title,
@@ -572,25 +554,30 @@ def _auto_tags(text: str) -> List[str]:
             tags.append(tag)
     return tags
 
-# ---------------------- Top-level ingest ----------------------------
 async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
-    if not feed_specs: return []
+    if not feed_specs:
+        logger.warning("No feed specs provided!")
+        return []
     results_alerts: List[Dict[str, Any]] = []
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY, max_keepalive_connections=MAX_CONCURRENCY)
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
         async def _fetch_feed(spec):
-            if _should_skip_by_backoff(spec["url"]): return None, spec
+            logger.info("Fetching feed: %s", spec["url"])
+            if _should_skip_by_backoff(spec["url"]):
+                logger.info("Feed skipped by backoff: %s", spec["url"])
+                return None, spec
             await _bucket_for(spec["url"]).acquire()
             start = time.perf_counter()
             try:
                 r = await client.get(spec["url"], timeout=DEFAULT_TIMEOUT)
                 r.raise_for_status()
                 txt = r.text
+                logger.info("Fetched feed OK: %s", spec["url"])
                 _record_health(spec["url"], ok=True, latency_ms=(time.perf_counter()-start)*1000.0)
                 return txt, spec
             except Exception as e:
+                logger.error("Feed fetch failed for %s: %r", spec["url"], e)
                 _record_health(spec["url"], ok=False, latency_ms=(time.perf_counter()-start)*1000.0, error=str(e))
-                logger.warning("Feed fetch failed for %s: %r", spec["url"], e)  # PATCHED: show exception repr
                 return None, spec
 
         feed_results = await asyncio.gather(*[_fetch_feed(s) for s in feed_specs], return_exceptions=False)
@@ -618,6 +605,7 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
             if len(results_alerts) >= limit:
                 break
 
+    logger.info("Total processed alerts: %d", len(results_alerts))
     return _dedupe_batch(results_alerts)[:limit]
 
 async def ingest_all_feeds_to_db(
@@ -627,6 +615,7 @@ async def ingest_all_feeds_to_db(
 ) -> Dict[str, Any]:
     start = time.time()
     specs = _coalesce_all_feed_specs(group_names)
+    logger.info("Total feeds to process: %d", len(specs))
     alerts = await ingest_feeds(specs, limit=limit)
     alerts = alerts[:limit]
 
@@ -635,6 +624,7 @@ async def ingest_all_feeds_to_db(
     if write_to_db:
         if save_raw_alerts_to_db is None:
             errors.append("DB writer unavailable: db_utils.save_raw_alerts_to_db import failed or DATABASE_URL not set")
+            logger.error(errors[-1])
         elif alerts:
             try:
                 wrote = save_raw_alerts_to_db(alerts)
@@ -642,7 +632,10 @@ async def ingest_all_feeds_to_db(
                 errors.append(f"DB write failed: {e}")
                 logger.exception("DB write failed")
         else:
-            logger.info("No alerts to write (count=0)")
+            logger.warning("No alerts to write (count=0)")
+
+    logger.info("Ingest run complete: ok=True count=%d wrote=%d feeds=%d elapsed=%.2fs errors=%d filter_strict=%r fulltext=%r",
+        len(alerts), wrote, len(specs), time.time()-start, len(errors), RSS_FILTER_STRICT, RSS_USE_FULLTEXT)
 
     return {
         "ok": True,
@@ -655,8 +648,6 @@ async def ingest_all_feeds_to_db(
         "filter_strict": RSS_FILTER_STRICT,
         "use_fulltext": RSS_USE_FULLTEXT,
     }
-
-# ---------------------- CLI -----------------------------------------
 
 WRITE_TO_DB_DEFAULT = str(os.getenv("RSS_WRITE_TO_DB", "true")).lower() in ("1","true","yes","y")
 FAIL_CLOSED = str(os.getenv("RSS_FAIL_CLOSED", "true")).lower() in ("1","true","yes","y")
