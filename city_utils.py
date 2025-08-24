@@ -1,4 +1,4 @@
-# city_utils.py — lightweight city inference + optional geocoding • v2025-08-24 DEBUGGED
+# city_utils.py — lightweight city inference + optional geocoding • v2025-08-24 DEBUGGED+LOGGING
 from __future__ import annotations
 
 import os
@@ -9,6 +9,9 @@ from typing import Optional, Tuple, Iterable
 
 logger = logging.getLogger("city_utils")
 logging.basicConfig(level=logging.DEBUG, force=True)
+logger.critical("[city_utils] LOADED: city_utils.py imported and logger initialized.")
+logger.info(f"[city_utils] ENV: CITYUTILS_ENABLE_GEOCODE={os.getenv('CITYUTILS_ENABLE_GEOCODE')!r}, "
+            f"GEOCODE_ENABLED={str(os.getenv('CITYUTILS_ENABLE_GEOCODE', 'true')).lower() in ('1','true','yes','y')}")
 
 # ---------------- Env switches (no-network by default if you want) ----------------
 GEOCODE_ENABLED = str(os.getenv("CITYUTILS_ENABLE_GEOCODE", "true")).lower() in ("1", "true", "yes", "y")
@@ -68,8 +71,10 @@ _COMMON_CITIES: Iterable[str] = [
 ]
 
 def fuzzy_match_city(text: str, *, min_ratio: float = 0.84) -> Optional[str]:
+    logger.debug(f"[city_utils] fuzzy_match_city called: text={text!r}, min_ratio={min_ratio}")
     text = _norm(text)
     if not text:
+        logger.debug("[city_utils] fuzzy_match_city: No text after normalization.")
         return None
     best = None
     best_ratio = min_ratio
@@ -78,9 +83,11 @@ def fuzzy_match_city(text: str, *, min_ratio: float = 0.84) -> Optional[str]:
         if ratio > best_ratio:
             best = city
             best_ratio = ratio
+    logger.debug(f"[city_utils] fuzzy_match_city: best match for {text!r} is {best!r} (ratio={best_ratio})")
     return best
 
 def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
+    logger.critical(f"[city_utils] normalize_city CALLED with city_like={city_like!r}")
     """
     Input: 'Paris' or 'Paris, France' (any casing/punctuation).
     Output: (CityName, CountryName) — title-cased if known. Uses geocoding only if enabled.
@@ -101,12 +108,13 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     if GEOCODE_ENABLED and _geocode:
         q = f"{city_hint or raw}{', ' + country_hint if country_hint else ''}"
         try:
+            logger.info(f"[city_utils] Attempting geocode for '{q}'")
             loc = _geocode(q)
             if loc and getattr(loc, "raw", None):
                 addr = loc.raw.get("address", {})
                 city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality") or addr.get("state")
                 country = addr.get("country")
-                logger.debug(f"[city_utils] Geocoded '{q}' → city='{city}', country='{country}'")
+                logger.info(f"[city_utils] Geocoded '{q}' → city='{city}', country='{country}'")
                 if city or country:
                     return (_titlecase(city) if city else (_titlecase(city_hint) if city_hint else None),
                             _titlecase(country) if country else (_titlecase(country_hint) if country_hint else None))
@@ -125,6 +133,7 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     return _titlecase(city_hint or raw), (_titlecase(country_hint) if country_hint else None)
 
 def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    logger.critical(f"[city_utils] get_city_coords CALLED with city={city!r}, country={country!r}")
     """
     Given a city and optional country, return (lat, lon) via Nominatim.
     Logs every attempt and failure. Returns (None, None) on any issue.
@@ -143,6 +152,7 @@ def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Option
 
     q = f"{city}{', ' + country if country else ''}"
     try:
+        logger.info(f"[city_utils] Attempting geocode for '{q}'")
         loc = _geocode(q)
         if loc:
             logger.info(f"[city_utils] Geocoded '{q}' → ({loc.latitude}, {loc.longitude})")
@@ -154,6 +164,7 @@ def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Option
     return None, None
 
 def normalize_city_country(city: Optional[str], country: Optional[str]) -> Tuple[str, str]:
+    logger.critical(f"[city_utils] normalize_city_country CALLED with city={city!r}, country={country!r}")
     c = _norm(city or "")
     k = _norm(country or "")
     return c, k
