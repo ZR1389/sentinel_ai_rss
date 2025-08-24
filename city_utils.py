@@ -87,6 +87,7 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     Never raises; returns best-effort normalization even without network.
     """
     if not city_like:
+        logger.warning("[city_utils] normalize_city called with empty input.")
         return None, None
 
     raw = _norm(city_like)
@@ -109,9 +110,15 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
                 if city or country:
                     return (_titlecase(city) if city else (_titlecase(city_hint) if city_hint else None),
                             _titlecase(country) if country else (_titlecase(country_hint) if country_hint else None))
+                else:
+                    logger.warning(f"[city_utils] Geocoding returned no city/country for '{q}'")
+            else:
+                logger.warning(f"[city_utils] Geocoding returned None for '{q}'")
         except Exception as e:
             logger.error(f"[city_utils] Geocode exception for '{q}': {e}")
             pass
+    else:
+        logger.warning(f"[city_utils] Geocoding not enabled or unavailable for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
 
     # Fallback: heuristic-only normalization; country may remain None
     logger.warning(f"[city_utils] Geocode fallback for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
