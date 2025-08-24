@@ -1,43 +1,41 @@
-# city_utils.py — lightweight city inference + optional geocoding • v2025-08-23
+# city_utils.py — lightweight city inference + optional geocoding • v2025-08-24 DEBUGGED
 from __future__ import annotations
 
 import os
 import re
 import difflib
+import logging
 from typing import Optional, Tuple, Iterable
+
+logger = logging.getLogger("city_utils")
+logging.basicConfig(level=logging.DEBUG, force=True)
 
 # ---------------- Env switches (no-network by default if you want) ----------------
 GEOCODE_ENABLED = str(os.getenv("CITYUTILS_ENABLE_GEOCODE", "true")).lower() in ("1", "true", "yes", "y")
-GEOCODE_TIMEOUT_SEC = float(os.getenv("CITYUTILS_GEOCODE_TIMEOUT_SEC", "3"))       # keep very short
-GEOCODE_MIN_DELAY   = float(os.getenv("CITYUTILS_GEOCODE_MIN_DELAY_SEC", "1"))     # Nominatim policy ~1s
-GEOCODE_MAX_RETRIES = int(os.getenv("CITYUTILS_GEOCODE_MAX_RETRIES", "0"))         # zero = no retry
-GEOCODE_ERROR_WAIT  = float(os.getenv("CITYUTILS_GEOCODE_ERROR_WAIT_SEC", "0"))    # no extra waits
+GEOCODE_TIMEOUT_SEC = float(os.getenv("CITYUTILS_GEOCODE_TIMEOUT_SEC", "3"))
+GEOCODE_MIN_DELAY   = float(os.getenv("CITYUTILS_GEOCODE_MIN_DELAY_SEC", "1"))
+GEOCODE_MAX_RETRIES = int(os.getenv("CITYUTILS_GEOCODE_MAX_RETRIES", "0"))
+GEOCODE_ERROR_WAIT  = float(os.getenv("CITYUTILS_GEOCODE_ERROR_WAIT_SEC", "0"))
 
-# ---------------- Normalization helpers ----------------
 try:
     from unidecode import unidecode
 except Exception:
-    def unidecode(s: str) -> str:  # no-op fallback
+    def unidecode(s: str) -> str:
         return s
 
 def _norm(s: str) -> str:
-    if not s:
-        return ""
-    s = unidecode(s)
-    s = s.replace("–", " ").replace("—", " ").replace("-", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return unidecode(s or "").strip().lower()
 
 def _titlecase(s: str) -> str:
-    return " ".join(p.capitalize() for p in (s or "").split())
+    return " ".join([p.capitalize() for p in (s or "").split()])
 
 # ---------------- Optional geocoder (strictly sandboxed) ----------------
 _geocode = None
+_geocode_debug_msg = None
 if GEOCODE_ENABLED:
     try:
         from geopy.geocoders import Nominatim
         from geopy.extra.rate_limiter import RateLimiter
-        # NOTE: timeout kept short; no retries; swallow exceptions so we never bubble/block
         _geolocator = Nominatim(user_agent="sentinel-geocoder", timeout=GEOCODE_TIMEOUT_SEC, scheme="https")
         _geocode = RateLimiter(
             _geolocator.geocode,
@@ -46,10 +44,14 @@ if GEOCODE_ENABLED:
             max_retries=GEOCODE_MAX_RETRIES,
             error_wait_seconds=GEOCODE_ERROR_WAIT,
         )
-    except Exception:
+        logger.info("[city_utils] Geopy geocoder loaded and enabled.")
+    except Exception as e:
+        _geocode_debug_msg = f"Failed to init geopy: {e}"
+        logger.error("[city_utils] ERROR loading geopy: %s", e)
         _geocode = None
+else:
+    logger.info("[city_utils] Geocoding globally DISABLED via env.")
 
-# ---------------- A small, fast global list for cheap matches ----------------
 _COMMON_CITIES: Iterable[str] = [
     "New York","London","Paris","Berlin","Moscow","Kyiv","Warsaw","Prague","Budapest","Bucharest",
     "Rome","Madrid","Barcelona","Lisbon","Dublin","Edinburgh","Istanbul","Ankara","Athens","Sofia",
@@ -65,44 +67,18 @@ _COMMON_CITIES: Iterable[str] = [
     "Toronto","Vancouver","Montreal","Chicago","Los Angeles","San Francisco","Washington","Boston","Miami","Houston",
 ]
 
-# ---------------- Public API (expected by callers) ----------------
 def fuzzy_match_city(text: str, *, min_ratio: float = 0.84) -> Optional[str]:
-    """
-    Best-effort city guess from free text. NO geocoding here.
-    Returns a city string (optionally 'City, Country' if detected), else None.
-    """
+    text = _norm(text)
     if not text:
         return None
-    t = _norm(text)
-
-    # 1) "in Paris, France" / "near Lagos, Nigeria" / "at Berlin"
-    pat_pairs = re.compile(
-        r'\b(?:in|near|at|outside|around|north of|south of|east of|west of|city of)\s+'
-        r'([A-Z][A-Za-z\'’.\-]+(?:\s+[A-Z][A-Za-z\'’.\-]+){0,2})'
-        r'(?:\s*,\s*([A-Z][A-Za-z\'’.\-]+))?'
-    )
-    for m in pat_pairs.finditer(text):
-        city = _titlecase(_norm(m.group(1)))
-        country = _titlecase(_norm(m.group(2))) if m.group(2) else None
-        if city:
-            return f"{city}, {country}" if country else city
-
-    # 2) Cheap dictionary match
-    low = t.lower()
-    for c in _COMMON_CITIES:
-        cn = _norm(c).lower()
-        if re.search(rf'\b{re.escape(cn)}\b', low):
-            return _titlecase(c)
-
-    # 3) Fuzzy fallback against common list (bounded tokens)
-    tokens = set(re.findall(r"[A-Za-z][A-Za-z\-']{2,}(?:\s+[A-Za-z][A-Za-z\-']{2,}){0,2}", text))
-    if tokens:
-        candidates = [_titlecase(_norm(tok)) for tok in list(tokens)[:40]]  # cap to avoid CPU spikes
-        seed = " ".join(sorted(candidates, key=len, reverse=True))[:60]
-        best = difflib.get_close_matches(seed, list(_COMMON_CITIES), n=1, cutoff=min_ratio)
-        if best:
-            return best[0]
-    return None
+    best = None
+    best_ratio = min_ratio
+    for city in _COMMON_CITIES:
+        ratio = difflib.SequenceMatcher(None, text, city.lower()).ratio()
+        if ratio > best_ratio:
+            best = city
+            best_ratio = ratio
+    return best
 
 def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     """
@@ -129,36 +105,48 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
                 addr = loc.raw.get("address", {})
                 city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality") or addr.get("state")
                 country = addr.get("country")
+                logger.debug(f"[city_utils] Geocoded '{q}' → city='{city}', country='{country}'")
                 if city or country:
                     return (_titlecase(city) if city else (_titlecase(city_hint) if city_hint else None),
                             _titlecase(country) if country else (_titlecase(country_hint) if country_hint else None))
-        except Exception:
-            # swallow per design; fall through to heuristic normalization
+        except Exception as e:
+            logger.error(f"[city_utils] Geocode exception for '{q}': {e}")
             pass
 
     # Fallback: heuristic-only normalization; country may remain None
+    logger.warning(f"[city_utils] Geocode fallback for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
     return _titlecase(city_hint or raw), (_titlecase(country_hint) if country_hint else None)
 
 def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
     """
     Given a city and optional country, return (lat, lon) via Nominatim.
-    Respects env switch; returns (None, None) on any issue. Never raises or retries.
+    Logs every attempt and failure. Returns (None, None) on any issue.
     """
-    if not city or not (GEOCODE_ENABLED and _geocode):
+    if not city:
+        logger.warning("[city_utils] get_city_coords called with empty city.")
         return None, None
+
+    if not GEOCODE_ENABLED:
+        logger.info("[city_utils] Geocoding disabled via env; skipping geocode for '%s', '%s'.", city, country)
+        return None, None
+
+    if not _geocode:
+        logger.error("[city_utils] Geocoding unavailable (geopy missing or init failed: %s); skipping for '%s', '%s'.", _geocode_debug_msg, city, country)
+        return None, None
+
+    q = f"{city}{', ' + country if country else ''}"
     try:
-        q = f"{city}{', ' + country if country else ''}"
         loc = _geocode(q)
         if loc:
+            logger.info(f"[city_utils] Geocoded '{q}' → ({loc.latitude}, {loc.longitude})")
             return float(loc.latitude), float(loc.longitude)
-    except Exception:
-        pass
+        else:
+            logger.warning(f"[city_utils] FAILED to geocode: '{q}'")
+    except Exception as e:
+        logger.error(f"[city_utils] ERROR geocoding '{q}': {e}")
     return None, None
 
 def normalize_city_country(city: Optional[str], country: Optional[str]) -> Tuple[str, str]:
-    """
-    Legacy helper: returns lowercased/diacritic-stripped strings (not geocoded).
-    """
     c = _norm(city or "")
     k = _norm(country or "")
     return c, k
