@@ -1,8 +1,9 @@
 # map_api.py — Map endpoints (static + GeoJSON incidents)
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, send_from_directory, current_app
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from flask import Blueprint, jsonify, send_from_directory, current_app, request
+from functools import lru_cache
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 import json
 import os
 import unicodedata
@@ -15,17 +16,22 @@ except Exception:
 
 map_api = Blueprint("map_api", __name__, static_folder="web")
 
+# Resolve absolute static dir
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_STATIC_DIR = map_api.static_folder if os.path.isabs(map_api.static_folder) \
+    else os.path.join(_BASE_DIR, map_api.static_folder)
+
 # Where to load polygons for reverse geocoding (place a copy of your countries.geojson here)
-COUNTRIES_GEOJSON_PATH = os.getenv("COUNTRIES_GEOJSON_PATH") or os.path.join(map_api.static_folder, "countries.geojson")
+COUNTRIES_GEOJSON_PATH = os.getenv("COUNTRIES_GEOJSON_PATH") or os.path.join(_STATIC_DIR, "countries.geojson")
 
 # ---------------- Static map files ----------------
 @map_api.route("/map")
 def serve_map():
-    return send_from_directory(map_api.static_folder, "index.html")
+    return send_from_directory(_STATIC_DIR, "index.html")
 
 @map_api.route("/map/<path:path>")
 def serve_map_static(path: str):
-    return send_from_directory(map_api.static_folder, path)
+    return send_from_directory(_STATIC_DIR, path)
 
 # ---------------- helpers ----------------
 def _row_get(r: Any, key: str, idx: int | None = None):
@@ -211,7 +217,6 @@ def _point_in_ring(lon: float, lat: float, ring: List[Tuple[float,float]]) -> bo
     for i in range(n):
         x1, y1 = ring[i]
         x2, y2 = ring[(i + 1) % n]
-        # Check if edge crosses the ray
         intersect = ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / ( (y2 - y1) or 1e-16) + x1)
         if intersect:
             inside = not inside
@@ -226,22 +231,73 @@ def _lonlat_to_country(lon: float, lat: float) -> Optional[str]:
         if not _load_countries():
             return None
     assert _POLYS_INDEX is not None and _BBOX_INDEX is not None
-    # quick bbox filter
     cands = []
     for name, (minx, miny, maxx, maxy) in _BBOX_INDEX:
         if (minx - 0.2) <= lon <= (maxx + 0.2) and (miny - 0.2) <= lat <= (maxy + 0.2):
             cands.append(name)
     if not cands:
         return None
-    # test rings
     for name, rings in _POLYS_INDEX:
         if name not in cands:
             continue
-        # If any ring contains the point, count it as inside.
+        # Even–odd rule across rings
+        inside_any = False
         for ring in rings:
             if _point_in_ring(lon, lat, ring):
-                return name
+                inside_any = not inside_any
+        if inside_any:
+            return name
     return None
+
+@lru_cache(maxsize=10000)
+def _lonlat_to_country_cached(lon: float, lat: float) -> Optional[str]:
+    return _lonlat_to_country(lon, lat)
+
+# ---------------- Geo data health ----------------
+@map_api.route("/geo_health")
+def geo_health():
+    ok = _load_countries()
+    size = 0
+    try:
+        if ok and _COUNTRIES_CACHE and isinstance(_COUNTRIES_CACHE.get("features"), list):
+            size = len(_COUNTRIES_CACHE["features"])
+    except Exception:
+        size = 0
+    exists = os.path.exists(COUNTRIES_GEOJSON_PATH)
+    return jsonify({
+        "ok": bool(ok),
+        "countries_geojson_path": COUNTRIES_GEOJSON_PATH,
+        "file_exists": bool(exists),
+        "features": size
+    })
+
+# ---------------- Reverse country lookup ----------------
+@map_api.route("/reverse_country")
+def reverse_country():
+    """
+    GET /reverse_country?lat=<float>&lon=<float>
+    Returns the Natural Earth ADMIN country for the given coordinates.
+    """
+    lat_s = request.args.get("lat", type=str)
+    lon_s = request.args.get("lon", type=str)
+    if lat_s is None or lon_s is None:
+        return jsonify({"ok": False, "error": "Query params 'lat' and 'lon' are required"}), 400
+    try:
+        lat = float(lat_s)
+        lon = float(lon_s)
+    except Exception:
+        return jsonify({"ok": False, "error": "lat/lon must be floats"}), 400
+
+    if not _load_countries():
+        return jsonify({"ok": False, "error": f"Failed to load countries.geojson from {COUNTRIES_GEOJSON_PATH}"}), 500
+
+    country = _lonlat_to_country_cached(lon, lat)
+    return jsonify({
+        "ok": bool(country),
+        "lat": lat,
+        "lon": lon,
+        "country": country
+    }), 200
 
 # ---------------- Incidents as GeoJSON ----------------
 @map_api.route("/map_alerts")
@@ -335,7 +391,6 @@ def country_risks():
     If alerts.country is NULL/empty, we derive the country from latitude/longitude using
     web/countries.geojson (pure-Python point-in-polygon).
     """
-    # Pull recent alerts that have lat/lon and a threat_level (limit for perf)
     q = """
         SELECT country, threat_level, latitude, longitude
         FROM alerts
@@ -356,14 +411,11 @@ def country_risks():
             pass
         rows = []
 
-    # Severity ranking
     def sev(level: Optional[str]) -> int:
         s = (level or "low").strip().lower()
         return {"critical": 4, "high": 3, "moderate": 2, "low": 1}.get(s, 1)
 
     by_country_sev: Dict[str, int] = {}
-
-    # Ensure polygons are loaded if we need to reverse geocode
     polygons_ok = _load_countries()
 
     for r in rows:
@@ -372,7 +424,6 @@ def country_risks():
         lon = r.get("longitude")
         level = r.get("threat_level") or "low"
 
-        # Determine country: use column if present, else reverse from lon/lat
         if raw_country:
             country_ne = normalize_to_ne_admin(raw_country)
         else:
@@ -381,19 +432,18 @@ def country_risks():
                 latf = float(lat) if lat is not None else None
                 lonf = float(lon) if lon is not None else None
                 if latf is not None and lonf is not None and polygons_ok:
-                    country_ne = _lonlat_to_country(lonf, latf)
+                    country_ne = _lonlat_to_country_cached(lonf, latf)
             except Exception:
                 country_ne = None
 
         if not country_ne:
-            continue  # if we can't place it, skip
+            continue
 
         rank = sev(level)
         prev = by_country_sev.get(country_ne, 0)
         if rank > prev:
             by_country_sev[country_ne] = rank
 
-    # Convert back to level strings
     inv = {4: "critical", 3: "high", 2: "moderate", 1: "low"}
     by_country: Dict[str, str] = {name: inv.get(sev_val, "low") for name, sev_val in by_country_sev.items()}
 

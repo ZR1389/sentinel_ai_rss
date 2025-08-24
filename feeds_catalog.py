@@ -60,7 +60,6 @@ LOCAL_FEEDS = {
     "lima": ["https://elcomercio.pe/feed/"],
     "caracas": ["https://www.eluniversal.com/rss/rss.xml"],
     "bogota": ["https://www.eltiempo.com/rss/bogota.xml"],
-    "cape town": ["https://www.iol.co.za/cmlink/1.640"],
     "nairobi": ["https://www.nation.co.ke/rss.xml"],
     "casablanca": ["https://www.moroccoworldnews.com/feed"],
     "algiers": ["https://www.aps.dz/en/rss"],
@@ -94,7 +93,10 @@ LOCAL_FEEDS = {
     "winnipeg": ["https://winnipegsun.com/feed/"],
     "halifax": ["https://globalnews.ca/halifax/feed/"],
     "st johns": ["https://www.cbc.ca/cmlink/rss-canada-newfoundlandandlabrador"],
-    "cape town": ["https://www.sowetanlive.co.za/rss/?publication=sowetan-live&section=news"],
+    "cape town": [
+        "https://www.sowetanlive.co.za/rss/?publication=sowetan-live&section=news", 
+        "https://www.iol.co.za/cmlink/1.640"
+    ],
     "novi sad": ["https://www.021.rs/rss/all"],
     "nis": ["https://niskevesti.rs/feed/"],
     "sankt petersburg": ["https://rssexport.rbc.ru/rbcnews/news/30/full.rss"],

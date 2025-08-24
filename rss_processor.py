@@ -49,11 +49,11 @@ except Exception as e:
 try:
     from city_utils import get_city_coords as _cu_get_city_coords
     from city_utils import fuzzy_match_city as _cu_fuzzy_match_city
-    from city_utils import normalize_city as _cu_normalize_city
+    from city_utils import normalize_city_country as _cu_normalize_city_country
 except Exception:
     _cu_get_city_coords = None
     _cu_fuzzy_match_city = None
-    _cu_normalize_city = None
+    _cu_normalize_city_country = None
 
 def _titlecase(s: str) -> str:
     return " ".join(p.capitalize() for p in (s or "").split())
@@ -78,18 +78,85 @@ def fuzzy_match_city(text: str) -> Optional[str]:
 def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     if not city_like:
         return (None, None)
-    if not GEOCODE_ENABLED or _cu_normalize_city is None:
+    if not GEOCODE_ENABLED or _cu_normalize_city_country is None:
         return _safe_norm_city_country(city_like)
     try:
-        return _cu_normalize_city(city_like)
+        return _cu_normalize_city_country(*_safe_norm_city_country(city_like))
     except Exception:
         return _safe_norm_city_country(city_like)
 
+# ---------------------------- Postgres geocode cache -----------------
+# TTL for cached geocodes. You already created the 'geocode_cache' table.
+GEOCODE_CACHE_TTL_DAYS = int(os.getenv("GEOCODE_CACHE_TTL_DAYS", "180"))
+
+def _geo_db_lookup(city: str, country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Returns (lat, lon) if a fresh cached value exists, else (None, None).
+    Uses updated_at > NOW() - INTERVAL '<TTL> days'.
+    """
+    if fetch_one is None:
+        return None, None
+    try:
+        row = fetch_one(
+            """
+            SELECT lat, lon
+            FROM geocode_cache
+            WHERE city = %s
+              AND COALESCE(country,'') = COALESCE(%s,'')
+              AND updated_at > NOW() - (%s || ' days')::interval
+            """,
+            (city, country, str(GEOCODE_CACHE_TTL_DAYS)),
+        )
+        if row:
+            lat, lon = row
+            try:
+                return (float(lat), float(lon))
+            except Exception:
+                return None, None
+    except Exception as e:
+        logger.debug("[rss_processor] geocode cache lookup failed for %s, %s: %s", city, country, e)
+    return None, None
+
+def _geo_db_store(city: str, country: Optional[str], lat: float, lon: float) -> None:
+    """
+    Upsert geocode result.
+    """
+    if execute is None:
+        return
+    try:
+        execute(
+            """
+            INSERT INTO geocode_cache (city, country, lat, lon, updated_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (city, country) DO UPDATE SET
+              lat = EXCLUDED.lat,
+              lon = EXCLUDED.lon,
+              updated_at = NOW()
+            """,
+            (city, country, float(lat), float(lon)),
+        )
+    except Exception as e:
+        logger.debug("[rss_processor] geocode cache store failed for %s, %s: %s", city, country, e)
+
 def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Wrapper that first tries the Postgres cache, then falls back to city_utils (Nominatim),
+    and stores fresh results back in the cache.
+    """
     if (not GEOCODE_ENABLED) or (not city) or (_cu_get_city_coords is None):
         return (None, None)
     try:
-        return _cu_get_city_coords(city, country)
+        # 1) Cache first
+        lat, lon = _geo_db_lookup(city, country)
+        if lat is not None and lon is not None:
+            logger.debug("[rss_processor] geocode cache hit for %s, %s -> (%s,%s)", city, country, lat, lon)
+            return lat, lon
+
+        # 2) Network via city_utils (itself has an in-process LRU)
+        lat, lon = _cu_get_city_coords(city, country)
+        if lat is not None and lon is not None:
+            _geo_db_store(city, country, lat, lon)
+        return lat, lon
     except Exception:
         return (None, None)
 
@@ -515,9 +582,9 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
     city_string = extract_city_from_source_tag(source_tag)
     logger.debug(f"[rss_processor] source_tag={source_tag}, city_string={city_string}")
     if city_string:
-        logger.debug(f"[rss_processor] Calling normalize_city('{city_string}')")
+        logger.debug(f"[rss_processor] Calling normalize_city_country on '{city_string}'")
         city, country = normalize_city(city_string)
-        logger.debug(f"[rss_processor] normalize_city('{city_string}') returned city={city}, country={country}")
+        logger.debug(f"[rss_processor] normalize_city_country('{city_string}') -> city={city}, country={country}")
         if city and GEOCODE_ENABLED:
             logger.debug(f"[rss_processor] Calling get_city_coords(city={city}, country={country})")
             latitude, longitude = get_city_coords(city, country)

@@ -39,7 +39,8 @@ if GEOCODE_ENABLED:
     try:
         from geopy.geocoders import Nominatim
         from geopy.extra.rate_limiter import RateLimiter
-        _geolocator = Nominatim(user_agent="sentinel-geocoder", timeout=GEOCODE_TIMEOUT_SEC, scheme="https")
+        # ✅ FIX: removed deprecated scheme="https"
+        _geolocator = Nominatim(user_agent="sentinel-geocoder", timeout=GEOCODE_TIMEOUT_SEC)
         _geocode = RateLimiter(
             _geolocator.geocode,
             min_delay_seconds=GEOCODE_MIN_DELAY,
@@ -88,11 +89,6 @@ def fuzzy_match_city(text: str, *, min_ratio: float = 0.84) -> Optional[str]:
 
 def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     logger.critical(f"[city_utils] normalize_city CALLED with city_like={city_like!r}")
-    """
-    Input: 'Paris' or 'Paris, France' (any casing/punctuation).
-    Output: (CityName, CountryName) — title-cased if known. Uses geocoding only if enabled.
-    Never raises; returns best-effort normalization even without network.
-    """
     if not city_like:
         logger.warning("[city_utils] normalize_city called with empty input.")
         return None, None
@@ -104,7 +100,6 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
         city_hint = parts[0] or None
         country_hint = parts[1] or None
 
-    # Geocode (fast-exit: disabled or unavailable)
     if GEOCODE_ENABLED and _geocode:
         q = f"{city_hint or raw}{', ' + country_hint if country_hint else ''}"
         try:
@@ -128,16 +123,11 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     else:
         logger.warning(f"[city_utils] Geocoding not enabled or unavailable for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
 
-    # Fallback: heuristic-only normalization; country may remain None
     logger.warning(f"[city_utils] Geocode fallback for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
     return _titlecase(city_hint or raw), (_titlecase(country_hint) if country_hint else None)
 
 def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
     logger.critical(f"[city_utils] get_city_coords CALLED with city={city!r}, country={country!r}")
-    """
-    Given a city and optional country, return (lat, lon) via Nominatim.
-    Logs every attempt and failure. Returns (None, None) on any issue.
-    """
     if not city:
         logger.warning("[city_utils] get_city_coords called with empty city.")
         return None, None

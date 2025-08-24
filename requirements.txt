@@ -25,7 +25,6 @@ flask-limiter>=3.5
 PyJWT>=2.8
 cryptography>=42.0.0
 python-telegram-bot==21.6
-geopy>=2.4
 trafilatura
 beautifulsoup4
 lxml
