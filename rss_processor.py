@@ -489,17 +489,44 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         text_blob = f"{title}\n{summary}\n{fulltext}"
         if not _kw_match(text_blob):
             return None
-    city = None; country = None
+
+    # ------ CITY/COUNTRY/LAT/LON PATCH FROM source_tag/tag ------
+    city = None
+    country = None
+    latitude = None
+    longitude = None
+    source_tag = None
     try:
-        guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
-        if guess_city:
-            city, country = normalize_city(guess_city)
+        import inspect
+        frame = inspect.currentframe()
+        while frame:
+            if "spec" in frame.f_locals:
+                source_tag = frame.f_locals["spec"].get("tag")
+                break
+            frame = frame.f_back
     except Exception:
         pass
-    latitude = longitude = None
-    if city and GEOCODE_ENABLED:
-        with contextlib.suppress(Exception):
+
+    def extract_city_from_source_tag(tag):
+        if tag and tag.startswith("local:"):
+            return tag.split("local:", 1)[1].strip()
+        return None
+
+    city_string = extract_city_from_source_tag(source_tag)
+    if city_string:
+        city, country = normalize_city(city_string)
+        if city and GEOCODE_ENABLED:
             latitude, longitude = get_city_coords(city, country)
+    else:
+        try:
+            guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
+            if guess_city:
+                city, country = normalize_city(guess_city)
+                if city and GEOCODE_ENABLED:
+                    latitude, longitude = get_city_coords(city, country)
+        except Exception:
+            pass
+
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
     if fetch_one is not None:
@@ -511,7 +538,7 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
             pass
     snippet = _first_sentence(unidecode(summary))
     tags = _auto_tags(text_blob)
-    return {
+    alert = {
         "uuid": uuid,
         "title": title,
         "summary": summary,
@@ -527,6 +554,9 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         "latitude": latitude,
         "longitude": longitude,
     }
+    if source_tag:
+        alert["source_tag"] = source_tag
+    return alert
 
 def _auto_tags(text: str) -> List[str]:
     t = (text or "").lower()
