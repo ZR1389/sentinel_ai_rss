@@ -99,6 +99,7 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
     # Geocode (fast-exit: disabled or unavailable)
     if GEOCODE_ENABLED and _geocode:
         q = f"{city_hint or raw}{', ' + country_hint if country_hint else ''}"
+        logger.debug(f"[city_utils] Attempting to geocode: '{q}'")
         try:
             loc = _geocode(q)
             if loc and getattr(loc, "raw", None):
@@ -109,9 +110,19 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
                 if city or country:
                     return (_titlecase(city) if city else (_titlecase(city_hint) if city_hint else None),
                             _titlecase(country) if country else (_titlecase(country_hint) if country_hint else None))
+                else:
+                    logger.warning(f"[city_utils] FAILED to geocode: '{q}' (no city/country in result)")
+            else:
+                logger.warning(f"[city_utils] FAILED to geocode: '{q}' (no location found)")
         except Exception as e:
             logger.error(f"[city_utils] Geocode exception for '{q}': {e}")
             pass
+    else:
+        # Log why geocoding is being skipped
+        if not GEOCODE_ENABLED:
+            logger.info(f"[city_utils] Geocoding disabled via env; skipping geocode for '{city_like}'")
+        elif not _geocode:
+            logger.warning(f"[city_utils] Geocoding unavailable (geopy missing or init failed: {_geocode_debug_msg}); skipping geocode for '{city_like}'")
 
     # Fallback: heuristic-only normalization; country may remain None
     logger.warning(f"[city_utils] Geocode fallback for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
@@ -135,6 +146,7 @@ def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Option
         return None, None
 
     q = f"{city}{', ' + country if country else ''}"
+    logger.debug(f"[city_utils] Attempting to geocode: '{q}'")
     try:
         loc = _geocode(q)
         if loc:
