@@ -513,19 +513,25 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         return None
 
     city_string = extract_city_from_source_tag(source_tag)
+    logger.debug(f"[rss_processor] source_tag={source_tag}, city_string={city_string}")
     if city_string:
+        logger.debug(f"[rss_processor] Calling normalize_city('{city_string}')")
         city, country = normalize_city(city_string)
+        logger.debug(f"[rss_processor] normalize_city('{city_string}') returned city={city}, country={country}")
         if city and GEOCODE_ENABLED:
+            logger.debug(f"[rss_processor] Calling get_city_coords(city={city}, country={country})")
             latitude, longitude = get_city_coords(city, country)
+            logger.debug(f"[rss_processor] get_city_coords returned lat={latitude}, lon={longitude}")
     else:
         try:
             guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
             if guess_city:
+                logger.debug(f"[rss_processor] Fallback fuzzy_match_city guess_city={guess_city}")
                 city, country = normalize_city(guess_city)
                 if city and GEOCODE_ENABLED:
                     latitude, longitude = get_city_coords(city, country)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[rss_processor] Exception in fallback city: {e}")
 
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
