@@ -1,8 +1,10 @@
-# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-24 PATCHED)
-# - No backoff
+# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-24 PATCHED+COUNTRY+NO-BACKOFF)
+# - No backoff (ever)
+# - Optional per-host throttle (can be fully disabled via HOST_THROTTLE_ENABLED=false)
 # - Postgres geocode cache
 # - Proper source_tag threading (local:city[, country] & country:country)
 # - City→Country defaults for common cities
+# - Reverse country from (lon,lat) via countries.geojson (no external deps)
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -201,9 +203,12 @@ DEFAULT_TIMEOUT        = float(os.getenv("RSS_TIMEOUT_SEC", "20"))
 MAX_CONCURRENCY        = int(os.getenv("RSS_CONCURRENCY", "16"))
 BATCH_LIMIT            = int(os.getenv("RSS_BATCH_LIMIT", "400"))
 
+# Per-host throttle (NOT backoff). Can be disabled completely.
 HOST_RATE_PER_SEC      = float(os.getenv("RSS_HOST_RATE_PER_SEC", "0.5"))
 HOST_BURST             = int(os.getenv("RSS_HOST_BURST", "2"))
+HOST_THROTTLE_ENABLED  = (os.getenv("HOST_THROTTLE_ENABLED", "true").lower() in ("1","true","yes","y"))
 
+# Backoff knobs left for schema compatibility only (unused)
 BACKOFF_BASE_MIN       = int(os.getenv("RSS_BACKOFF_BASE_MIN", "15"))
 BACKOFF_MAX_MIN        = int(os.getenv("RSS_BACKOFF_MAX_MIN", "180"))
 FAILURE_THRESHOLD      = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
@@ -404,7 +409,7 @@ def _db_execute(q: str, args: tuple) -> None:
     if execute is None: return
     with contextlib.suppress(Exception): execute(q, args)
 
-# ------------- PATCH: DISABLE BACKOFF LOGIC COMPLETELY --------------
+# ------------- NO BACKOFF, EVER --------------
 def _should_skip_by_backoff(url: str) -> bool:
     return False
 
@@ -447,6 +452,9 @@ class TokenBucket:
         self.tokens = float(self.capacity)
         self.updated = _now_utc().timestamp()
     async def acquire(self):
+        # Completely bypass throttle if disabled
+        if not HOST_THROTTLE_ENABLED:
+            return
         now = _now_utc().timestamp()
         self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate)
         self.updated = now
@@ -548,14 +556,118 @@ CITY_DEFAULTS = {
     "vienna": "Austria",
     "zurich": "Switzerland",
     "amsterdam": "Netherlands",
+    # Added for your observed feeds:
+    "hong kong": "Hong Kong",
+    "tel aviv": "Israel",
+    "tehran": "Iran, Islamic Republic of",
+    "minsk": "Belarus",
 }
 
 def _apply_city_defaults(city: Optional[str], country: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    if city and not country:
+    if city and (not country or country.strip() == ""):
         ck = city.lower().strip()
         if ck in CITY_DEFAULTS:
+            logger.debug("[rss_processor] CITY_DEFAULTS filled country: '%s' -> '%s'", city, CITY_DEFAULTS[ck])
             return city, CITY_DEFAULTS[ck]
     return city, country
+
+# --- Reverse country from (lon,lat) using countries.geojson (no deps) ---
+COUNTRIES_GEOJSON_PATH = os.getenv("COUNTRIES_GEOJSON_PATH")  # same env as map_api
+_COUNTRIES_GJ = None
+_POLY_INDEX: Optional[List[Tuple[str, List[List[Tuple[float,float]]]]]] = None
+_BBOX_INDEX: Optional[List[Tuple[str, Tuple[float,float,float,float]]]] = None
+_NE_NAME_FIELD = "ADMIN"
+
+def _load_countries_gj() -> bool:
+    global _COUNTRIES_GJ, _POLY_INDEX, _BBOX_INDEX
+    if _POLY_INDEX is not None and _BBOX_INDEX is not None:
+        return True
+    if not COUNTRIES_GEOJSON_PATH or not os.path.exists(COUNTRIES_GEOJSON_PATH):
+        logger.debug("[rss_processor] countries.geojson not configured or missing; reverse-country disabled.")
+        return False
+    try:
+        with open(COUNTRIES_GEOJSON_PATH, "r", encoding="utf-8") as f:
+            gj = json.load(f)
+        feats = (gj or {}).get("features") or []
+        polys: List[Tuple[str, List[List[Tuple[float,float]]]]] = []
+        bboxes: List[Tuple[str, Tuple[float,float,float,float]]] = []
+
+        def rings(geom):
+            t = (geom or {}).get("type")
+            coords = (geom or {}).get("coordinates")
+            out = []
+            if t == "Polygon":
+                for ring in coords or []:
+                    out.append([(float(x), float(y)) for x, y in ring])
+            elif t == "MultiPolygon":
+                for poly in coords or []:
+                    for ring in poly:
+                        out.append([(float(x), float(y)) for x, y in ring])
+            return out
+
+        def bbox(ring):
+            xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
+            return (min(xs), min(ys), max(xs), max(ys))
+
+        for ft in feats:
+            props = (ft or {}).get("properties") or {}
+            name = str(props.get(_NE_NAME_FIELD) or "").strip()
+            if not name:
+                continue
+            rs = rings((ft or {}).get("geometry") or {})
+            if not rs:
+                continue
+            polys.append((name, rs))
+            bboxes.append((name, bbox(rs[0])))
+
+        _COUNTRIES_GJ = gj
+        _POLY_INDEX = polys
+        _BBOX_INDEX = bboxes
+        logger.info("[rss_processor] Loaded countries.geojson (%d features) for reverse-country.", len(feats))
+        logger.info("[rss_processor] COUNTRIES_GEOJSON_PATH=%s", COUNTRIES_GEOJSON_PATH)
+        return True
+    except Exception as e:
+        logger.debug("[rss_processor] Failed to load countries.geojson: %s", e)
+        _COUNTRIES_GJ = None; _POLY_INDEX = None; _BBOX_INDEX = None
+        return False
+
+def _point_in_ring(lon: float, lat: float, ring: List[Tuple[float,float]]) -> bool:
+    x, y = lon, lat
+    inside = False
+    n = len(ring)
+    if n < 3:
+        return False
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / ((y2 - y1) or 1e-16) + x1):
+            inside = not inside
+    return inside
+
+def _reverse_country_from_lonlat(lon: Optional[float], lat: Optional[float]) -> Optional[str]:
+    if lon is None or lat is None:
+        return None
+    if _POLY_INDEX is None or _BBOX_INDEX is None:
+        if not _load_countries_gj():
+            return None
+    # bbox prefilter
+    cands = []
+    for name, (minx, miny, maxx, maxy) in _BBOX_INDEX or []:
+        if (minx - 0.2) <= lon <= (maxx + 0.2) and (miny - 0.2) <= lat <= (maxy + 0.2):
+            cands.append(name)
+    if not cands:
+        return None
+    # even-odd rule across rings
+    for name, rings in _POLY_INDEX or []:
+        if name not in cands:
+            continue
+        inside = False
+        for ring in rings:
+            if _point_in_ring(lon, lat, ring):
+                inside = not inside
+        if inside:
+            return name
+    return None
 
 # ---------------- Build alert (now receives source_tag directly) ------
 async def _build_alert_from_entry(
@@ -599,17 +711,24 @@ async def _build_alert_from_entry(
 
     # 1) If it's a local feed, prefer the city in the tag
     city_string = extract_city_from_source_tag(source_tag)
+    logger.debug("[rss_processor] source_tag=%r city_string=%r", source_tag, city_string)
     if city_string:
         city, country = normalize_city(city_string)  # parses "City, Country" too
         city, country = _apply_city_defaults(city, country)
+        # If explicit country tag also present, fill if still missing
+        ctag = extract_country_from_source_tag(source_tag)
+        if ctag and not country:
+            country = ctag
+            logger.debug("[rss_processor] country filled from tag: %r", country)
         if city and GEOCODE_ENABLED:
             latitude, longitude = get_city_coords(city, country)
-
-    # 2) If it's a country feed (no city), at least set the country
-    if not city and not country:
+            logger.debug("[rss_processor] geocode for %r,%r -> (%r,%r)", city, country, latitude, longitude)
+    else:
+        # 2) If it's a country feed (no city), at least set the country
         ctry = extract_country_from_source_tag(source_tag)
         if ctry:
             country = ctry
+            logger.debug("[rss_processor] country from country: tag -> %r", country)
 
     # 3) Fuzzy fallback from text if still no city
     if not city:
@@ -618,10 +737,27 @@ async def _build_alert_from_entry(
             if guess_city:
                 city, country = normalize_city(guess_city)
                 city, country = _apply_city_defaults(city, country)
+                # If tag had explicit country and we still don't have one, fill it
+                if not country:
+                    ctag = extract_country_from_source_tag(source_tag)
+                    if ctag:
+                        country = ctag
+                        logger.debug("[rss_processor] country filled from tag after fuzzy: %r", country)
                 if city and GEOCODE_ENABLED:
                     latitude, longitude = get_city_coords(city, country)
+                    logger.debug("[rss_processor] geocode (fuzzy) for %r,%r -> (%r,%r)", city, country, latitude, longitude)
         except Exception as e:
             logger.error(f"[rss_processor] Exception in fallback city: {e}")
+
+    # 4) If city present but country missing, try CITY_DEFAULTS one more time
+    city, country = _apply_city_defaults(city, country)
+
+    # 5) If still no country but we do have coords, reverse from polygons (no network)
+    if (not country) and (latitude is not None and longitude is not None):
+        rc = _reverse_country_from_lonlat(float(longitude), float(latitude))
+        if rc:
+            country = rc
+            logger.debug("[rss_processor] country filled by reverse lon/lat -> %r", country)
 
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
@@ -644,8 +780,8 @@ async def _build_alert_from_entry(
         "published": (published or _now_utc()).replace(tzinfo=None),
         "tags": tags,
         "region": None,
-        "country": country,
-        "city": city,
+        "country": country or None,
+        "city": city or None,
         "language": lang,
         "latitude": latitude,
         "longitude": longitude,
@@ -778,6 +914,11 @@ if __name__ == "__main__":
     if not WRITE_TO_DB_DEFAULT:
         logger.warning("RSS_WRITE_TO_DB is FALSE — raw_alerts will NOT be written. "
                        "Set RSS_WRITE_TO_DB=true to enable inserts into raw_alerts.")
+
+    if COUNTRIES_GEOJSON_PATH:
+        logger.info("[rss_processor] COUNTRIES_GEOJSON_PATH=%s", COUNTRIES_GEOJSON_PATH)
+    else:
+        logger.info("[rss_processor] COUNTRIES_GEOJSON_PATH not set — reverse-country disabled.")
 
     print("🔍 Running RSS processor…")
     try:
