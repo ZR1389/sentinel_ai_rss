@@ -1,5 +1,8 @@
-# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-23 DEBUGGED, NO BACKOFF)
-# Drop-in, maximal logging, backoff logic fully disabled — all feeds will always be fetched.
+# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-24 PATCHED)
+# - No backoff
+# - Postgres geocode cache
+# - Proper source_tag threading (local:city[, country] & country:country)
+# - City→Country defaults for common cities
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -86,14 +89,9 @@ def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
         return _safe_norm_city_country(city_like)
 
 # ---------------------------- Postgres geocode cache -----------------
-# TTL for cached geocodes. You already created the 'geocode_cache' table.
 GEOCODE_CACHE_TTL_DAYS = int(os.getenv("GEOCODE_CACHE_TTL_DAYS", "180"))
 
 def _geo_db_lookup(city: str, country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
-    """
-    Returns (lat, lon) if a fresh cached value exists, else (None, None).
-    Uses updated_at > NOW() - INTERVAL '<TTL> days'.
-    """
     if fetch_one is None:
         return None, None
     try:
@@ -118,9 +116,6 @@ def _geo_db_lookup(city: str, country: Optional[str]) -> Tuple[Optional[float], 
     return None, None
 
 def _geo_db_store(city: str, country: Optional[str], lat: float, lon: float) -> None:
-    """
-    Upsert geocode result.
-    """
     if execute is None:
         return
     try:
@@ -139,20 +134,13 @@ def _geo_db_store(city: str, country: Optional[str], lat: float, lon: float) -> 
         logger.debug("[rss_processor] geocode cache store failed for %s, %s: %s", city, country, e)
 
 def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
-    """
-    Wrapper that first tries the Postgres cache, then falls back to city_utils (Nominatim),
-    and stores fresh results back in the cache.
-    """
     if (not GEOCODE_ENABLED) or (not city) or (_cu_get_city_coords is None):
         return (None, None)
     try:
-        # 1) Cache first
         lat, lon = _geo_db_lookup(city, country)
         if lat is not None and lon is not None:
             logger.debug("[rss_processor] geocode cache hit for %s, %s -> (%s,%s)", city, country, lat, lon)
             return lat, lon
-
-        # 2) Network via city_utils (itself has an in-process LRU)
         lat, lon = _cu_get_city_coords(city, country)
         if lat is not None and lon is not None:
             _geo_db_store(city, country, lat, lon)
@@ -418,7 +406,6 @@ def _db_execute(q: str, args: tuple) -> None:
 
 # ------------- PATCH: DISABLE BACKOFF LOGIC COMPLETELY --------------
 def _should_skip_by_backoff(url: str) -> bool:
-    # Always return False: never skip any feed by backoff!
     return False
 
 def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] = None):
@@ -451,11 +438,7 @@ def _record_health(url: str, ok: bool, latency_ms: float, error: Optional[str] =
           consecutive_fail=feed_health.consecutive_fail+1,
           host=EXCLUDED.host
         """, (url, host, (error or "")[:240]))
-        _db_execute("""
-        UPDATE feed_health
-           SET backoff_until = NULL
-         WHERE feed_url=%s
-        """, (url,))
+        _db_execute("""UPDATE feed_health SET backoff_until=NULL WHERE feed_url=%s""", (url,))
 
 class TokenBucket:
     def __init__(self, rate_per_sec: float, burst: int):
@@ -539,7 +522,48 @@ def _extract_entries(feed_text: str, feed_url: str) -> Tuple[List[Dict[str, Any]
         })
     return entries, (source_url or feed_url)
 
-async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client: httpx.AsyncClient) -> Optional[Dict[str, Any]]:
+# -------- City → Country defaults for common LOCAL_FEEDS cities -------
+CITY_DEFAULTS = {
+    "paris": "France",
+    "sydney": "Australia",
+    "delhi": "India",
+    "singapore": "Singapore",
+    "new york": "United States",
+    "los angeles": "United States",
+    "boston": "United States",
+    "washington": "United States",
+    "houston": "United States",
+    "miami": "United States",
+    "toronto": "Canada",
+    "vancouver": "Canada",
+    "montreal": "Canada",
+    "mumbai": "India",
+    "manila": "Philippines",
+    "bangkok": "Thailand",
+    "jakarta": "Indonesia",
+    "nairobi": "Kenya",
+    "cape town": "South Africa",
+    "rome": "Italy",
+    "berlin": "Germany",
+    "vienna": "Austria",
+    "zurich": "Switzerland",
+    "amsterdam": "Netherlands",
+}
+
+def _apply_city_defaults(city: Optional[str], country: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    if city and not country:
+        ck = city.lower().strip()
+        if ck in CITY_DEFAULTS:
+            return city, CITY_DEFAULTS[ck]
+    return city, country
+
+# ---------------- Build alert (now receives source_tag directly) ------
+async def _build_alert_from_entry(
+    entry: Dict[str, Any],
+    source_url: str,
+    client: httpx.AsyncClient,
+    source_tag: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=FRESHNESS_DAYS)
     title = entry["title"]
     summary = _normalize_summary(title, entry["summary"])
@@ -557,44 +581,43 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         if not _kw_match(text_blob):
             return None
 
-    # ------ CITY/COUNTRY/LAT/LON PATCH FROM source_tag/tag ------
+    # ------ CITY/COUNTRY/LAT/LON FROM tag + fuzzy fallback ------
     city = None
     country = None
     latitude = None
     longitude = None
-    source_tag = None
-    try:
-        import inspect
-        frame = inspect.currentframe()
-        while frame:
-            if "spec" in frame.f_locals:
-                source_tag = frame.f_locals["spec"].get("tag")
-                break
-            frame = frame.f_back
-    except Exception:
-        pass
 
-    def extract_city_from_source_tag(tag):
+    def extract_city_from_source_tag(tag: Optional[str]) -> Optional[str]:
         if tag and tag.startswith("local:"):
             return tag.split("local:", 1)[1].strip()
         return None
 
+    def extract_country_from_source_tag(tag: Optional[str]) -> Optional[str]:
+        if tag and tag.startswith("country:"):
+            return _titlecase(tag.split("country:", 1)[1].strip())
+        return None
+
+    # 1) If it's a local feed, prefer the city in the tag
     city_string = extract_city_from_source_tag(source_tag)
-    logger.debug(f"[rss_processor] source_tag={source_tag}, city_string={city_string}")
     if city_string:
-        logger.debug(f"[rss_processor] Calling normalize_city_country on '{city_string}'")
-        city, country = normalize_city(city_string)
-        logger.debug(f"[rss_processor] normalize_city_country('{city_string}') -> city={city}, country={country}")
+        city, country = normalize_city(city_string)  # parses "City, Country" too
+        city, country = _apply_city_defaults(city, country)
         if city and GEOCODE_ENABLED:
-            logger.debug(f"[rss_processor] Calling get_city_coords(city={city}, country={country})")
             latitude, longitude = get_city_coords(city, country)
-            logger.debug(f"[rss_processor] get_city_coords returned lat={latitude}, lon={longitude}")
-    else:
+
+    # 2) If it's a country feed (no city), at least set the country
+    if not city and not country:
+        ctry = extract_country_from_source_tag(source_tag)
+        if ctry:
+            country = ctry
+
+    # 3) Fuzzy fallback from text if still no city
+    if not city:
         try:
             guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
             if guess_city:
-                logger.debug(f"[rss_processor] Fallback fuzzy_match_city guess_city={guess_city}")
                 city, country = normalize_city(guess_city)
+                city, country = _apply_city_defaults(city, country)
                 if city and GEOCODE_ENABLED:
                     latitude, longitude = get_city_coords(city, country)
         except Exception as e:
@@ -660,7 +683,6 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
         async def _fetch_feed(spec):
             logger.info("Fetching feed: %s", spec["url"])
-            # No backoff: always fetch
             await _bucket_for(spec["url"]).acquire()
             start = time.perf_counter()
             try:
@@ -678,22 +700,24 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
         feed_results = await asyncio.gather(*[_fetch_feed(s) for s in feed_specs], return_exceptions=False)
 
         sem = asyncio.Semaphore(max(1, ARTICLE_CONCURRENCY))
-        async def _process_entry(entry, source_url):
+        async def _process_entry(entry, source_url, source_tag):
             async with sem:
-                return await _build_alert_from_entry(entry, source_url, client)
+                return await _build_alert_from_entry(entry, source_url, client, source_tag)
 
         for txt, spec in feed_results:
             if not txt:
                 continue
             entries, source_url = _extract_entries(txt, spec["url"])
-            tasks = [asyncio.create_task(_process_entry(e, source_url)) for e in entries]
+            tag = spec.get("tag", "")
+            tasks = [asyncio.create_task(_process_entry(e, source_url, tag)) for e in entries]
             for coro in asyncio.as_completed(tasks):
                 res = await coro
                 if res:
-                    kind = spec.get("kind", "unknown"); tag = spec.get("tag", "")
+                    kind = spec.get("kind", "unknown")
                     res.setdefault("source_kind", kind)
                     res.setdefault("source_priority", KIND_PRIORITY.get(kind, 999))
-                    if tag: res.setdefault("source_tag", tag)
+                    if tag:
+                        res.setdefault("source_tag", tag)
                     results_alerts.append(res)
                     if len(results_alerts) >= limit:
                         break

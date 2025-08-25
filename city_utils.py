@@ -1,160 +1,169 @@
-# city_utils.py — lightweight city inference + optional geocoding • v2025-08-24 DEBUGGED+LOGGING
+# city_utils.py — Python 3.13-safe city utilities (no geopy) • v2025-08-24
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
-import difflib
-import logging
-from typing import Optional, Tuple, Iterable
+import time
+import urllib.parse
+import urllib.request
+from functools import lru_cache
+from typing import Iterable, Optional, Tuple
 
+# ------------------------------------------------------------------------------
+# Logging (library-friendly: don’t hijack global config)
+# ------------------------------------------------------------------------------
 logger = logging.getLogger("city_utils")
-logging.basicConfig(level=logging.DEBUG, force=True)
-logger.critical("[city_utils] LOADED: city_utils.py imported and logger initialized.")
-logger.info(f"[city_utils] ENV: CITYUTILS_ENABLE_GEOCODE={os.getenv('CITYUTILS_ENABLE_GEOCODE')!r}, "
-            f"GEOCODE_ENABLED={str(os.getenv('CITYUTILS_ENABLE_GEOCODE', 'true')).lower() in ('1','true','yes','y')}")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
-# ---------------- Env switches (no-network by default if you want) ----------------
-GEOCODE_ENABLED = str(os.getenv("CITYUTILS_ENABLE_GEOCODE", "true")).lower() in ("1", "true", "yes", "y")
-GEOCODE_TIMEOUT_SEC = float(os.getenv("CITYUTILS_GEOCODE_TIMEOUT_SEC", "3"))
-GEOCODE_MIN_DELAY   = float(os.getenv("CITYUTILS_GEOCODE_MIN_DELAY_SEC", "1"))
-GEOCODE_MAX_RETRIES = int(os.getenv("CITYUTILS_GEOCODE_MAX_RETRIES", "0"))
-GEOCODE_ERROR_WAIT  = float(os.getenv("CITYUTILS_GEOCODE_ERROR_WAIT_SEC", "0"))
+# ------------------------------------------------------------------------------
+# Env switches / config
+# ------------------------------------------------------------------------------
+GEOCODE_ENABLED: bool = str(os.getenv("CITYUTILS_ENABLE_GEOCODE", "true")).lower() in ("1", "true", "yes", "y")
+NOMINATIM_URL: str = os.getenv("CITYUTILS_NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
+USER_AGENT: str = os.getenv("CITYUTILS_USER_AGENT", "sentinel-city-utils/1.0 (+https://zikarisk.com)")
+HTTP_TIMEOUT: float = float(os.getenv("CITYUTILS_HTTP_TIMEOUT_SEC", "12"))
+HTTP_RETRIES: int = int(os.getenv("CITYUTILS_HTTP_RETRIES", "2"))
+HTTP_BACKOFF: float = float(os.getenv("CITYUTILS_HTTP_BACKOFF", "1.5"))
 
-try:
-    from unidecode import unidecode
-except Exception:
-    def unidecode(s: str) -> str:
-        return s
+# ------------------------------------------------------------------------------
+# Normalization helpers
+# ------------------------------------------------------------------------------
+_WHITESPACE_RE = re.compile(r"\s+")
+_PUNCT_RE = re.compile(r"[^\w\s\-]")
 
 def _norm(s: str) -> str:
-    return unidecode(s or "").strip().lower()
+    s = (s or "").strip()
+    s = _WHITESPACE_RE.sub(" ", s)
+    s = _PUNCT_RE.sub("", s)
+    return s
 
-def _titlecase(s: str) -> str:
-    return " ".join([p.capitalize() for p in (s or "").split()])
-
-# ---------------- Optional geocoder (strictly sandboxed) ----------------
-_geocode = None
-_geocode_debug_msg = None
-if GEOCODE_ENABLED:
-    try:
-        from geopy.geocoders import Nominatim
-        from geopy.extra.rate_limiter import RateLimiter
-        # ✅ FIX: removed deprecated scheme="https"
-        _geolocator = Nominatim(user_agent="sentinel-geocoder", timeout=GEOCODE_TIMEOUT_SEC)
-        _geocode = RateLimiter(
-            _geolocator.geocode,
-            min_delay_seconds=GEOCODE_MIN_DELAY,
-            swallow_exceptions=True,
-            max_retries=GEOCODE_MAX_RETRIES,
-            error_wait_seconds=GEOCODE_ERROR_WAIT,
-        )
-        logger.info("[city_utils] Geopy geocoder loaded and enabled.")
-    except Exception as e:
-        _geocode_debug_msg = f"Failed to init geopy: {e}"
-        logger.error("[city_utils] ERROR loading geopy: %s", e)
-        _geocode = None
-else:
-    logger.info("[city_utils] Geocoding globally DISABLED via env.")
-
-_COMMON_CITIES: Iterable[str] = [
-    "New York","London","Paris","Berlin","Moscow","Kyiv","Warsaw","Prague","Budapest","Bucharest",
-    "Rome","Madrid","Barcelona","Lisbon","Dublin","Edinburgh","Istanbul","Ankara","Athens","Sofia",
-    "Stockholm","Oslo","Copenhagen","Helsinki","Reykjavik",
-    "Cairo","Lagos","Nairobi","Johannesburg","Cape Town","Casablanca","Tunis","Algiers","Addis Ababa","Accra",
-    "Tel Aviv","Jerusalem","Riyadh","Jeddah","Dubai","Abu Dhabi","Doha","Kuwait City","Manama","Muscat",
-    "Tehran","Baghdad","Beirut","Amman","Damascus",
-    "Mumbai","Delhi","Bengaluru","Chennai","Hyderabad","Kolkata","Karachi","Lahore","Dhaka","Kathmandu","Colombo",
-    "Beijing","Shanghai","Shenzhen","Guangzhou","Hong Kong","Macau","Taipei","Seoul","Tokyo","Osaka",
-    "Bangkok","Jakarta","Manila","Kuala Lumpur","Singapore","Hanoi","Ho Chi Minh City",
-    "Sydney","Melbourne","Auckland","Wellington",
-    "Mexico City","Bogotá","Lima","Santiago","Buenos Aires","São Paulo","Rio de Janeiro","Montevideo",
-    "Toronto","Vancouver","Montreal","Chicago","Los Angeles","San Francisco","Washington","Boston","Miami","Houston",
-]
-
-def fuzzy_match_city(text: str, *, min_ratio: float = 0.84) -> Optional[str]:
-    logger.debug(f"[city_utils] fuzzy_match_city called: text={text!r}, min_ratio={min_ratio}")
-    text = _norm(text)
-    if not text:
-        logger.debug("[city_utils] fuzzy_match_city: No text after normalization.")
-        return None
-    best = None
-    best_ratio = min_ratio
-    for city in _COMMON_CITIES:
-        ratio = difflib.SequenceMatcher(None, text, city.lower()).ratio()
-        if ratio > best_ratio:
-            best = city
-            best_ratio = ratio
-    logger.debug(f"[city_utils] fuzzy_match_city: best match for {text!r} is {best!r} (ratio={best_ratio})")
-    return best
-
-def normalize_city(city_like: str) -> Tuple[Optional[str], Optional[str]]:
-    logger.critical(f"[city_utils] normalize_city CALLED with city_like={city_like!r}")
-    if not city_like:
-        logger.warning("[city_utils] normalize_city called with empty input.")
-        return None, None
-
-    raw = _norm(city_like)
-    city_hint, country_hint = None, None
-    if "," in raw:
-        parts = [p.strip() for p in raw.split(",", 1)]
-        city_hint = parts[0] or None
-        country_hint = parts[1] or None
-
-    if GEOCODE_ENABLED and _geocode:
-        q = f"{city_hint or raw}{', ' + country_hint if country_hint else ''}"
-        try:
-            logger.info(f"[city_utils] Attempting geocode for '{q}'")
-            loc = _geocode(q)
-            if loc and getattr(loc, "raw", None):
-                addr = loc.raw.get("address", {})
-                city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality") or addr.get("state")
-                country = addr.get("country")
-                logger.info(f"[city_utils] Geocoded '{q}' → city='{city}', country='{country}'")
-                if city or country:
-                    return (_titlecase(city) if city else (_titlecase(city_hint) if city_hint else None),
-                            _titlecase(country) if country else (_titlecase(country_hint) if country_hint else None))
-                else:
-                    logger.warning(f"[city_utils] Geocoding returned no city/country for '{q}'")
-            else:
-                logger.warning(f"[city_utils] Geocoding returned None for '{q}'")
-        except Exception as e:
-            logger.error(f"[city_utils] Geocode exception for '{q}': {e}")
-            pass
-    else:
-        logger.warning(f"[city_utils] Geocoding not enabled or unavailable for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
-
-    logger.warning(f"[city_utils] Geocode fallback for '{city_like}' (city_hint={city_hint}, country_hint={country_hint})")
-    return _titlecase(city_hint or raw), (_titlecase(country_hint) if country_hint else None)
-
-def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
-    logger.critical(f"[city_utils] get_city_coords CALLED with city={city!r}, country={country!r}")
-    if not city:
-        logger.warning("[city_utils] get_city_coords called with empty city.")
-        return None, None
-
-    if not GEOCODE_ENABLED:
-        logger.info("[city_utils] Geocoding disabled via env; skipping geocode for '%s', '%s'.", city, country)
-        return None, None
-
-    if not _geocode:
-        logger.error("[city_utils] Geocoding unavailable (geopy missing or init failed: %s); skipping for '%s', '%s'.", _geocode_debug_msg, city, country)
-        return None, None
-
-    q = f"{city}{', ' + country if country else ''}"
-    try:
-        logger.info(f"[city_utils] Attempting geocode for '{q}'")
-        loc = _geocode(q)
-        if loc:
-            logger.info(f"[city_utils] Geocoded '{q}' → ({loc.latitude}, {loc.longitude})")
-            return float(loc.latitude), float(loc.longitude)
-        else:
-            logger.warning(f"[city_utils] FAILED to geocode: '{q}'")
-    except Exception as e:
-        logger.error(f"[city_utils] ERROR geocoding '{q}': {e}")
-    return None, None
+def normalize_city(name: str) -> str:
+    out = _norm(name)
+    logger.debug("[city_utils] normalize_city(%r) -> %r", name, out)
+    return out
 
 def normalize_city_country(city: Optional[str], country: Optional[str]) -> Tuple[str, str]:
-    logger.critical(f"[city_utils] normalize_city_country CALLED with city={city!r}, country={country!r}")
-    c = _norm(city or "")
-    k = _norm(country or "")
-    return c, k
+    """Return normalized lowercase city/country used by matching and logging."""
+    return _norm(city or ""), _norm(country or "")
+
+# ------------------------------------------------------------------------------
+# Lightweight fuzzy city detection
+# ------------------------------------------------------------------------------
+_COMMON_CITIES: Tuple[str, ...] = (
+    "New York","London","Paris","Berlin","Madrid","Rome","Tokyo","Seoul","Beijing","Shanghai",
+    "Hong Kong","Singapore","Sydney","Melbourne","Auckland","Cairo","Istanbul","Dubai","Mumbai","Delhi",
+    "Bengaluru","Karachi","Johannesburg","Nairobi","Lagos","Kinshasa","Mexico City","Bogotá","Lima",
+    "Santiago","Buenos Aires","São Paulo","Rio de Janeiro","Montevideo","Toronto","Vancouver","Montreal",
+    "Chicago","Los Angeles","San Francisco","Washington","Boston","Miami","Houston"
+)
+
+def fuzzy_match_city(text: str, *, min_ratio: float = 0.84) -> Optional[str]:
+    try:
+        import difflib
+        t = _norm(text).lower()
+        if not t:
+            return None
+        best = None
+        best_ratio = min_ratio
+        for city in _COMMON_CITIES:
+            ratio = difflib.SequenceMatcher(None, t, city.lower()).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = city
+        logger.debug("[city_utils] fuzzy_match_city(%r) -> %r (ratio=%.3f)", text, best, best_ratio)
+        return best
+    except Exception as e:
+        logger.error("[city_utils] fuzzy_match_city error: %s", e)
+        return None
+
+# ------------------------------------------------------------------------------
+# Geocoding (Nominatim via stdlib urllib; no external deps)
+# ------------------------------------------------------------------------------
+def _http_get_json(url: str, params: dict, *, timeout: float = HTTP_TIMEOUT, retries: int = HTTP_RETRIES, backoff: float = HTTP_BACKOFF):
+    """GET JSON with small backoff for 429/503."""
+    qs = urllib.parse.urlencode(params)
+    full_url = f"{url}?{qs}"
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(full_url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+                data = resp.read().decode("utf-8")
+                if status == 200:
+                    return json.loads(data)
+                if status in (429, 503):
+                    sleep_s = (backoff ** attempt)
+                    logger.warning("[city_utils] Nominatim throttled (%s). Sleeping %.2fs…", status, sleep_s)
+                    time.sleep(sleep_s)
+                    continue
+                logger.error("[city_utils] HTTP error status=%s body=%s", status, data[:256])
+                return None
+        except Exception as e:
+            if attempt < retries:
+                sleep_s = (backoff ** attempt)
+                logger.warning("[city_utils] HTTP exception %s. Retrying in %.2fs…", e, sleep_s)
+                time.sleep(sleep_s)
+                continue
+            logger.error("[city_utils] HTTP failed after retries: %s", e)
+            return None
+
+@lru_cache(maxsize=4096)
+def _geocode_city_cached(query: str) -> Tuple[Optional[float], Optional[float]]:
+    params = {"q": query, "format": "json", "limit": 1, "addressdetails": 0}
+    data = _http_get_json(NOMINATIM_URL, params)
+    if not data:
+        return None, None
+    try:
+        first = data[0]
+        return float(first["lat"]), float(first["lon"])
+    except Exception as e:
+        logger.error("[city_utils] Failed to parse geocode response for %r: %s", query, e)
+        return None, None
+
+def get_city_coords(city_name: str, country: str) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Get (lat, lon) for a city using OpenStreetMap Nominatim.
+
+    Returns (None, None) on failure. Honors CITYUTILS_ENABLE_GEOCODE toggle.
+    """
+    if not GEOCODE_ENABLED:
+        logger.info("[city_utils] Geocoding disabled via CITYUTILS_ENABLE_GEOCODE.")
+        return None, None
+
+    c = _norm(city_name)
+    k = _norm(country)
+    if not c:
+        logger.warning("[city_utils] get_city_coords called with empty city_name.")
+        return None, None
+
+    query = f"{c}, {k}" if k else c
+    lat, lon = _geocode_city_cached(query)
+    if lat is not None and lon is not None:
+        logger.info("[city_utils] Geocoded %r -> (%s, %s)", query, lat, lon)
+    else:
+        logger.warning("[city_utils] No geocoding data for %r", query)
+    return lat, lon
+
+# ------------------------------------------------------------------------------
+# Bulk helper
+# ------------------------------------------------------------------------------
+def batch_get_coords(pairs: Iterable[Tuple[str, str]]) -> Iterable[Tuple[str, str, Optional[float], Optional[float]]]:
+    for city, country in pairs:
+        lat, lon = get_city_coords(city, country)
+        yield city, country, lat, lon
+
+__all__ = [
+    "normalize_city",
+    "normalize_city_country",
+    "fuzzy_match_city",
+    "get_city_coords",
+    "batch_get_coords",
+]

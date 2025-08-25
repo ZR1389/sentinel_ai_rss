@@ -24,6 +24,9 @@ _STATIC_DIR = map_api.static_folder if os.path.isabs(map_api.static_folder) \
 # Where to load polygons for reverse geocoding (place a copy of your countries.geojson here)
 COUNTRIES_GEOJSON_PATH = os.getenv("COUNTRIES_GEOJSON_PATH") or os.path.join(_STATIC_DIR, "countries.geojson")
 
+# Optional padding (in degrees) on bbox checks to account for simplified coastlines or FP noise
+_BBOX_PAD = float(os.getenv("COUNTRY_BBOX_PAD_DEG", "0.2"))
+
 # ---------------- Static map files ----------------
 @map_api.route("/map")
 def serve_map():
@@ -44,6 +47,10 @@ def _row_get(r: Any, key: str, idx: int | None = None):
         except Exception:
             return None
     return None
+
+def _val(row: Any, key: str):
+    """Defensive getter for country_risks; mirrors _row_get for dict rows only."""
+    return row.get(key) if isinstance(row, dict) else None
 
 def _strip_accents(s: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch))
@@ -137,8 +144,8 @@ def normalize_to_ne_admin(name: str) -> str:
 
 # --- Geo JSON cache & point-in-polygon (pure Python, no dependencies) ---
 _COUNTRIES_CACHE: Optional[Dict[str, Any]] = None
-_POLYS_INDEX: Optional[List[Tuple[str, List[List[Tuple[float,float]]]]]] = None
-_BBOX_INDEX: Optional[List[Tuple[str, Tuple[float,float,float,float]]]] = None
+_POLYS_INDEX: Optional[List[Tuple[str, List[List[Tuple[float, float]]]]]] = None
+_BBOX_INDEX: Optional[List[Tuple[str, Tuple[float, float, float, float]]]] = None
 _NAME_FIELD = "ADMIN"  # Natural Earth countries name key
 
 def _load_countries() -> bool:
@@ -155,13 +162,13 @@ def _load_countries() -> bool:
         if not (gj and gj.get("type") == "FeatureCollection"):
             return False
         feats = gj.get("features") or []
-        polys: List[Tuple[str, List[List[Tuple[float,float]]]]] = []
-        bboxes: List[Tuple[str, Tuple[float,float,float,float]]] = []
+        polys: List[Tuple[str, List[List[Tuple[float, float]]]]] = []
+        bboxes: List[Tuple[str, Tuple[float, float, float, float]]] = []
 
-        def rings_from_geom(geom: Dict[str, Any]) -> List[List[Tuple[float,float]]]:
+        def rings_from_geom(geom: Dict[str, Any]) -> List[List[Tuple[float, float]]]:
             t = geom.get("type")
             coords = geom.get("coordinates")
-            rs: List[List[Tuple[float,float]]] = []
+            rs: List[List[Tuple[float, float]]] = []
             if t == "Polygon":
                 for ring in coords or []:
                     rs.append([(float(x), float(y)) for x, y in ring])
@@ -171,9 +178,13 @@ def _load_countries() -> bool:
                         rs.append([(float(x), float(y)) for x, y in ring])
             return rs
 
-        def bbox_of(ring: List[Tuple[float,float]]) -> Tuple[float,float,float,float]:
-            xs = [p[0] for p in ring]
-            ys = [p[1] for p in ring]
+        def bbox_of_all(rings: List[List[Tuple[float, float]]]) -> Tuple[float, float, float, float]:
+            xs: List[float] = []
+            ys: List[float] = []
+            for ring in rings:
+                for x, y in ring:
+                    xs.append(x)
+                    ys.append(y)
             return (min(xs), min(ys), max(xs), max(ys))
 
         for ft in feats:
@@ -186,8 +197,8 @@ def _load_countries() -> bool:
             if not rings:
                 continue
             polys.append((name, rings))
-            # overall bbox from outer ring of first polygon; cheap filter
-            bb = bbox_of(rings[0])
+            # overall bbox from all rings (captures islands/outliers)
+            bb = bbox_of_all(rings)
             bboxes.append((name, bb))
 
         _COUNTRIES_CACHE = gj
@@ -204,7 +215,7 @@ def _load_countries() -> bool:
         _BBOX_INDEX = None
         return False
 
-def _point_in_ring(lon: float, lat: float, ring: List[Tuple[float,float]]) -> bool:
+def _point_in_ring(lon: float, lat: float, ring: List[Tuple[float, float]]) -> bool:
     """
     Ray-casting point-in-polygon for a single ring (lon,lat).
     Assumes ring is closed or not (works either way).
@@ -217,7 +228,8 @@ def _point_in_ring(lon: float, lat: float, ring: List[Tuple[float,float]]) -> bo
     for i in range(n):
         x1, y1 = ring[i]
         x2, y2 = ring[(i + 1) % n]
-        intersect = ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / ( (y2 - y1) or 1e-16) + x1)
+        # Check if edge crosses the ray
+        intersect = ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / ((y2 - y1) or 1e-16) + x1)
         if intersect:
             inside = not inside
     return inside
@@ -231,21 +243,22 @@ def _lonlat_to_country(lon: float, lat: float) -> Optional[str]:
         if not _load_countries():
             return None
     assert _POLYS_INDEX is not None and _BBOX_INDEX is not None
-    cands = []
+    # quick bbox filter across all features
+    cands: List[str] = []
     for name, (minx, miny, maxx, maxy) in _BBOX_INDEX:
-        if (minx - 0.2) <= lon <= (maxx + 0.2) and (miny - 0.2) <= lat <= (maxy + 0.2):
+        if (minx - _BBOX_PAD) <= lon <= (maxx + _BBOX_PAD) and (miny - _BBOX_PAD) <= lat <= (maxy + _BBOX_PAD):
             cands.append(name)
     if not cands:
         return None
+    # even-odd rule across rings
     for name, rings in _POLYS_INDEX:
         if name not in cands:
             continue
-        # Even–odd rule across rings
-        inside_any = False
+        inside = False
         for ring in rings:
             if _point_in_ring(lon, lat, ring):
-                inside_any = not inside_any
-        if inside_any:
+                inside = not inside
+        if inside:
             return name
     return None
 
@@ -419,10 +432,10 @@ def country_risks():
     polygons_ok = _load_countries()
 
     for r in rows:
-        raw_country = (r.get("country") or "").strip()
-        lat = r.get("latitude")
-        lon = r.get("longitude")
-        level = r.get("threat_level") or "low"
+        raw_country = (_val(r, "country") or "").strip()
+        lat = _val(r, "latitude")
+        lon = _val(r, "longitude")
+        level = _val(r, "threat_level") or "low"
 
         if raw_country:
             country_ne = normalize_to_ne_admin(raw_country)
