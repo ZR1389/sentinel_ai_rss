@@ -1,9 +1,11 @@
-# advisor.py — Sentinel Advisor (Final v2025-08-12 + patches v2025-08-22)
+# advisor.py — Sentinel Advisor (Final v2025-08-12 + patches v2025-08-25)
 # - Reads enriched alerts (schema aligned)
 # - Enforces PHYSICAL+DIGITAL, NOW+PREP, role-specific sections
 # - Programmatic domain playbook hits, richer alternatives
 # - Mandatory “Because X trend, do Y” line
 # - Output guard ensures all sections exist and at least one playbook/alternatives appear
+# - NEW (2025-08-25): multi-alert merge, predictive tone from future_risk_probability,
+#   source reliability & info-ops flags, soft sports-context guard, proactive monitoring meta.
 
 import os
 import json
@@ -45,6 +47,21 @@ except Exception:
     DOMAIN_PLAYBOOKS_PROMPT = ""
     TREND_CITATION_PROTOCOL = ""
 
+# Shared heuristics & guards
+try:
+    from risk_shared import (
+        detect_domains,
+        source_reliability,
+        info_ops_flags,
+        relevance_flags,  # sports/info-ops light guard
+    )
+except Exception:
+    # safe fallbacks if risk_shared not present for any reason
+    def detect_domains(text: str) -> List[str]: return []
+    def source_reliability(source_name: Optional[str], source_url: Optional[str]) -> Tuple[str, str]: return ("Unknown", "")
+    def info_ops_flags(text: str) -> List[str]: return []
+    def relevance_flags(text: str) -> List[str]: return []
+
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and OpenAI) else None
@@ -61,7 +78,7 @@ DOMAIN_PRIORITY = [
     "digital_privacy_surveillance",
     "physical_safety",
     "civil_unrest",
-    "terrorism",  # added to ensure terrorism-only cases get a specific primary action
+    "terrorism",  # ensure terrorism-only cases get a specific primary action
     "kfr_extortion",
     "infrastructure_utilities",
     "environmental_hazards",
@@ -341,10 +358,12 @@ def _alternatives_if_needed(alert: Dict[str, Any]) -> List[str]:
         alts.append("Alt 12 — Permitted Corridors: use officially permitted routes; carry ID/permits; risk: checkpoint delays.")
     return alts
 
-def _monitoring_cadence(trend_direction: str, anomaly: bool, roles: List[str]) -> str:
+def _monitoring_cadence(trend_direction: str, anomaly: bool, roles: List[str], p_future: Optional[float]) -> str:
     base = 12
     if anomaly or trend_direction == "increasing":
         base = 6
+    if p_future and p_future >= 0.7:
+        base = 4
     if "journalist" in roles or "executive" in roles:
         base = min(base, 6)
     return f"{base}h"
@@ -364,6 +383,9 @@ def _normalize_sources(sources: Any) -> List[Dict[str, str]]:
                 out.append({"name": s})
     return out
 
+def _join_text(*parts: Any) -> str:
+    return " ".join([str(p) for p in parts if p])
+
 # ---------- Trend-citation line ----------
 def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
     td = str(alert.get("trend_direction") or "stable")
@@ -371,12 +393,14 @@ def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
     ic30 = alert.get("incident_count_30d")
     anom = alert.get("anomaly_flag", alert.get("is_anomaly"))
     cat = alert.get("category") or alert.get("threat_label") or "risk"
+    p_future = alert.get("future_risk_probability")
 
     bits = []
     if td: bits.append(f"trend_direction={td}")
     if isinstance(br, (int, float)): bits.append(f"baseline={round(float(br), 2)}x")
     if isinstance(ic30, int): bits.append(f"incident_count_30d={ic30}")
     if isinstance(anom, bool) and anom: bits.append("anomaly_flag=true")
+    if isinstance(p_future, (int, float)): bits.append(f"p_next48h={round(float(p_future), 2)}")
     x = ", ".join(bits) if bits else "recent patterns"
 
     domains = alert.get("domains") or []
@@ -409,10 +433,76 @@ def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
     trend_line = f"Because {x} for {cat}, do {action}."
     return trend_line, action
 
+# ---------- Multi-alert synthesis (predictive/proactive) ----------
+def _aggregate_alerts(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Merge up to top-3 by score into one advisory context:
+      - keep highest score/label/confidence
+      - union domains (cap 8), union sources (cap 6)
+      - max trend (anomaly true if any true), max future_risk_probability
+    Falls back to first if list empty.
+    """
+    if not alerts:
+        return {}
+    # sort by score desc, then future_risk_probability
+    def _s(a): 
+        try: 
+            return (float(a.get("score", 0) or 0), float(a.get("future_risk_probability", 0) or 0))
+        except Exception:
+            return (0.0, 0.0)
+    top = sorted(alerts, key=_s, reverse=True)[:3]
+    base = dict(top[0])
+    # domains
+    dset = []
+    for a in top:
+        for d in a.get("domains") or []:
+            if d not in dset:
+                dset.append(d)
+    base["domains"] = dset[:8]
+    # sources
+    src = []
+    for a in top:
+        for s in a.get("sources") or []:
+            if isinstance(s, dict):
+                item = {"name": s.get("name"), "link": s.get("link")}
+            else:
+                item = {"name": str(s)}
+            if item not in src:
+                src.append(item)
+    base["sources"] = src[:6]
+    # aggregates
+    base["score"] = top[0].get("score", base.get("score"))
+    base["label"] = top[0].get("label", base.get("label"))
+    base["confidence"] = top[0].get("confidence", base.get("confidence"))
+    base["anomaly_flag"] = any(a.get("anomaly_flag", a.get("is_anomaly")) for a in top)
+    base["future_risk_probability"] = max([a.get("future_risk_probability") or 0 for a in top] + [0])
+    # keep strongest trend if any increasing present
+    trends = [str(a.get("trend_direction") or "stable") for a in top]
+    base["trend_direction"] = "increasing" if "increasing" in trends else ("decreasing" if "decreasing" in trends else trends[0])
+    return base
+
+# ---------- Soft relevance guard ----------
+def _is_soft_irrelevant(alert: Dict[str, Any]) -> bool:
+    """
+    If text looks like sports context AND there are no meaningful domains, skip advising.
+    Only used when multiple alerts are passed; single-alert flows still advise.
+    """
+    t = _join_text(alert.get("title"), alert.get("summary"))
+    flags = relevance_flags(t) or []
+    if "sports_context" in flags and not (alert.get("domains") or []):
+        return True
+    return False
+
 # ---------- Input payload for LLM ----------
 def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str], Dict[str, List[str]]]:
     roles = _infer_roles(profile_data, user_message)
     domains = alert.get("domains") or []
+    # If upstream missed domains, backfill from text
+    if not domains:
+        t = _join_text(alert.get("title"), alert.get("summary"))
+        domains = detect_domains(t) or []
+        alert["domains"] = domains
+
     raw_hits = _programmatic_playbook_hits(domains)
     hits = _filter_hits_by_profile(raw_hits, roles)
 
@@ -421,7 +511,7 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         role_blocks[r] = _role_actions_for(domains, r)
 
     anomaly = alert.get("anomaly_flag", alert.get("is_anomaly"))
-    next_review = _monitoring_cadence(alert.get("trend_direction") or "stable", bool(anomaly), roles)
+    next_review = _monitoring_cadence(alert.get("trend_direction") or "stable", bool(anomaly), roles, alert.get("future_risk_probability"))
 
     payload = {
         "region": alert.get("region") or alert.get("city") or alert.get("country"),
@@ -456,6 +546,20 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
     }
     return payload, roles, hits
 
+def _sources_reliability_lines(sources: List[Dict[str, str]]) -> List[str]:
+    out: List[str] = []
+    for s in sources or []:
+        name = s.get("name")
+        link = s.get("link")
+        rating, reason = source_reliability(name, link)
+        tag = f"{rating}" if rating else "Unknown"
+        reason_str = f" — {reason}" if reason else ""
+        if link:
+            out.append(f"- {name} ({tag}) {link}{reason_str}")
+        else:
+            out.append(f"- {name} ({tag}){reason_str}")
+    return out
+
 # ---------- Main entry ----------
 def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Optional[Dict[str, Any]] = None, plan: str = "FREE") -> str:
     trend_line, action = _build_trend_citation_line(alert)
@@ -463,6 +567,22 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     input_data["trend_citation_line"] = trend_line
     input_data["action"] = action
     input_data["specific_action"] = action  # For prompts using {specific action}
+
+    # Predictive tone nudges from future_risk_probability
+    p_future = input_data.get("future_risk_probability")
+    if isinstance(p_future, (int, float)):
+        if p_future >= 0.85:
+            input_data["forecast_tone"] = "imminent"
+        elif p_future >= 0.65:
+            input_data["forecast_tone"] = "likely"
+        elif p_future >= 0.45:
+            input_data["forecast_tone"] = "possible"
+        else:
+            input_data["forecast_tone"] = "low"
+
+    # Info-ops/sensational flags (for visibility; do not block advising)
+    text_blob = _join_text(alert.get("title"), alert.get("summary"))
+    input_data["info_ops_flags"] = info_ops_flags(text_blob)
 
     system_content = "\n\n".join([
         SYSTEM_INFO_PROMPT,
@@ -503,10 +623,12 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     if trend_line not in advisory:
         advisory += ("\n\n" + trend_line)
 
+    # Add ALTERNATIVES if applicable
     alts = input_data.get("alternatives") or []
     if alts and "ALTERNATIVES —" not in advisory:
         advisory += "\n\nALTERNATIVES —\n" + "\n".join(f"• {a}" for a in alts)
 
+    # Role blocks
     role_blocks = input_data.get("role_actions") or {}
     if role_blocks and "ROLE-SPECIFIC ACTIONS —" not in advisory:
         advisory += "\n\nROLE-SPECIFIC ACTIONS —"
@@ -514,6 +636,15 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
             title = role.replace("_"," ").title()
             for it in items:
                 advisory += f"\n• [{title}] {it}"
+
+    # Source reliability section (proactive skepticism)
+    src_lines = _sources_reliability_lines(input_data.get("sources") or [])
+    if src_lines and "SOURCES —" in advisory and "SOURCE RELIABILITY —" not in advisory:
+        advisory += "\n\nSOURCE RELIABILITY —\n" + "\n".join(src_lines)
+
+    # Info-ops flags visibility
+    if input_data.get("info_ops_flags") and "SOURCES —" in advisory and "INFO-OPS / SIGNALS —" not in advisory:
+        advisory += "\n\nINFO-OPS / SIGNALS —\n" + "\n".join(f"- {f}" for f in input_data["info_ops_flags"])
 
     advisory = ensure_sections(advisory)
     advisory = ensure_has_playbook_or_alts(advisory, hits, alts)
@@ -596,13 +727,37 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     out = strip_excessive_blank_lines(out)
     return out
 
+# ---------- Public wrappers ----------
 def generate_advice(query, alerts, user_profile=None, **kwargs):
     """
     Generates advice based on the query and alert list.
+    - NEW: if multiple alerts provided, merge top-3 by score for a single, coherent advisory.
+    - Soft relevance guard: drops clear sports-only items when mixed in bulk.
+    Returns {"reply": advisory, "alerts": alerts, "meta": {...}} to support proactive follow-ups.
     """
-    alert = alerts[0] if alerts else {}
+    if not alerts:
+        alert = {}
+    else:
+        # Filter obvious sports-only noise (non-breaking; retains primary if only one)
+        if len(alerts) > 1:
+            alerts = [a for a in alerts if not _is_soft_irrelevant(a)] or alerts
+        alert = _aggregate_alerts(alerts)
+
     advisory = render_advisory(alert, query, user_profile)
-    return {"reply": advisory, "alerts": alerts}
+
+    meta = {
+        "next_review": (_monitoring_cadence(
+            alert.get("trend_direction","stable"),
+            bool(alert.get("anomaly_flag", alert.get("is_anomaly"))),
+            _infer_roles(user_profile, query),
+            alert.get("future_risk_probability"))
+        ) if alert else "12h",
+        "future_risk_probability": alert.get("future_risk_probability") if alert else None,
+        "trend_direction": alert.get("trend_direction") if alert else None,
+        "domains": alert.get("domains") if alert else [],
+    }
+
+    return {"reply": advisory, "alerts": alerts, "meta": meta}
 
 def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
     """

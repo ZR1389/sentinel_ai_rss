@@ -1,4 +1,4 @@
-# threat_scorer.py — Deterministic risk scoring & signals (Final v2025-08-12 + norm/prob/aux v2025-08-22)
+# threat_scorer.py — Deterministic risk scoring & signals (Final v2025-08-12 + norm/prob/aux v2025-08-22 + relevance nudges v2025-08-25)
 # Used by Threat Engine (no LLM, no DB writes)
 
 from __future__ import annotations
@@ -90,6 +90,28 @@ def _label_from_score(score: float) -> str:
     if score >= 35: return "Moderate"
     return "Low"
 
+# --------------------------- severity & context terms (patch 1 & 2) ---------------------------
+
+SEVERE_TERMS = [
+    # kinetic / physical
+    "ied","vbied","suicide","explosion","mass shooting","kidnap","kidnapping","armed","gunfire",
+    "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage",
+    "blast","grenade","improvised explosive","car bomb","truck bomb","assassination","arson",
+    "shelling","mortar","drone strike","airstrike","air strike","artillery",
+    # cyber
+    "ransomware","breach","data leak","data leakage","zero-day","zero day","cve-","credential stuffing","ddos","wiper",
+    # spacing/oddities
+    "i e d","v b i e d",
+]
+
+MOBILITY_TERMS = [
+    "airport","border","highway","rail","metro","bridge","port","road closure","detour","traffic suspended","service suspended"
+]
+
+INFRA_TERMS = [
+    "substation","grid","pipeline","telecom","fiber","power outage","blackout","water plant","dam","subsea cable","transformer"
+]
+
 # --------------------------- core API ---------------------------
 
 def compute_now_risk(alert_text: str, triggers: Optional[List[str]] = None, location: Optional[str] = None) -> float:
@@ -101,12 +123,13 @@ def compute_now_risk(alert_text: str, triggers: Optional[List[str]] = None, loca
     kw = compute_keyword_weight(text)              # 0..1
     trig = min(len(triggers or []), 6) / 6.0       # 0..1
 
-    severe_terms = [
-        "ied","vbied","suicide","explosion","mass shooting","kidnap","kidnapping","armed","gunfire",
-        "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage","ransomware","breach"
-    ]
-    sev_hits = sum(1 for k in severe_terms if k in text)
+    # --- severity basket (patch 1)
+    sev_hits = sum(1 for k in SEVERE_TERMS if k in text)
     sev = _clamp(sev_hits / 5.0, 0.0, 1.0)
+
+    # --- mobility/infra boost (patch 2)
+    if any(t in text for t in (MOBILITY_TERMS + INFRA_TERMS)):
+        sev = min(1.0, sev + 0.15)
 
     # Weighted blend → 0..100 (bias slightly high for safety)
     raw = 100.0 * (0.55 * kw + 0.25 * trig + 0.20 * sev)
@@ -155,10 +178,24 @@ def assess_threat_level(
     if "curfew" in text and "checkpoint" in text:
         score = min(100.0, score + 5.0)
 
+    # Additional bounded nudges (patch 3)
+    if ("airport" in text and ("closure" in text or "suspended" in text)):
+        score = min(100.0, score + 5.0)
+    if (("cve-" in text) or ("zero-day" in text) or ("zero day" in text)) and (("ransomware" in text) or ("breach" in text)):
+        score = min(100.0, score + 5.0)
+
+    # Slight confidence floor for very high scores (patch 3)
+    if score >= 85.0:
+        confidence = max(confidence, 0.75)
+
     label = _label_from_score(score)
 
+    # Reasoning (patch 4): include score and severity hit count for debuggability
+    sev_hits = sum(1 for k in SEVERE_TERMS if k in text)
     reasoning_bits = []
+    reasoning_bits.append(f"score={round(score,1)}")
     reasoning_bits.append(f"salience={kw:.2f}")
+    reasoning_bits.append(f"sev_hits={sev_hits}")
     reasoning_bits.append(f"triggers={len(triggers or [])}")
     reasoning_bits.append(f"sentiment='{sentiment}'")
     if domains:

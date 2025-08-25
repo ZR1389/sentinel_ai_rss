@@ -1,4 +1,4 @@
-# threat_engine.py — Sentinel Threat Engine (Final v2025-08-22)
+# threat_engine.py — Sentinel Threat Engine (Final v2025-08-22 + Relevance Gate v2025-08-25)
 # - Reads raw_alerts -> enriches -> writes alerts (client-facing)
 # - Aligns with your alerts schema (domains, baseline metrics, trend, sources, etc.)
 # - Defensive defaults + backward compatibility (is_anomaly -> anomaly_flag, series_id/incident_series -> cluster_id)
@@ -327,6 +327,40 @@ def classify_domains(alert: dict) -> list[str]:
 
     return sorted(domains)
 
+# ---------- Relevance Filtering ----------
+def is_relevant(alert: dict) -> bool:
+    """
+    Lightweight relevance gate to exclude non-security junk while keeping recall.
+    """
+    text = (alert.get("title","") + " " + alert.get("summary","")).lower()
+
+    # Sports / entertainment obvious noise
+    if any(bad in text for bad in [
+        "football","basketball","soccer","tennis","nba","nfl","fifa","cricket","olympics",
+        "concert","music festival","award show","box office","celebrity"
+    ]):
+        return False
+
+    # Business/finance-only chatter
+    if any(bad in text for bad in ["stock market","ipo","earnings call","celebrity investor"]):
+        return False
+
+    # Non-security "defense" (require security context)
+    if "defense" in text and not any(sec in text for sec in [
+        "military","army","navy","air force","missile","air defense","cyber","national security","homeland security"
+    ]):
+        return False
+
+    # Require minimum classification confidence
+    if alert.get("category_confidence", 0) < 0.35:
+        return False
+
+    # Require at least one domain mapping (post-enrichment)
+    if not alert.get("domains"):
+        return False
+
+    return True
+
 # ---------- Enrichment Pipeline ----------
 def _structured_sources(alert: dict) -> list[dict]:
     src = alert.get("source") or alert.get("source_name")
@@ -483,7 +517,8 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
     )
 
     if not new_alerts:
-        return cached_alerts
+        # Also filter cached on relevance so old junk doesn't persist
+        return [a for a in cached_alerts if is_relevant(a)]
 
     summarized: list[dict] = []
     failed_alerts: list[dict] = []
@@ -502,10 +537,12 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
     with ThreadPoolExecutor(max_workers=workers) as executor:
         processed = list(executor.map(process, new_alerts))
 
-    summarized.extend([res for res in processed if res is not None])
+    # Apply relevance filter to newly processed alerts
+    summarized.extend([res for res in processed if res is not None and is_relevant(res)])
 
-    # Merge with cache (de-dup by content hash)
-    all_alerts = cached_alerts + summarized
+    # Merge with cache (de-dup by content hash) — filter cached too
+    filtered_cached = [a for a in cached_alerts if is_relevant(a)]
+    all_alerts = filtered_cached + summarized
     seen = set()
     unique_alerts = []
     for alert in all_alerts:

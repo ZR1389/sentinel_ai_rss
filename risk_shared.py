@@ -1,4 +1,4 @@
-# risk_shared.py — Shared enrichment & analytics (canonical detectors + helpers) • v2025-08-22+patch1
+# risk_shared.py — Shared enrichment & analytics (canonical detectors + helpers) • v2025-08-22+patch2 (2025-08-25)
 # Used by: RSS Processor, Threat Engine, Scorer, Advisor. No metered LLM calls here.
 
 from __future__ import annotations
@@ -14,13 +14,33 @@ except Exception:
 
 # ---------------------- Canonical taxonomies ----------------------
 CATEGORY_KEYWORDS: Dict[str, List[str]] = {
-    "Crime": ["robbery","assault","shooting","stabbing","murder","burglary","theft","carjacking","homicide","looting"],
-    "Terrorism": ["ied","vbied","suicide bomber","terrorist","bomb","explosion","martyrdom"],
-    "Civil Unrest": ["protest","riot","demonstration","march","sit-in","clash","looting","roadblock","strike"],
-    "Cyber": ["ransomware","phishing","malware","breach","ddos","credential","data leak","zero-day","cve","exploit","backdoor"],
-    "Infrastructure": ["substation","pipeline","power outage","grid","transformer","telecom","fiber","water plant","facility","sabotage","blackout"],
-    "Environmental": ["earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide","tornado","cyclone"],
-    "Epidemic": ["epidemic","pandemic","outbreak","cholera","dengue","covid","ebola","avian flu"],
+    "Crime": [
+        "robbery","assault","shooting","stabbing","murder","burglary","theft","carjacking","homicide","looting",
+        # add a few common crime verbs/nouns
+        "kidnap","kidnapping","abduction","arson","home invasion"
+    ],
+    "Terrorism": [
+        "ied","vbied","suicide bomber","terrorist","bomb","explosion","martyrdom",
+        # expanded kinetic/munitions
+        "blast","grenade","improvised explosive","car bomb","truck bomb","shelling","mortar","drone strike","airstrike","air strike","artillery"
+    ],
+    "Civil Unrest": [
+        "protest","riot","demonstration","march","sit-in","clash","looting","roadblock","strike"
+    ],
+    "Cyber": [
+        "ransomware","phishing","malware","breach","ddos","credential","data leak","data leakage",
+        "zero-day","zero day","cve","exploit","backdoor","credential stuffing","wiper","data breach"
+    ],
+    "Infrastructure": [
+        "substation","pipeline","power outage","grid","transformer","telecom","fiber","water plant","facility","sabotage","blackout",
+        "subsea cable","dam","bridge","transformer fire"
+    ],
+    "Environmental": [
+        "earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide","tornado","cyclone"
+    ],
+    "Epidemic": [
+        "epidemic","pandemic","outbreak","cholera","dengue","covid","ebola","avian flu"
+    ],
     "Other": []
 }
 
@@ -28,22 +48,27 @@ SUBCATEGORY_MAP: Dict[str, Dict[str, str]] = {
     "Crime": {
         "robbery":"Armed Robbery","assault":"Aggravated Assault","shooting":"Targeted Shooting",
         "stabbing":"Knife Attack","burglary":"Burglary","carjacking":"Carjacking","looting":"Looting",
+        "kidnap":"Kidnap","kidnapping":"Kidnap"
     },
     "Terrorism": {
         "ied":"IED Attack","vbied":"VBIED","suicide bomber":"Suicide Attack","bomb":"Bombing","explosion":"Bombing",
+        "grenade":"Grenade Attack","drone strike":"Drone Strike","airstrike":"Airstrike","air strike":"Airstrike"
     },
     "Civil Unrest": {
         "protest":"Protest","riot":"Riot","looting":"Looting","strike":"Strike/Industrial Action",
-        "roadblock":"Road Blockade","clash":"Police–Protester Clash",
+        "roadblock":"Road Blockade","clash":"Police–Protester Clash"
     },
     "Cyber": {
         "ransomware":"Ransomware","phishing":"Phishing","breach":"Data Breach","ddos":"DDoS",
-        "credential":"Account Takeover","zero-day":"Zero-Day Exploit","cve":"Vulnerability Exploitation",
+        "credential":"Account Takeover","zero-day":"Zero-Day Exploit","zero day":"Zero-Day Exploit",
+        "cve":"Vulnerability Exploitation","credential stuffing":"Credential Stuffing","wiper":"Wiper Malware",
+        "data leak":"Data Leak","data leakage":"Data Leak"
     },
     "Infrastructure": {
         "pipeline":"Pipeline Incident","substation":"Substation Sabotage","grid":"Grid Disruption",
         "power outage":"Power Outage","telecom":"Telecom Outage","water plant":"Water Utility Incident",
-        "facility":"Facility Incident","blackout":"Power Outage",
+        "facility":"Facility Incident","blackout":"Power Outage","subsea cable":"Subsea Cable Disruption",
+        "dam":"Dam Incident","bridge":"Bridge Closure/Incident","transformer":"Transformer Incident"
     },
     "Environmental": {
         "flood":"Flooding","hurricane":"Hurricane/Typhoon","earthquake":"Earthquake",
@@ -55,14 +80,14 @@ SUBCATEGORY_MAP: Dict[str, Dict[str, str]] = {
 }
 
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
-    "travel_mobility": ["travel","route","road","highway","checkpoint","curfew","airport","border","port","rail","metro","detour","closure","traffic","mobility"],
-    "cyber_it": ["cyber","hacker","phishing","ransomware","malware","data breach","ddos","credential","mfa","passkey","vpn","exploit","zero-day","cve","edr"],
+    "travel_mobility": ["travel","route","road","highway","checkpoint","curfew","airport","border","port","rail","metro","detour","closure","traffic","mobility","bridge","service suspended"],
+    "cyber_it": ["cyber","hacker","phishing","ransomware","malware","data breach","ddos","credential","mfa","passkey","vpn","exploit","zero-day","zero day","cve","edr","credential stuffing","wiper"],
     "digital_privacy_surveillance": ["surveillance","counter-surveillance","device check","imsi","stingray","tracking","tail","biometric","unlock","spyware","pegasus","finfisher","watchlist"],
-    "physical_safety": ["kidnap","abduction","theft","assault","shooting","stabbing","robbery","looting","attack","murder"],
-    "civil_unrest": ["protest","riot","demonstration","clash","strike","roadblock"],
-    "kfr_extortion": ["kidnap","kidnapping","kfr","ransom","extortion"],
-    "infrastructure_utilities": ["infrastructure","power","grid","substation","pipeline","telecom","fiber","facility","sabotage","water","blackout"],
-    "environmental_hazards": ["earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide"],
+    "physical_safety": ["kidnap","abduction","theft","assault","shooting","stabbing","robbery","looting","attack","murder","grenade","arson"],
+    "civil_unrest": ["protest","riot","demonstration","clash","strike","roadblock","sit-in","march"],
+    "kfr_extortion": ["kidnap","kidnapping","kfr","ransom","extortion","hostage"],
+    "infrastructure_utilities": ["infrastructure","power","grid","substation","pipeline","telecom","fiber","facility","sabotage","water","blackout","subsea cable","transformer","dam"],
+    "environmental_hazards": ["earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide","tornado","cyclone"],
     "public_health_epidemic": ["epidemic","pandemic","outbreak","cholera","dengue","covid","ebola","avian flu"],
     "ot_ics": ["scada","ics","plc","ot","industrial control","hmi"],
     "info_ops_disinfo": ["misinformation","disinformation","propaganda","info ops","psyop"],
@@ -71,8 +96,8 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     "insider_threat": ["insider","employee","privileged access","badge","tailgating"],
     "residential_premises": ["residential","home invasion","burglary","apartment","compound"],
     "emergency_medical": ["casualty","injured","fatalities","triage","medical","ambulance"],
-    "counter_surveillance": ["surveillance","tail","followed","sdr","sd r","surveillance detection"],  # added both 'sdr' and 'sd r'
-    "terrorism": ["ied","vbied","suicide bomber","terrorist","bomb"]
+    "counter_surveillance": ["surveillance","tail","followed","sdr","sd r","surveillance detection"],
+    "terrorism": ["ied","vbied","suicide bomber","terrorist","bomb","explosion","drone strike","airstrike","air strike","grenade","blast","mortar","artillery"]
 }
 
 # ---------------------- Text normalization ----------------------
@@ -87,7 +112,7 @@ def _normalize(text: str) -> str:
     if not text:
         return ""
     t = unidecode(text).lower()
-    t = re.sub(r"[-–—]+", " ", t)   # <-- patch: hyphen/emdash normalization
+    t = re.sub(r"[-–—]+", " ", t)   # hyphen/emdash normalization
     t = re.sub(r"\s+", " ", t)
     return t.strip()
 
@@ -129,7 +154,7 @@ def enrich_log_db(text: str) -> str:
 
 def run_sentiment_analysis(text: str) -> str:
     t = _normalize(text)
-    neg = ["killed","dead","fatal","attack","explosion","panic","riot","fear","threat","warning","evacuate","emergency"]
+    neg = ["killed","dead","fatal","attack","explosion","panic","riot","fear","threat","warning","evacuate","emergency","hostage"]
     pos = ["contained","stabilized","safe","secured","reopened","de-escalate","calm"]
     score = _count_hits(t, neg) - _count_hits(t, pos)
     if score >= 3: return "High concern"
@@ -164,7 +189,7 @@ def run_legal_risk(text: str, region: Optional[str] = None) -> str:
 
 def run_cyber_ot_risk(text: str) -> str:
     t = _normalize(text)
-    if any(k in t for k in ["ransomware","malware","breach","data","ddos","phishing","credential","cve","zero-day","exploit"]):
+    if any(k in t for k in ["ransomware","malware","breach","data","ddos","phishing","credential","cve","zero-day","zero day","exploit","credential stuffing","wiper"]):
         return "Prioritize passkeys/MFA, patching of exposed services, and geo-fencing of admin access."
     if any(k in t for k in ["scada","ics","ot","plc","hmi"]):
         return "Segment OT networks, disable unsolicited remote access, and enforce break-glass accounts."
@@ -172,7 +197,7 @@ def run_cyber_ot_risk(text: str) -> str:
 
 def run_environmental_epidemic_risk(text: str) -> str:
     t = _normalize(text)
-    if any(k in t for k in ["flood","wildfire","hurricane","storm","heatwave","earthquake","landslide"]):
+    if any(k in t for k in ["flood","wildfire","hurricane","storm","heatwave","earthquake","landslide","tornado","cyclone","mudslide"]):
         return "Prepare for environmental disruptions: closures, air quality, and power issues."
     if any(k in t for k in ["epidemic","pandemic","cholera","dengue","covid","ebola","avian flu","outbreak"]):
         return "Maintain hygiene protocols and review medical access; consider masks and bottled water."
@@ -196,7 +221,7 @@ def extract_threat_subcategory(text: str, category: str) -> str:
             return sub
     return "Unspecified"
 
-# ---------------------- NEW: canonical detectors & helpers ----------------------
+# ---------------------- Canonical detectors & helpers ----------------------
 def detect_domains(text: str) -> List[str]:
     """Detect all relevant domains from content (stable order)."""
     if not text: return []
@@ -236,7 +261,7 @@ def source_reliability(source_name: Optional[str], source_url: Optional[str]) ->
     except Exception:
         pass
 
-    # <-- patch: handle composite government domains like gov.uk, gov.br, etc.
+    # handle composite government domains like gov.uk, gov.br, etc.
     parts = host.split(".") if host else []
     if ("gov" in parts) or ("mil" in parts) or (parts[-1:] and parts[-1] in {"eu", "int"}):
         return "High", "Official government/institutional source"
@@ -296,3 +321,44 @@ def extract_location(text: str) -> Tuple[Optional[str], Optional[str]]:
     except Exception:
         pass
     return None, None
+
+# ---------------------- Optional: false-positive guards (non-breaking) ----------------------
+# These helpers are intentionally conservative and only fire when *clearly* in a sports context
+# and no security keywords are present. Use from Threat Engine relevance gate if desired.
+
+_SPORTS_TOKENS = [
+    "game","match","season","league","tournament","playoff","finals","championship",
+    "coach","manager","quarterback","striker","midfielder","defender","goalkeeper","pitcher","shortstop",
+    "score","scored","goal","assist","points","win","loss","draw","fixture",
+    "nba","nfl","mlb","nhl","uefa","fifa","premier league","la liga","bundesliga","serie a",
+    "offense","offence","defense","defence","lineup","roster","draft","trade","transfer",
+]
+
+def likely_sports_context(text: str) -> bool:
+    """
+    Heuristic: return True if multiple sports tokens present AND no security tokens present.
+    Does not mutate any existing behavior; can be used by a relevance gate upstream.
+    """
+    t = _normalize(text or "")
+    if not t:
+        return False
+    sports_hits = sum(1 for k in _SPORTS_TOKENS if k in t)
+    if sports_hits < 2:
+        return False
+    # any overlap with our security keywords? if yes, don't flag
+    if any(k in t for k in KEYWORD_SET):
+        return False
+    return True
+
+def relevance_flags(text: str) -> List[str]:
+    """
+    Returns light flags you can log or use upstream:
+      - 'sports_context' if likely sports content
+      - 'info_ops' if sensational patterns present
+    """
+    flags: List[str] = []
+    if likely_sports_context(text):
+        flags.append("sports_context")
+    if info_ops_flags(text):
+        flags.append("info_ops")
+    return flags
