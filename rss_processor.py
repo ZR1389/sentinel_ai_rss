@@ -1,10 +1,13 @@
-# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging (v2025-08-24 PATCHED+COUNTRY+NO-BACKOFF)
+# rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging
+# v2025-08-24 PATCHED+COUNTRY+NO-BACKOFF+MATCHER (2025-08-31)
 # - No backoff (ever)
 # - Optional per-host throttle (can be fully disabled via HOST_THROTTLE_ENABLED=false)
 # - Postgres geocode cache
 # - Proper source_tag threading (local:city[, country] & country:country)
 # - City→Country defaults for common cities
 # - Reverse country from (lon,lat) via countries.geojson (no external deps)
+# - NEW: Keyword/Co-occurrence matcher aligned with risk_shared + threat_keywords.json,
+#        storing kw_match for Threat Scorer/Engine.
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -223,6 +226,10 @@ ARTICLE_MAX_BYTES      = int(os.getenv("RSS_FULLTEXT_MAX_BYTES", "800000"))
 ARTICLE_MAX_CHARS      = int(os.getenv("RSS_FULLTEXT_MAX_CHARS", "20000"))
 ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))
 
+# NEW: toggle and window for co-occurrence matcher (defaults match risk_shared)
+RSS_ENABLE_COOCCURRENCE = str(os.getenv("RSS_ENABLE_COOCCURRENCE", "true")).lower() in ("1","true","yes","y")
+RSS_COOC_WINDOW_TOKENS  = int(os.getenv("RSS_COOC_WINDOW_TOKENS", "12"))
+
 if not GEOCODE_ENABLED:
     logger.info("CITYUTILS_ENABLE_GEOCODE is FALSE — geocoding disabled in rss_processor.")
 
@@ -242,6 +249,7 @@ def _normalize(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
+# --------- Load threat keywords from JSON and/or risk_shared ----------
 def _load_keywords() -> Tuple[List[str], str]:
     source_mode = (os.getenv("KEYWORDS_SOURCE", "merge") or "merge").lower()
     use_json = source_mode in ("merge", "json_only")
@@ -284,6 +292,7 @@ def _load_keywords() -> Tuple[List[str], str]:
 
     if use_risk:
         try:
+            # Pull canonical lists to merge
             from risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
             for lst in list(CATEGORY_KEYWORDS.values()) + list(DOMAIN_KEYWORDS.values()):
                 for k in lst:
@@ -301,12 +310,64 @@ def _load_keywords() -> Tuple[List[str], str]:
 KEYWORDS, KEYWORDS_MODE = _load_keywords()
 logger.info("Loaded %d keywords (mode=%s)", len(KEYWORDS), KEYWORDS_MODE)
 
-def _kw_match(text: str) -> bool:
-    t = _normalize(text)
+# --------- Build the co-occurrence matcher (aligned with risk_shared) ----------
+MATCHER = None
+try:
+    from risk_shared import KeywordMatcher, build_default_matcher, get_all_keywords
+    try:
+        from risk_shared import BROAD_TERMS_DEFAULT as _BROAD_TERMS_DEFAULT
+        from risk_shared import IMPACT_TERMS_DEFAULT as _IMPACT_TERMS_DEFAULT
+    except Exception:
+        _BROAD_TERMS_DEFAULT = []
+        _IMPACT_TERMS_DEFAULT = []
+    # Union JSON keywords with risk_shared canonical set to keep everything aligned
+    merged_keywords: List[str] = []
+    try:
+        merged_set = set(KEYWORDS)
+        try:
+            for k in get_all_keywords():
+                merged_set.add(_normalize(k))
+        except Exception:
+            pass
+        merged_keywords = sorted(x for x in merged_set if x)
+    except Exception:
+        merged_keywords = KEYWORDS[:]
+
+    if RSS_ENABLE_COOCCURRENCE:
+        if _BROAD_TERMS_DEFAULT and _IMPACT_TERMS_DEFAULT:
+            MATCHER = KeywordMatcher(
+                keywords=merged_keywords,
+                broad_terms=_BROAD_TERMS_DEFAULT,
+                impact_terms=_IMPACT_TERMS_DEFAULT,
+                window=RSS_COOC_WINDOW_TOKENS,
+            )
+        else:
+            # Fallback to risk_shared default builder (uses its own keyword set)
+            MATCHER = build_default_matcher(window=RSS_COOC_WINDOW_TOKENS)
+except Exception as e:
+    logger.debug("Matcher build failed; will use legacy contains-only filter: %s", e)
+    MATCHER = None
+
+def _kw_decide(title: str, text: str) -> Tuple[bool, Dict[str, Any]]:
+    """
+    Returns (hit, details). If matcher exists, details carries rule/matches.
+    Falls back to simple contains-any-keyword.
+    """
+    blob_title = title or ""
+    blob_text = text or ""
+    if MATCHER is not None and RSS_ENABLE_COOCCURRENCE:
+        try:
+            res = MATCHER.decide(blob_text, title=blob_title)
+            return bool(res.hit), {"hit": bool(res.hit), "rule": res.rule, "matches": res.matches}
+        except Exception as e:
+            logger.debug("Matcher decide error, falling back: %s", e)
+
+    # Legacy simple contains (normalized)
+    t = _normalize(f"{blob_title}\n{blob_text}")
     for kw in KEYWORDS:
         if kw in t:
-            return True
-    return False
+            return True, {"hit": True, "rule": "keyword", "matches": {"keywords": [kw]}}
+    return False, {"hit": False, "rule": None, "matches": {}}
 
 try:
     from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
@@ -684,13 +745,17 @@ async def _build_alert_from_entry(
     if published and published < cutoff:
         return None
     source = _extract_source(source_url or link)
+
+    # ---------- MATCHER FILTER (title+summary, then fulltext if needed) ----------
     text_blob = f"{title}\n{summary}"
-    if not _kw_match(text_blob):
+    hit, km = _kw_decide(title, text_blob)
+    if not hit:
         fulltext = await _fetch_article_fulltext(client, link)
         if not fulltext:
             return None
         text_blob = f"{title}\n{summary}\n{fulltext}"
-        if not _kw_match(text_blob):
+        hit, km = _kw_decide(title, text_blob)
+        if not hit:
             return None
 
     # ------ CITY/COUNTRY/LAT/LON FROM tag + fuzzy fallback ------
@@ -770,6 +835,7 @@ async def _build_alert_from_entry(
             pass
     snippet = _first_sentence(unidecode(summary))
     tags = _auto_tags(text_blob)
+
     alert = {
         "uuid": uuid,
         "title": title,
@@ -785,6 +851,8 @@ async def _build_alert_from_entry(
         "language": lang,
         "latitude": latitude,
         "longitude": longitude,
+        # New: store keyword match diagnostics for Threat Scorer/Engine
+        "kw_match": km,
     }
     if source_tag:
         alert["source_tag"] = source_tag
@@ -889,8 +957,9 @@ async def ingest_all_feeds_to_db(
         else:
             logger.warning("No alerts to write (count=0)")
 
-    logger.info("Ingest run complete: ok=True count=%d wrote=%d feeds=%d elapsed=%.2fs errors=%d filter_strict=%r fulltext=%r",
-        len(alerts), wrote, len(specs), time.time()-start, len(errors), RSS_FILTER_STRICT, RSS_USE_FULLTEXT)
+    logger.info("Ingest run complete: ok=True count=%d wrote=%d feeds=%d elapsed=%.2fs errors=%d filter_strict=%r fulltext=%r cooc=%r window=%d",
+        len(alerts), wrote, len(specs), time.time()-start, len(errors), RSS_FILTER_STRICT, RSS_USE_FULLTEXT,
+        RSS_ENABLE_COOCCURRENCE, RSS_COOC_WINDOW_TOKENS)
 
     return {
         "ok": True,
@@ -902,6 +971,8 @@ async def ingest_all_feeds_to_db(
         "sample": alerts[:5],
         "filter_strict": RSS_FILTER_STRICT,
         "use_fulltext": RSS_USE_FULLTEXT,
+        "cooccurrence": RSS_ENABLE_COOCCURRENCE,
+        "window_tokens": RSS_COOC_WINDOW_TOKENS,
     }
 
 WRITE_TO_DB_DEFAULT = str(os.getenv("RSS_WRITE_TO_DB", "true")).lower() in ("1","true","yes","y")
@@ -937,7 +1008,8 @@ if __name__ == "__main__":
             f"ok={res.get('ok')} count={res.get('count')} wrote={res.get('wrote')} "
             f"feeds={res.get('feeds_used')} elapsed={res.get('elapsed_sec')}s "
             f"errors={len(res.get('errors') or [])} "
-            f"filter_strict={res.get('filter_strict')} fulltext={res.get('use_fulltext')}"
+            f"filter_strict={res.get('filter_strict')} fulltext={res.get('use_fulltext')} "
+            f"cooc={res.get('cooccurrence')} window={res.get('window_tokens')}"
         )
     except Exception:
         pass

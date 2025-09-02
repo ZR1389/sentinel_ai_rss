@@ -1,4 +1,5 @@
-# threat_engine.py — Sentinel Threat Engine (Final v2025-08-22 + Relevance Gate v2025-08-25)
+# threat_engine.py — Sentinel Threat Engine
+# v2025-08-31 (aligned with rss_processor kw_match + risk_shared.detect_domains)
 # - Reads raw_alerts -> enriches -> writes alerts (client-facing)
 # - Aligns with your alerts schema (domains, baseline metrics, trend, sources, etc.)
 # - Defensive defaults + backward compatibility (is_anomaly -> anomaly_flag, series_id/incident_series -> cluster_id)
@@ -43,6 +44,8 @@ from risk_shared import (
     run_environmental_epidemic_risk,
     extract_threat_category,
     extract_threat_subcategory,
+    detect_domains,          # <-- use canonical domains from risk_shared
+    relevance_flags,         # <-- sports/info-ops light flags
 )
 
 from db_utils import (
@@ -238,103 +241,21 @@ def _baseline_metrics(alert) -> dict:
         "trend_direction": trend_direction or "stable",
     }
 
-# ---------- Domain Tagging ----------
-DOMAIN_KEYWORDS = {
-    "travel_mobility": [
-        "travel", "route", "road", "highway", "checkpoint", "curfew", "airport", "border", "port", "rail", "metro",
-        "detour", "closure", "traffic", "mobility"
-    ],
-    "cyber_it": [
-        "cyber", "hacker", "phishing", "ransomware", "malware", "data breach", "ddos", "credential", "mfa", "passkey",
-        "vpn", "exploit", "zero-day", "cve", "edr"
-    ],
-    "digital_privacy_surveillance": [
-        "surveillance", "counter-surveillance", "device check", "phone check", "imsi", "stingray", "tracking",
-        "tail", "biometric", "unlock", "spyware", "pegasus", "finfisher", "watchlist"
-    ],
-    "physical_safety": [
-        "kidnap", "abduction", "theft", "assault", "shooting", "stabbing", "robbery", "looting", "murder", "attack"
-    ],
-    "civil_unrest": [
-        "protest", "riot", "demonstration", "clash", "unrest", "strike", "roadblock", "sit-in"
-    ],
-    "kfr_extortion": [
-        "kidnapping", "kidnap-for-ransom", "kfr", "ransom", "extortion"
-    ],
-    "infrastructure_utilities": [
-        "infrastructure", "power", "grid", "substation", "pipeline", "telecom", "fiber", "facility", "sabotage", "water"
-    ],
-    "environmental_hazards": [
-        "earthquake", "flood", "hurricane", "storm", "wildfire", "heatwave", "landslide", "mudslide"
-    ],
-    "public_health_epidemic": [
-        "epidemic", "pandemic", "outbreak", "cholera", "dengue", "covid", "ebola", "avian flu"
-    ],
-    "ot_ics": [
-        "scada", "ics", "plc", "ot", "industrial control", "hmi"
-    ],
-    "info_ops_disinfo": [
-        "misinformation", "disinformation", "propaganda", "info ops", "psyop"
-    ],
-    "legal_regulatory": [
-        "visa", "immigration", "border control", "curfew", "checkpoint order", "permit", "license", "ban", "restriction"
-    ],
-    "business_continuity_supply": [
-        "supply chain", "logistics", "port congestion", "warehouse", "strike", "shortage", "inventory"
-    ],
-    "insider_threat": [
-        "insider", "employee", "privileged access", "badge", "tailgating"
-    ],
-    "residential_premises": [
-        "residential", "home invasion", "burglary", "apartment", "compound"
-    ],
-    "emergency_medical": [
-        "casualty", "injured", "fatalities", "triage", "medical", "ambulance"
-    ],
-    "counter_surveillance": [
-        "surveillance", "tail", "followed", "sd r", "surveillance detection"
-    ],
-    "terrorism": [
-        "ied", "vbied", "suicide bomber", "terrorist", "bomb"
-    ],
-}
-
-def classify_domains(alert: dict) -> list[str]:
-    text = (alert.get("title", "") + " " + alert.get("summary", "")).lower()
-    domains = set()
-    for dom, kws in DOMAIN_KEYWORDS.items():
-        if any(k in text for k in kws):
-            domains.add(dom)
-
-    category = (alert.get("category") or alert.get("threat_label") or "").lower()
-    if "cyber" in category:
-        domains.add("cyber_it")
-    if "unrest" in category:
-        domains.update({"civil_unrest", "physical_safety", "travel_mobility"})
-    if "terror" in category:
-        domains.update({"terrorism", "physical_safety"})
-    if "infrastructure" in category:
-        domains.add("infrastructure_utilities")
-    if "environmental" in category:
-        domains.update({"environmental_hazards", "emergency_medical"})
-    if "epidemic" in category:
-        domains.update({"public_health_epidemic", "emergency_medical"})
-    if "crime" in category:
-        domains.add("physical_safety")
-
-    if any(k in text for k in ["airport", "flight", "train", "bus", "border", "checkpoint", "curfew", "road", "closure"]):
-        domains.add("travel_mobility")
-
-    return sorted(domains)
-
 # ---------- Relevance Filtering ----------
 def is_relevant(alert: dict) -> bool:
     """
     Lightweight relevance gate to exclude non-security junk while keeping recall.
+    Relies on:
+      - risk_shared.relevance_flags (sports/bloggy signals)
+      - category_confidence floor
+      - domains non-empty (unless kw_rule indicates strong broad+impact hit)
     """
     text = (alert.get("title","") + " " + alert.get("summary","")).lower()
+    flags = alert.get("relevance_flags") or relevance_flags(text)
 
     # Sports / entertainment obvious noise
+    if "sports_context" in (flags or []):
+        return False
     if any(bad in text for bad in [
         "football","basketball","soccer","tennis","nba","nfl","fifa","cricket","olympics",
         "concert","music festival","award show","box office","celebrity"
@@ -352,12 +273,16 @@ def is_relevant(alert: dict) -> bool:
         return False
 
     # Require minimum classification confidence
-    if alert.get("category_confidence", 0) < 0.35:
+    if float(alert.get("category_confidence") or 0.0) < 0.35:
         return False
 
-    # Require at least one domain mapping (post-enrichment)
-    if not alert.get("domains"):
-        return False
+    # Domains must be present — unless kw_rule flagged a strong broad+impact match
+    kw_rule = (alert.get("kw_rule") or "").lower()
+    domains = alert.get("domains") or []
+    if not domains:
+        strong_rule = ("broad+impact" in kw_rule)
+        if not strong_rule:
+            return False
 
     return True
 
@@ -382,7 +307,13 @@ def summarize_single_alert(alert: dict) -> dict:
     location = alert.get("city") or alert.get("region") or alert.get("country")
     triggers = alert.get("tags", [])
 
-    # Threat scoring
+    # Lightweight relevance flags for diagnostics (sports/info-ops)
+    try:
+        alert["relevance_flags"] = relevance_flags(full_text)
+    except Exception:
+        alert["relevance_flags"] = []
+
+    # Threat scoring (consumes kw_match if present from rss_processor)
     threat_score_data = assess_threat_level(
         alert_text=full_text,
         triggers=triggers,
@@ -391,9 +322,10 @@ def summarize_single_alert(alert: dict) -> dict:
         plan="FREE",
         enrich=True,
         user_email=None,
-        source_alert=alert
+        source_alert=alert  # passes kw_match through to scorer
     ) or {}
 
+    # Merge score outputs
     for k, v in threat_score_data.items():
         alert[k] = v
 
@@ -425,7 +357,7 @@ def summarize_single_alert(alert: dict) -> dict:
 
     alert["gpt_summary"] = g_summary or alert.get("gpt_summary") or ""
 
-    # Category/subcategory
+    # Category/subcategory (fallbacks if missing)
     if not alert.get("category") or not alert.get("category_confidence"):
         try:
             cat, cat_conf = extract_threat_category(full_text)
@@ -443,8 +375,11 @@ def summarize_single_alert(alert: dict) -> dict:
             logger.error(f"[ThreatEngine][SubcategoryFallbackError] {e}")
             alert["subcategory"] = "Unspecified"
 
-    # Domains
-    alert["domains"] = classify_domains(alert)
+    # Domains — canonical via risk_shared (prefer scorer's domains if present)
+    try:
+        alert["domains"] = alert.get("domains") or detect_domains(full_text)
+    except Exception:
+        alert["domains"] = alert.get("domains") or []
 
     # Historical & trend metrics
     historical_incidents = fetch_past_incidents(
@@ -614,6 +549,14 @@ def _normalize_for_db(a: dict) -> dict:
         a["recent_count_7d"] = 0
     a["latitude"] = a.get("latitude")
     a["longitude"] = a.get("longitude")
+    # Preserve kw_match/kw_rule for observability if present
+    if "kw_match" in a and "kw_rule" not in a:
+        try:
+            rule = (a["kw_match"] or {}).get("rule")
+            if rule:
+                a["kw_rule"] = rule
+        except Exception:
+            pass
     return a
 
 def enrich_and_store_alerts(region=None, country=None, city=None, limit=1000, write_to_db: bool = ENGINE_WRITE_TO_DB):

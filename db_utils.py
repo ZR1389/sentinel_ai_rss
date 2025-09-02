@@ -1,4 +1,5 @@
-# db_utils.py — drop-in (Sentinel AI) • v2025-08-23 (patch: log/validate tags for raw_alerts insert)
+# db_utils.py — drop-in (Sentinel AI) • v2025-08-23
+# Patch 2025-08-25: raw_alerts uses JSON-wrapped tags (jsonb) + persists source_tag/kind/priority
 # Postgres helpers for RSS ingest, Threat Engine, and Advisor pipeline.
 
 from __future__ import annotations
@@ -60,16 +61,18 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     """
     Bulk upsert raw alerts. Expected fields:
     uuid, title, summary, en_snippet, link, source, published (datetime or iso),
-    region, country, city, tags (list[str]), language,
-    latitude, longitude  <-- NEW
+    region, country, city, tags (list[str] or json), language,
+    latitude, longitude, source_tag, source_kind, source_priority
     """
     if not alerts:
         logger.info("No alerts to write.")
         return 0
+
     cols = [
         "uuid","title","summary","en_snippet","link","source","published",
         "region","country","city","tags","language","ingested_at",
-        "latitude","longitude"  # <<-- NEW
+        "latitude","longitude",
+        "source_tag","source_kind","source_priority"  # persisted from rss_processor
     ]
 
     def _coerce(a: Dict[str, Any]) -> Tuple:
@@ -85,17 +88,23 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
                 published = None
 
         tags = a.get("tags") or []
-        # Patch: ensure tags is always a Python list (never a string or JSON string)
+        # Ensure Python list/dict, then wrap as JSON for jsonb column
         if isinstance(tags, str):
             import ast
             try:
                 tags = ast.literal_eval(tags)
-                if not isinstance(tags, list):
-                    tags = [str(tags)]
             except Exception:
-                tags = [str(tags)]
-        elif not isinstance(tags, list):
+                tags = [tags]
+        # If still not list/dict, coerce minimally
+        if not isinstance(tags, (list, dict)):
             tags = [str(tags)]
+
+        # Coerce priority if present
+        sp = a.get("source_priority")
+        try:
+            sp = int(sp) if sp is not None else None
+        except Exception:
+            sp = None
 
         return (
             aid,
@@ -108,18 +117,24 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("region"),
             a.get("country"),
             a.get("city"),
-            tags,
+            Json(tags),                           # jsonb
             a.get("language") or "en",
             a.get("ingested_at") or datetime.utcnow(),
-            a.get("latitude"),   # <<-- NEW
-            a.get("longitude"),  # <<-- NEW
+            a.get("latitude"),
+            a.get("longitude"),
+            a.get("source_tag"),
+            a.get("source_kind"),
+            sp,
         )
 
     rows = [_coerce(a) for a in alerts]
 
     # Log type of tags for the first row for debugging
     if rows:
-        logger.info("Attempting to insert %d rows to raw_alerts. First row tags: %r (type=%r)", len(rows), rows[0][10], type(rows[0][10]))
+        logger.info(
+            "Attempting to insert %d rows to raw_alerts. First row tags: %r (type=%r)",
+            len(rows), rows[0][10], type(rows[0][10])
+        )
 
     sql = f"""
     INSERT INTO raw_alerts ({", ".join(cols)})
@@ -159,7 +174,8 @@ def fetch_raw_alerts_from_db(
     q = f"""
         SELECT uuid, title, summary, en_snippet, link, source, published,
                region, country, city, tags, language, ingested_at,
-               latitude, longitude      -- NEW
+               latitude, longitude,
+               source_tag, source_kind, source_priority
         FROM raw_alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST, ingested_at DESC
@@ -195,7 +211,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "subcategory","domains","incident_count_30d","recent_count_7d","baseline_avg_7d",
         "baseline_ratio","trend_direction","anomaly_flag","future_risk_probability",
         "reports_analyzed","sources","cluster_id",
-        "latitude","longitude"  # <<-- NEW
+        "latitude","longitude"
     ]
 
     def _json(v):
@@ -234,22 +250,12 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         is_anomaly   = bool(a.get("is_anomaly") or a.get("anomaly_flag") or False)
         anomaly_flag = bool(a.get("anomaly_flag") or False)
 
-        # PATCH: provide safe defaults for commonly missing fields
-        incident_count_30d = a.get("incident_count_30d")
-        if incident_count_30d is None:
-            incident_count_30d = 0
-        recent_count_7d = a.get("recent_count_7d")
-        if recent_count_7d is None:
-            recent_count_7d = 0
-        baseline_avg_7d = a.get("baseline_avg_7d")
-        if baseline_avg_7d is None:
-            baseline_avg_7d = 0
-        baseline_ratio = a.get("baseline_ratio")
-        if baseline_ratio is None:
-            baseline_ratio = 1.0
-        trend_direction = a.get("trend_direction")
-        if trend_direction is None:
-            trend_direction = "stable"
+        # Safe defaults
+        incident_count_30d = a.get("incident_count_30d", 0) or 0
+        recent_count_7d    = a.get("recent_count_7d", 0) or 0
+        baseline_avg_7d    = a.get("baseline_avg_7d", 0) or 0
+        baseline_ratio     = a.get("baseline_ratio", 1.0)
+        trend_direction    = a.get("trend_direction") or "stable"
 
         return (
             aid,
@@ -280,16 +286,16 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("cyber_ot_risk"),
             a.get("environmental_epidemic_risk"),
             a.get("keyword_weight"),
-            tags,  # text[]
+            tags,                 # alerts.tags is text[]
             a.get("trend_score"),
             a.get("trend_score_msg"),
             bool(is_anomaly),
-            ewi,   # text[]
+            ewi,                  # text[]
             a.get("series_id"),
             a.get("incident_series"),
             a.get("historical_context"),
             a.get("subcategory"),
-            _json(domains),   # jsonb
+            _json(domains),       # jsonb
             incident_count_30d,
             recent_count_7d,
             baseline_avg_7d,
@@ -298,7 +304,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             bool(anomaly_flag),
             a.get("future_risk_probability"),
             a.get("reports_analyzed"),
-            _json(sources),   # jsonb
+            _json(sources),       # jsonb
             a.get("cluster_id"),
             a.get("latitude"),
             a.get("longitude"),
@@ -307,7 +313,10 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     rows = [_coerce_row(a) for a in alerts]
 
     if rows:
-        logger.info("Attempting to insert %d rows to alerts. First row tags: %r (type=%r)", len(rows), rows[0][28], type(rows[0][28]))
+        logger.info(
+            "Attempting to insert %d rows to alerts. First row tags: %r (type=%r)",
+            len(rows), rows[0][28], type(rows[0][28])
+        )
 
     sql = f"""
     INSERT INTO alerts ({", ".join(columns)})
@@ -413,7 +422,7 @@ def fetch_alerts_from_db(
              early_warning_indicators, series_id, incident_series, historical_context,
              domains, incident_count_30d, recent_count_7d, baseline_avg_7d,
              baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id,
-             latitude, longitude    -- NEW
+             latitude, longitude
       FROM alerts
       {where_sql}
       ORDER BY published DESC NULLS LAST
@@ -423,7 +432,7 @@ def fetch_alerts_from_db(
     with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(q, tuple(params))
         rows = cur.fetchall()
-        # PATCH: supply safe defaults for missing keys
+        # Supply safe defaults for missing keys
         for r in rows:
             if r.get("incident_count_30d") is None:
                 r["incident_count_30d"] = 0
@@ -510,7 +519,7 @@ def fetch_past_incidents(
     q = f"""
         SELECT uuid, title, summary, score, published, category, subcategory,
                city, country, region, threat_level, threat_label, tags,
-               latitude, longitude    -- NEW
+               latitude, longitude
         FROM alerts
         {where_sql}
         ORDER BY published DESC

@@ -1,113 +1,211 @@
 {
   "keywords": [
     "assassination", "murder", "homicide", "killing", "slaughter", "massacre",
-    "mass shooting", "active shooter", "gunfire", "kidnapping", "abduction",
-    "hijacking", "hostage situation", "human trafficking", "sex trafficking",
-    "rape", "sexual assault", "violent crime", "bombing", "improvised explosive device",
-    "IED", "terrorist attack", "terrorism", "suicide bombing", "drone attack",
-    "explosion", "road ambush", "military coup", "military raid", "coup d'etat",
-    "regime change", "military takeover", "state of emergency", "martial law",
-    "curfew", "roadblock", "police raid", "civil unrest", "riot", "protest",
-    "political unrest", "uprising", "insurrection", "political turmoil",
-    "political crisis", "demonstration", "border closure", "flight cancellation",
-    "airport closure", "lockdown", "embassy alert", "travel advisory",
-    "travel ban", "security alert", "emergency situation", "evacuation",
-    "government crisis", "war", "armed conflict", "pandemic", "viral outbreak",
-    "disease spread", "contamination", "quarantine", "public health emergency",
-    "infectious disease", "epidemic", "biological threat", "health alert",
-    "data breach", "ransomware", "cyberattack", "hacktivism", "deepfake",
-    "phishing", "malware", "cyber espionage", "identity theft", "network breach",
-    "online scam", "digital kidnapping", "virtual kidnapping", "cyber kidnapping",
-    "honey trap", "hacking attack", "cyber fraud", "crypto fraud", "financial scam",
-    "organized crime", "travel scam", "armed robbery", "assault on a foreigner",
-    "assault on a tourist", "extremist activity", "radicalization", "jihadist",
-    "pirate attack", "extremism", "armed groups", "militia attacks",
-    "armed militants", "separatists", "natural disaster", "earthquake", "tsunami",
-    "tornado", "hurricane", "flood", "wild fire", "police brutality",
-    "brutal attack", "false imprisonment", "blackmail", "extortion"
+
+    "shooting", "mass shooting", "active shooter", "shootout", "small arms fire", "gunfire",
+    "stabbing", "knife attack", "machete attack", "lynching",
+
+    "kidnapping", "abduction", "express kidnapping", "kidnap-for-ransom", "KFR",
+    "hijacking", "hostage situation", "carjacking", "armed carjacking", "home invasion", "mugging",
+
+    "human trafficking", "sex trafficking", "rape", "sexual assault", "violent crime",
+
+    "bombing", "improvised explosive device", "IED", "VBIED", "SVBIED", "PBIED",
+    "roadside bomb", "car bomb", "truck bomb", "grenade attack", "landmine", "booby trap", "explosion",
+
+    "terrorist attack", "terrorism", "suicide bombing",
+    "drone attack", "drone strike", "missile strike", "airstrike",
+    "mortar fire", "rocket fire", "artillery shelling",
+    "road ambush",
+
+    "military coup", "coup d'etat", "military takeover", "military raid",
+
+    "state of emergency", "martial law", "curfew",
+    "roadblock", "road block", "checkpoint closed", "crossing closed", "police raid",
+
+    "riot", "uprising", "insurrection",
+    "clashes", "looting", "arson", "barricades", "tire burning", "stone throwing",
+    "tear gas", "rubber bullets", "water cannon", "live fire",
+
+    "border closure",
+    "flight cancellation", "flight cancellations", "airport closure", "runway closure",
+    "airspace closed", "no-fly zone", "ground stop", "NOTAM",
+    "air traffic control", "ATC outage",
+    "strike", "walkout", "industrial action", "work stoppage",
+    "rail strike", "train derailment", "train collision",
+    "ferry suspension", "port closed",
+    "road closure", "highway closed",
+
+    "embassy alert", "travel ban", "evacuation",
+
+    "natural disaster", "earthquake", "tsunami", "tornado", "hurricane",
+    "flood", "flash flood", "wildfire", "wild fire",
+    "landslide", "mudslide", "rockslide", "avalanche",
+    "volcanic eruption", "ash plume", "lahar",
+    "heatwave", "heat wave", "blizzard", "snowstorm", "cold snap",
+    "dam burst", "levee breach",
+    "gas leak", "ammonia leak", "chlorine leak",
+    "chemical spill", "oil spill", "refinery fire", "refinery explosion", "hazmat",
+
+    "data breach", "data leak", "ransomware",
+    "DDoS", "distributed denial of service",
+    "cyberattack", "hacktivism", "phishing", "malware",
+    "cyber espionage", "identity theft", "network breach", "credential stuffing",
+    "SCADA", "ICS", "PLC",
+    "GPS jamming", "GNSS spoofing",
+    "internet shutdown", "telecom outage", "nationwide outage", "power blackout", "blackout",
+
+    "online scam", "digital kidnapping", "virtual kidnapping", "cyber kidnapping", "hacking attack",
+
+    "cyber fraud", "crypto fraud", "financial scam", "organized crime", "travel scam",
+    "armed robbery", "assault on a foreigner", "assault on a tourist",
+
+    "extremist activity", "radicalization", "jihadist", "extremism",
+    "armed groups", "militia attacks", "armed militants", "separatists",
+
+    "piracy", "pirate attack", "pirate skiff", "boarding", "hijack vessel",
+
+    "police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion"
   ],
+
+  "conditional": {
+    "broad_terms": [
+      "travel advisory", "security alert", "security notice",
+      "public health emergency", "pandemic", "epidemic", "outbreak", "disease spread", "contamination",
+      "protest", "demonstration", "march", "rally",
+      "heightened security", "elevated threat level"
+    ],
+    "impact_terms": [
+      "killed", "dead", "deaths", "fatality", "fatalities",
+      "injured", "wounded", "hurt", "hospitalized", "critical condition",
+      "curfew", "imposed", "enforced", "detained", "arrested",
+      "closure", "closed", "suspended", "suspension", "halted", "grounded", "canceled", "cancelled", "disrupted", "diverted", "blocked",
+      "evacuated", "evacuation", "shelter in place",
+      "clashes", "violent", "violence", "looting", "arson",
+      "gunfire", "shots fired", "explosion", "blast",
+      "collapse", "damaged", "destroyed"
+    ],
+    "window": { "type": "tokens", "max": 12 }
+  },
+
   "translated": {
     "assassination": {
       "en": ["assassination", "murder", "homicide", "killing", "slaughter", "massacre", "mass shooting", "active shooter", "gunfire"],
-      "es": ["asesinato", "matar", "homicidio", "matanza", "masacre", "tiroteo masivo", "asesinato en masa", "tirador activo", "tiradora activa", "tiroteo"],
-      "fr": ["assassinat", "meurtre", "homicide", "massacre", "fusillade de masse", "massacre de masse", "tireur actif", "fusillade"],
-      "zh": ["暗殺", "謀殺", "殺人", "殺害", "屠殺", "大屠殺", "大規模槍擊", "大規模殺戮", "活躍槍手"],
-      "ru": ["убийство", "умерщвление", "бойня", "резня", "массовый расстрел", "массовое убийство"],
-      "hi": ["हत्या", "वध", "नरसंहार", "सामूहिक गोलीबारी", "सामूहिक हत्या", "सक्रिय शूटर"],
-      "sr": ["атентат", "убиство", "покољ", "масакр", "масовна пуцњава", "масовно пуцање"]
+      "es": ["asesinato", "homicidio", "matanza", "masacre", "tiroteo masivo", "tirador activo", "tiroteo"],
+      "fr": ["assassinat", "meurtre", "homicide", "massacre", "fusillade de masse", "tireur actif", "fusillade"],
+      "zh": ["暗殺", "謀殺", "殺人", "屠殺", "大屠殺", "大規模槍擊", "活躍槍手", "槍聲"],
+      "ru": ["убийство", "умышленное убийство", "массовое убийство", "массовая стрельба", "активный стрелок", "выстрелы"],
+      "hi": ["हत्या", "नरसंहार", "सामूहिक गोलीबारी", "सक्रिय शूटर", "गोलियों की आवाज़"],
+      "sr": ["атентат", "убиство", "масакр", "масовна пуцњава", "активни пуцач", "пуцњава"],
+      "it": ["assassinio", "omicidio", "uccisione", "strage", "massacro", "sparatoria di massa", "sparatoria", "attentatore attivo", "colpi d'arma da fuoco"],
+      "pt": ["assassinato", "homicídio", "matança", "massacre", "tiroteio em massa", "atirador ativo", "tiroteio", "disparos"],
+      "de": ["Attentat", "Mord", "Tötung", "Massaker", "Amoklauf", "aktiver Schütze", "Schüsse", "Schusswechsel"]
     },
+
     "kidnapping": {
       "en": ["kidnapping", "abduction", "hijacking", "hostage situation"],
-      "es": ["secuestro", "rapto", "secuestro forzoso", "toma de rehenes"],
+      "es": ["secuestro", "rapto", "secuestro de vehículo", "toma de rehenes"],
       "fr": ["enlèvement", "rapt", "détournement", "prise d'otages"],
       "zh": ["綁架", "誘拐", "劫持", "人質事件"],
-      "ru": ["похищение, угон", "захват заложников"],
-      "hi": ["अपहरण", "बंधक स्थिति"],
-      "sr": ["отмица", "киднаповање", "талачка ситуација"]
+      "ru": ["похищение", "угон", "захват заложников"],
+      "hi": ["अपहरण", "बंधक स्थिति", "हाइजैकिंग"],
+      "sr": ["отмица", "киднаповање", "талачка ситуација"],
+      "it": ["rapimento", "sequestro di persona", "dirottamento", "presa di ostaggi"],
+      "pt": ["sequestro", "rapto", "sequestro de veículo", "tomada de reféns"],
+      "de": ["Entführung", "Kidnapping", "Entführung eines Fahrzeugs", "Geiselnahme"]
     },
+
     "human trafficking": {
       "en": ["human trafficking", "sex trafficking", "rape", "sexual assault", "violent crime"],
-      "es": ["trata de personas", "tráfico sexual", "violación", "agresión sexual", "delitos violentos"],
+      "es": ["trata de personas", "tráfico sexual", "violación", "agresión sexual", "delito violento"],
       "fr": ["traite des êtres humains", "trafic sexuel", "viol", "agression sexuelle", "crime violent"],
       "zh": ["人口販賣", "性交易", "強暴", "性侵害", "暴力犯罪"],
-      "ru": ["торговля людьми", "торговля людьми в целях сексуальной эксплуатации", "изнасилование", "сексуальное насилие", "насильственные преступления"],
-      "hi": ["मानव तस्करी", "यौन तस्करी", "बलात्कार", "यौन उत्पीड़न", "हिंसक अपराध"],
-      "sr": ["трговина људима", "силовање", "сексуални напад", "насилни злочин", "насиље"]
+      "ru": ["торговля людьми", "сексуальная эксплуатация", "изнасилование", "сексуальное насилие", "насильственное преступление"],
+      "hi": ["मानव तस्करी", "यौन तस्करी", "बलात्कार", "यौन हमला", "हिंसक अपराध"],
+      "sr": ["трговина људима", "сексуална трговина", "силовање", "сексуални напад", "насилан злочин"],
+      "it": ["tratta di esseri umani", "traffico sessuale", "stupro", "aggressione sessuale", "reato violento"],
+      "pt": ["tráfico de pessoas", "tráfico sexual", "estupro", "agressão sexual", "crime violento"],
+      "de": ["Menschenhandel", "Sexhandel", "Vergewaltigung", "sexueller Übergriff", "Gewaltverbrechen"]
     },
+
     "terrorism": {
       "en": ["bombing", "improvised explosive device", "IED", "terrorist attack", "terrorism", "suicide bombing", "drone attack", "explosion", "road ambush"],
-      "es": ["bombardeo", "artefacto explosivo improvisado", "ataque terrorista", "terrorismo", "atentado suicida", "ataque con drones", "explosión", "emboscada en la carretera"],
-      "fr": ["attentat à la bombe", "engin explosif improvisé", "attaque terroriste", "terrorisme", "attentat suicide", "attaque de drone", "explosion", "embuscade routière"],
-      "zh": ["轟炸", "簡易爆炸裝置", "恐怖攻擊", "恐怖主義", "自殺式爆炸", "無人機攻擊", "爆炸", "公路伏擊"],
-      "ru": ["бомбардировка", "самодельное взрывное устройство", "теракт", "терроризм, теракт-смертник", "атака с использованием дронов", "взрыв", "дорожная засада"],
-      "hi": ["बमबारी", "तात्कालिक विस्फोटक उपकरण", "आतंकवादी हमला", "आतंकवाद", "आत्मघाती बम विस्फोट", "ड्रोन हमला", "विस्फोट", "सड़क पर घात लगाकर हमला"],
-      "sr": ["бомбардовање", "сачекуша", "импровизована експлозивна направа", "терористички напад", "тероризам", "самоубилачки бомбашки напад", "напад дроном", "експлозија", "заседа на путу", "бомбаш самоубица", "бомба"]
+      "es": ["atentado con bomba", "artefacto explosivo improvisado", "IED", "ataque terrorista", "terrorismo", "atentado suicida", "ataque con dron", "explosión", "emboscada"],
+      "fr": ["attentat à la bombe", "engin explosif improvisé", "IED", "attaque terroriste", "terrorisme", "attentat suicide", "attaque de drone", "explosion", "embuscade"],
+      "zh": ["炸彈攻擊", "簡易爆炸裝置", "IED", "恐怖攻擊", "恐怖主義", "自殺式爆炸", "無人機攻擊", "爆炸", "伏擊"],
+      "ru": ["взрыв", "СВУ", "теракт", "терроризм", "самоподрыв", "атака дроном", "взрывное устройство", "засада"],
+      "hi": ["बम विस्फोट", "आईईडी", "आतंकवादी हमला", "आतंकवाद", "आत्मघाती विस्फोट", "ड्रोन हमला", "विस्फोट", "घात"],
+      "sr": ["бомба", "импровизована експлозивна направа", "терористички напад", "тероризам", "самоубилачки напад", "напад дроном", "експлозија", "заседа"],
+      "it": ["attentato dinamitardo", "ordigno esplosivo improvvisato", "IED", "attacco terroristico", "terrorismo", "attentato suicida", "attacco con drone", "esplosione", "imboscata"],
+      "pt": ["atentado a bomba", "dispositivo explosivo improvisado", "IED", "ataque terrorista", "terrorismo", "ataque suicida", "ataque com drone", "explosão", "emboscada"],
+      "de": ["Bombenanschlag", "Improvisierte Sprengvorrichtung", "IED", "Terroranschlag", "Terrorismus", "Selbstmordanschlag", "Drohnenangriff", "Explosion", "Hinterhalt"]
     },
+
     "military coup": {
       "en": ["military coup", "military raid", "coup d'etat", "regime change", "military takeover"],
-      "es": ["golpe militar", "incursión militar", "golpe de estado", "cambio de régimen", "toma del poder militar"],
-      "fr": ["coup d'État militaire", "raid militaire", "changement de régime", "prise de pouvoir militaire"],
-      "zh": ["軍事政變", "軍事攻擊", "政變", "政權更迭", "軍事接管"],
-      "ru": ["военный переворот", "военный рейд", "государственный переворот", "смена режима"],
+      "es": ["golpe militar", "operativo militar", "golpe de Estado", "cambio de régimen", "toma militar"],
+      "fr": ["coup d'État militaire", "raid militaire", "coup d'État", "changement de régime", "prise de pouvoir militaire"],
+      "zh": ["軍事政變", "軍事突襲", "政變", "政權更迭", "軍事接管"],
+      "ru": ["военный переворот", "военная операция", "государственный переворот", "смена режима", "военное управление"],
       "hi": ["सैन्य तख्तापलट", "सैन्य छापा", "तख्तापलट", "शासन परिवर्तन", "सैन्य अधिग्रहण"],
-      "sr": ["војни пуч", "војна рација", "државни удар", "промена власти", "војно преузимање власти"]
+      "sr": ["војни пуч", "војна рација", "државни удар", "промена режима", "војно преузимање"],
+      "it": ["colpo di stato militare", "raid militare", "colpo di stato", "cambio di regime", "presa del potere militare"],
+      "pt": ["golpe militar", "batida militar", "golpe de Estado", "mudança de regime", "tomada militar"],
+      "de": ["Militärputsch", "Militärrazzia", "Staatsstreich", "Regimewechsel", "militärische Machtübernahme"]
     },
+
     "state of emergency": {
       "en": ["state of emergency", "martial law", "curfew", "roadblock", "police raid"],
-      "es": ["estado de emergencia", "ley marcial", "toque de queda", "bloqueo de carreteras", "redada policial"],
+      "es": ["estado de emergencia", "ley marcial", "toque de queda", "bloqueo de carretera", "redada policial"],
       "fr": ["état d'urgence", "loi martiale", "couvre-feu", "barrage routier", "descente de police"],
       "zh": ["緊急狀態", "戒嚴", "宵禁", "路障", "警察突襲"],
-      "ru": ["чрезвычайное положение", "военное положение", "комендантский час", "блокирование дорог", "полицейский рейд"],
-      "hi": ["आपातकालीन स्थिति", "मार्शल लॉ", "कर्फ्यू", "सड़क अवरोध", "पुलिस छापा"],
-      "sr": ["ванредно стање", "војно стање", "полицијски час", "блокада пута", "полицијска рација"]
+      "ru": ["чрезвычайное положение", "военное положение", "комендантский час", "дорожное перекрытие", "полицейский рейд"],
+      "hi": ["आपातकाल", "मार्शल लॉ", "कर्फ्यू", "सड़क अवरोध", "पुलिस छापा"],
+      "sr": ["ванредно стање", "војно стање", "полицијски час", "блокада пута", "полицијска рација"],
+      "it": ["stato di emergenza", "legge marziale", "coprifuoco", "blocco stradale", "irruzione della polizia"],
+      "pt": ["estado de emergência", "lei marcial", "toque de recolher", "bloqueio de estrada", "operação policial"],
+      "de": ["Ausnahmezustand", "Kriegsrecht", "Ausgangssperre", "Straßensperre", "Polizeirazzia"]
     },
+
     "protest": {
       "en": ["civil unrest", "riot", "protest", "political unrest", "uprising", "insurrection", "political turmoil", "political crisis", "demonstration"],
-      "es": ["disturbios civiles", "disturbios", "protestas", "disturbios políticos", "levantamientos", "insurrecciones", "agitación política", "crisis política"],
-      "fr": ["troubles civils", "émeute", "protestation", "soulèvement", "insurrection", "troubles politiques", "crise politique"],
-      "zh": ["國內暴動", "暴動", "抗議", "政治動亂", "起義", "叛亂", "政治動盪", "政治危機", "示威"],
-      "ru": ["гражданские беспорядки", "бунт", "протест", "политические беспорядки", "восстание, мятеж", "политические волнения", "политический кризис", "демонстрация"],
-      "hi": ["नागरिक अशांति", "दंगा", "विरोध", "राजनीतिक अशांति", "विद्रोह", "बगावत", "राजनीतिक उथल-पुथल", "राजनीतिक संकट", "प्रदर्शन"],
-      "sr": ["грађански немири", "протест", "политички немири", "демонстрације", "политичко превирање", "политичка криза"]
+      "es": ["disturbios civiles", "disturbios", "protesta", "agitación política", "levantamiento", "insurrección", "crisis política", "manifestación"],
+      "fr": ["troubles civils", "émeute", "protestation", "troubles politiques", "soulèvement", "insurrection", "crise politique", "manifestation"],
+      "zh": ["內亂", "暴動", "抗議", "政治動盪", "起義", "叛亂", "示威"],
+      "ru": ["гражданские беспорядки", "бунт", "протест", "политические волнения", "восстание", "мятеж", "демонстрация"],
+      "hi": ["नागरिक अशांति", "दंगा", "विरोध", "राजनीतिक उथल-पुथल", "विद्रोह", "बगावत", "प्रदर्शन"],
+      "sr": ["грађански немири", "немири", "протест", "политичка криза", "устанак", "инсурекција", "демонстрације"],
+      "it": ["disordini civili", "sommossa", "protesta", "turbamento politico", "insurrezione", "rivolta", "manifestazione"],
+      "pt": ["agitação civil", "motim", "protesto", "agitação política", "levante", "insurreição", "manifestação"],
+      "de": ["Bürgerunruhen", "Aufruhr", "Protest", "politische Unruhen", "Aufstand", "Insurrektion", "Demonstration"]
     },
+
     "border closure": {
       "en": ["border closure", "flight cancellation", "airport closure", "lockdown"],
-      "es": ["cierre de fronteras", "cancelación de vuelos", "cierre de aeropuertos"],
-      "fr": ["fermeture des frontières", "annulation de vol", "fermeture de l'aéroport"],
+      "es": ["cierre de fronteras", "cancelación de vuelos", "cierre de aeropuerto", "confinamiento"],
+      "fr": ["fermeture des frontières", "annulation de vol", "fermeture de l'aéroport", "confinement"],
       "zh": ["邊境關閉", "航班取消", "機場關閉", "封鎖"],
-      "ru": ["закрытие границ", "отмена рейсов", "закрытие аэропортов", "локдаун"],
+      "ru": ["закрытие границы", "отмена рейсов", "закрытие аэропорта", "локдаун"],
       "hi": ["सीमा बंद", "उड़ान रद्द", "हवाई अड्डा बंद", "लॉकडाउन"],
-      "sr": ["затварање границе", "отказивање лета", "затварање аеродрома"]
+      "sr": ["затварање границе", "отказивање летова", "затварање аеродрома", "локдаун"],
+      "it": ["chiusura delle frontiere", "cancellazione di voli", "chiusura dell'aeroporto", "lockdown"],
+      "pt": ["fechamento de fronteira", "cancelamento de voos", "fechamento de aeroporto", "lockdown"],
+      "de": ["Grenzschließung", "Flugausfall", "Flughafenschließung", "Lockdown"]
     },
+
     "embassy alert": {
       "en": ["embassy alert", "travel advisory", "travel ban", "security alert"],
       "es": ["alerta de embajada", "aviso de viaje", "prohibición de viajar", "alerta de seguridad"],
       "fr": ["alerte de l'ambassade", "avis aux voyageurs", "interdiction de voyager", "alerte de sécurité"],
-      "zh": ["大使館警報", "旅行警告", "旅行禁令", "安全警報"],
-      "ru": ["оповещение посольства", "рекомендация по поездкам", "запрет на поездки", "предупреждение о безопасности"],
-      "hi": ["दूतावास अलर्ट", "यात्रा सलाह", "यात्रा प्रतिबंध", "सुरक्षा अलर्ट"],
-      "sr": ["упозорење амбасаде", "савет за путовања", "забрана путовања", "безбедносно упозорење"]
+      "zh": ["大使館警報", "旅行警示", "旅行禁令", "安全警報"],
+      "ru": ["предупреждение посольства", "рекомендация по поездкам", "запрет на поездки", "предупреждение о безопасности"],
+      "hi": ["दूतावास चेतावनी", "यात्रा सलाह", "यात्रा प्रतिबंध", "सुरक्षा चेतावनी"],
+      "sr": ["упозорење амбасаде", "савет за путовања", "забрана путовања", "безбедносно упозорење"],
+      "it": ["allerta dell'ambasciata", "avviso di viaggio", "divieto di viaggio", "allerta di sicurezza"],
+      "pt": ["alerta da embaixada", "aviso de viagem", "proibição de viagem", "alerta de segurança"],
+      "de": ["Botschaftswarnung", "Reisehinweis", "Reiseverbot", "Sicherheitswarnung"]
     },
+
     "evacuation": {
       "en": ["emergency situation", "evacuation", "government crisis", "war", "armed conflict"],
       "es": ["situación de emergencia", "evacuación", "crisis gubernamental", "guerra", "conflicto armado"],
@@ -115,106 +213,153 @@
       "zh": ["緊急情況", "疏散", "政府危機", "戰爭", "武裝衝突"],
       "ru": ["чрезвычайная ситуация", "эвакуация", "правительственный кризис", "война", "вооруженный конфликт"],
       "hi": ["आपातकालीन स्थिति", "निकासी", "सरकारी संकट", "युद्ध", "सशस्त्र संघर्ष"],
-      "sr": ["ванредна ситуација", "евакуација", "криза владе", "криза режима", "криза власти", "рат", "оружани сукоб"]
+      "sr": ["ванредна ситуација", "евакуација", "криза владе", "рат", "оружани сукоб"],
+      "it": ["situazione di emergenza", "evacuazione", "crisi di governo", "guerra", "conflitto armato"],
+      "pt": ["situação de emergência", "evacuação", "crise governamental", "guerra", "conflito armado"],
+      "de": ["Notlage", "Evakuierung", "Regierungskrise", "Krieg", "bewaffneter Konflikt"]
     },
+
     "pandemic": {
       "en": ["pandemic", "viral outbreak", "disease spread", "contamination", "quarantine"],
-      "es": ["pandemia", "brote viral", "propagación de enfermedades", "contaminación", "cuarentena"],
-      "fr": ["pandémie", "épidémie virale", "propagation de maladie", "contamination", "quarantaine"],
+      "es": ["pandemia", "brote viral", "propagación de enfermedad", "contaminación", "cuarentena"],
+      "fr": ["pandémie", "épidémie virale", "propagation de la maladie", "contamination", "quarantaine"],
       "zh": ["大流行", "病毒爆發", "疾病傳播", "污染", "隔離"],
       "ru": ["пандемия", "вирусная вспышка", "распространение болезни", "заражение", "карантин"],
-      "hi": ["महामारी", "वायरल प्रकोप", "रोग प्रसार", "संदूषण", "संगरोध"],
-      "sr": ["пандемија", "контаминација", "карантин", "ширење вируса", "ширење заразе", "ширење болести"]
+      "hi": ["महामारी", "वायरल प्रकोप", "रोग प्रसार", "संदूषण", "क्वारंटीन"],
+      "sr": ["пандемија", "вирусна епидемија", "ширење болести", "контаминација", "карантин"],
+      "it": ["pandemia", "focolaio virale", "diffusione della malattia", "contaminazione", "quarantena"],
+      "pt": ["pandemia", "surto viral", "disseminação da doença", "contaminação", "quarentena"],
+      "de": ["Pandemie", "Virusausbruch", "Krankheitsausbreitung", "Kontamination", "Quarantäne"]
     },
+
     "epidemic": {
       "en": ["public health emergency", "infectious disease", "epidemic", "biological threat", "health alert"],
       "es": ["emergencia de salud pública", "enfermedad infecciosa", "epidemia", "amenaza biológica", "alerta sanitaria"],
       "fr": ["urgence de santé publique", "maladie infectieuse", "épidémie", "menace biologique", "alerte sanitaire"],
       "zh": ["突發公共衛生事件", "傳染病", "流行病", "生物威脅", "健康警報"],
-      "ru": ["чрезвычайная ситуация в области общественного здравоохранения", "инфекционное заболевание", "эпидемия", "биологическая угроза", "оповещение о состоянии здоровья"],
+      "ru": ["чрезвычайная ситуация в здравоохранении", "инфекционное заболевание", "эпидемия", "биологическая угроза", "предупреждение о здоровье"],
       "hi": ["सार्वजनिक स्वास्थ्य आपातकाल", "संक्रामक रोग", "महामारी", "जैविक खतरा", "स्वास्थ्य चेतावनी"],
-      "sr": ["епидемија", "заразне болести", "инфективне болести", "медицинска ванредна ситуација", "биолошка претња", "здравствено упозорење"]
+      "sr": ["ванредно здравствено стање", "заразна болест", "епидемија", "биолошка претња", "здравствено упозорење"],
+      "it": ["emergenza sanitaria pubblica", "malattia infettiva", "epidemia", "minaccia biologica", "allerta sanitaria"],
+      "pt": ["emergência de saúde pública", "doença infecciosa", "epidemia", "ameaça biológica", "alerta de saúde"],
+      "de": ["Gesundheitsnotstand", "Infektionskrankheit", "Epidemie", "biologische Bedrohung", "Gesundheitswarnung"]
     },
+
     "cyberattack": {
       "en": ["data breach", "ransomware", "cyberattack", "hacktivism", "deepfake", "phishing"],
       "es": ["violación de datos", "ransomware", "ciberataque", "hacktivismo", "deepfake", "phishing"],
-      "fr": ["violation de données", "rançongiciel", "cyberattaque", "hacktivisme", "deepfake", "phishing"],
+      "fr": ["violation de données", "rançongiciel", "cyberattaque", "hacktivisme", "deepfake", "hameçonnage"],
       "zh": ["資料外洩", "勒索軟體", "網路攻擊", "駭客行動主義", "深度偽造", "網路釣魚"],
-      "ru": ["утечка данных", "программы-вымогатели", "кибератака", "хактивизм", "дипфейк", "фишинг"],
-      "hi": ["डेटा उल्लंघन", "रैंसमवेयर", "साइबर हमला", "हैकटिविज़्म", "डीपफेक", "फ़िशिंग"],
-      "sr": ["крађа података", "рансомвер", "сајбер напад", "хактивизам", "дипфејк", "фишинг", "нарушавање приватности"]
+      "ru": ["утечка данных", "вымогательское ПО", "кибератака", "хактивизм", "дипфейк", "фишинг"],
+      "hi": ["डेटा उल्लंघन", "रैंसमवेयर", "साइबर हमला", "हैक्टिविज़्म", "डीपफेक", "फ़िशिंग"],
+      "sr": ["крађа података", "рансомвер", "сајбер напад", "хактивизам", "дипфејк", "фишинг"],
+      "it": ["violazione dei dati", "ransomware", "attacco informatico", "hacktivism", "deepfake", "phishing"],
+      "pt": ["vazamento de dados", "ransomware", "ciberataque", "hacktivismo", "deepfake", "phishing"],
+      "de": ["Datenleck", "Ransomware", "Cyberangriff", "Hacktivism", "Deepfake", "Phishing"]
     },
+
     "cyber espionage": {
       "en": ["malware", "cyber espionage", "identity theft", "network breach", "online scam"],
-      "es": ["malware", "ciberespionaje", "robo de identidad", "violación de la red", "estafa en línea"],
-      "fr": ["logiciels malveillants", "cyberespionnage", "vol d'identité", "violation de réseau", "escroquerie en ligne"],
+      "es": ["malware", "ciberespionaje", "robo de identidad", "intrusión de red", "estafa en línea"],
+      "fr": ["malware", "cyberespionnage", "vol d'identité", "intrusion réseau", "arnaque en ligne"],
       "zh": ["惡意軟體", "網路間諜", "身分盜竊", "網路入侵", "網路詐騙"],
-      "ru": ["вредоносное ПО", "кибершпионаж", "кража личных данных", "взлом сети", "интернет-мошенничество"],
-      "hi": ["मैलवेयर", "साइबर जासूसी", "पहचान की चोरी", "नेटवर्क उल्लंघन", "ऑनलाइन घोटाला"],
-      "sr": ["злонамерни софтвер", "сајбер шпијунажа", "крађа идентитета", "хаковање мреже", "онлајн превара"]
+      "ru": ["вредоносное ПО", "кибершпионаж", "кража личности", "взлом сети", "онлайн-мошенничество"],
+      "hi": ["मैलवेयर", "साइबर जासूसी", "पहचान की चोरी", "नेटवर्क उल्लंघन", "ऑनलाइन धोखाधड़ी"],
+      "sr": ["злонамерни софтвер", "сајбер шпијунажа", "крађа идентитета", "пробој мреже", "онлајн превара"],
+      "it": ["malware", "spionaggio informatico", "furto d'identità", "violazione di rete", "truffa online"],
+      "pt": ["malware", "ciberespionagem", "roubo de identidade", "violação de rede", "golpe online"],
+      "de": ["Schadsoftware", "Cyber-Spionage", "Identitätsdiebstahl", "Netzwerkverletzung", "Online-Betrug"]
     },
+
     "digital kidnapping": {
       "en": ["digital kidnapping", "virtual kidnapping", "cyber kidnapping", "honey trap", "hacking attack"],
       "es": ["secuestro digital", "secuestro virtual", "secuestro cibernético", "trampa de miel", "ataque de hackers"],
-      "fr": ["enlèvement numérique", "enlèvement virtuel", "cyber-enlèvement", "piège à miel", "attaque de piratage"],
-      "zh": ["大流行", "病毒爆發", "疾病傳播", "污染", "隔離"],
-      "ru": ["пандемия", "вирусная вспышка", "распространение болезни", "заражение", "карантин"],
-      "hi": ["महामारी", "वायरल प्रकोप", "रोग प्रसार", "संदूषण", "संगरोध"],
-      "sr": ["дигитална отмица", "виртуелна отмица", "сајбер отмица", "хакерски напад", "хаковање"]
+      "fr": ["enlèvement numérique", "enlèvement virtuel", "cyber-enlèvement", "piège de miel", "attaque de piratage"],
+      "zh": ["數位綁架", "虛擬綁架", "網路綁架", "美人計", "駭客攻擊"],
+      "ru": ["цифровое похищение", "виртуальное похищение", "киберпохищение", "медовая ловушка", "хакерская атака"],
+      "hi": ["डिजिटल अपहरण", "वर्चुअल अपहरण", "साइबर अपहरण", "हनी ट्रैप", "हैकिंग हमला"],
+      "sr": ["дигитална отмица", "виртуелна отмица", "сајбер отмица", "мамцена замка", "хакерски напад"],
+      "it": ["rapimento digitale", "rapimento virtuale", "rapimento informatico", "trappola del miele", "attacco hacker"],
+      "pt": ["sequestro digital", "sequestro virtual", "sequestro cibernético", "armadilha de mel", "ataque hacker"],
+      "de": ["digitales Kidnapping", "virtuelle Entführung", "Cyber-Entführung", "Honigfalle", "Hackerangriff"]
     },
+
     "cyber fraud": {
       "en": ["cyber fraud", "crypto fraud", "financial scam", "organized crime"],
-      "es": ["fraude cibernético", "fraude de criptomonedas", "estafa financiera", "crimen organizado"],
-      "fr": ["cyberfraude", "fraude cryptographique", "escroquerie financière", "crime organisé"],
-      "zh": ["網路詐騙", "加密貨幣詐騙", "金融詐騙", "組織犯罪"],
+      "es": ["fraude cibernético", "fraude cripto", "estafa financiera", "crimen organizado"],
+      "fr": ["fraude informatique", "fraude crypto", "escroquerie financière", "crime organisé"],
+      "zh": ["網路詐騙", "加密詐騙", "金融詐騙", "有組織犯罪"],
       "ru": ["кибермошенничество", "криптомошенничество", "финансовое мошенничество", "организованная преступность"],
       "hi": ["साइबर धोखाधड़ी", "क्रिप्टो धोखाधड़ी", "वित्तीय घोटाला", "संगठित अपराध"],
-      "sr": ["сајбер превара", "крипто превара", "финансијска превара", "организовани криминал"]
+      "sr": ["сајбер превара", "крипто превара", "финансијска превара", "организовани криминал"],
+      "it": ["frode informatica", "frode cripto", "truffa finanziaria", "criminalità organizzata"],
+      "pt": ["fraude cibernética", "fraude cripto", "golpe financeiro", "crime organizado"],
+      "de": ["Cyberbetrug", "Kryptobetrug", "Finanzbetrug", "organisierte Kriminalität"]
     },
+
     "travel scam": {
       "en": ["travel scam", "armed robbery", "assault on a foreigner", "assault on a tourist"],
       "es": ["estafa de viaje", "robo a mano armada", "asalto a un extranjero", "asalto a un turista"],
-      "fr": ["arnaque au voyage", "vol à main armée", "agression d'un étranger", "agression d'un touriste"],
-      "zh": ["旅行詐騙", "武裝搶劫", "襲擊外國人", "襲擊遊客"],
-      "ru": ["Мошенничество в сфере туризма", "вооруженные ограбления", "нападения на иностранцев", "нападения на туристов"],
+      "fr": ["arnaque de voyage", "vol à main armée", "agression d'un étranger", "agression d'un touriste"],
+      "zh": ["旅遊詐騙", "持械搶劫", "襲擊外國人", "襲擊遊客"],
+      "ru": ["туристическое мошенничество", "вооруженное ограбление", "нападение на иностранца", "нападение на туриста"],
       "hi": ["यात्रा घोटाला", "सशस्त्र डकैती", "विदेशी पर हमला", "पर्यटक पर हमला"],
-      "sr": ["превара у путовању", "оружана пљачка", "напад на странца", "напад на туристу", "масовна туча", "насиље на улици", "туча навијача", "насилничко понашање", "претучена", "претучен", "покушај убиства", "претукао"]
+      "sr": ["превара у путовању", "оружана пљачка", "напад на странца", "напад на туристу"],
+      "it": ["truffa turistica", "rapina a mano armata", "aggressione a uno straniero", "aggressione a un turista"],
+      "pt": ["golpe de viagem", "roubo à mão armada", "agressão a estrangeiro", "agressão a turista"],
+      "de": ["Reisebetrug", "bewaffneter Raubüberfall", "Angriff auf Ausländer", "Angriff auf Touristen"]
     },
+
     "jihadist": {
       "en": ["extremist activity", "radicalization", "jihadist", "pirate attack"],
       "es": ["actividad extremista", "radicalización", "yihadista", "ataque pirata"],
       "fr": ["activité extrémiste", "radicalisation", "djihadiste", "attaque de pirates"],
-      "zh": ["極端主義活動", "激進主義", "聖戰士", "海盜襲擊"],
-      "ru": ["экстремистская деятельность", "радикализация", "джихад", "пиратская атака"],
+      "zh": ["極端主義活動", "激進化", "聖戰分子", "海盜襲擊"],
+      "ru": ["экстремистская активность", "радикализация", "джихадист", "пиратская атака"],
       "hi": ["चरमपंथी गतिविधि", "कट्टरपंथ", "जिहादी", "समुद्री डाकू हमला"],
-      "sr": ["екстремистички напад", "радикализација", "џихадисти", "пиратски напад", "исламисти"]
+      "sr": ["екстремистичка активност", "радикализација", "џихадиста", "пиратски напад"],
+      "it": ["attività estremista", "radicalizzazione", "jihadista", "attacco dei pirati"],
+      "pt": ["atividade extremista", "radicalização", "jihadista", "ataque pirata"],
+      "de": ["extremistische Aktivität", "Radikalisierung", "Dschihadist", "Piratenangriff"]
     },
+
     "extremism": {
       "en": ["extremism", "armed groups", "militia attacks", "armed militants", "separatists"],
       "es": ["extremismo", "grupos armados", "ataques de milicias", "militantes armados", "separatistas"],
       "fr": ["extrémisme", "groupes armés", "attaques de milices", "militants armés", "séparatistes"],
-      "zh": ["極端主義", "武裝團體", "民兵襲擊", "武裝份子", "分離主義者"],
-      "ru": ["экстремизм", "вооруженные группы", "нападения ополченцев", "вооруженные боевики", "сепаратисты"],
-      "hi": ["उग्रवाद, सशस्त्र समूह", "मिलिशिया हमले", "सशस्त्र आतंकवादी", "अलगाववादी"],
-      "sr": ["екстремизам", "наоружане групе", "напади милиције", "наоружани милитанти", "сепаратисти"]
+      "zh": ["極端主義", "武裝團體", "民兵襲擊", "武裝分子", "分離主義者"],
+      "ru": ["экстремизм", "вооруженные группы", "атаки ополчения", "вооруженные боевики", "сепаратисты"],
+      "hi": ["उग्रवाद", "सशस्त्र समूह", "मिलिशिया हमले", "सशस्त्र उग्रवादी", "अलगाववादी"],
+      "sr": ["екстремизам", "наоружане групе", "напади милиције", "наоружани милитанти", "сепаратисти"],
+      "it": ["estremismo", "gruppi armati", "attacchi di milizie", "militanti armati", "separatisti"],
+      "pt": ["extremismo", "grupos armados", "ataques de milícias", "militantes armados", "separatistas"],
+      "de": ["Extremismus", "bewaffnete Gruppen", "Milizangriffe", "bewaffnete Militante", "Separatisten"]
     },
+
     "natural disaster": {
-      "en": ["natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wild fire"],
+      "en": ["natural disaster", "earthquake", "tsunami", "tornado", "hurricane", "flood", "wildfire"],
       "es": ["desastre natural", "terremoto", "tsunami", "tornado", "huracán", "inundación", "incendio forestal"],
       "fr": ["catastrophe naturelle", "tremblement de terre", "tsunami", "tornade", "ouragan", "inondation", "feu de forêt"],
       "zh": ["自然災害", "地震", "海嘯", "龍捲風", "颶風", "洪水", "野火"],
       "ru": ["стихийное бедствие", "землетрясение", "цунами", "торнадо", "ураган", "наводнение", "лесной пожар"],
-      "hi": ["प्राकृतिक आपदा", "भूकंप", "सुनामी", "बवंडर", "तूफान", "बाढ़", "जंगली आग"],
-      "sr": ["природна катастрофа", "земљотрес", "цунами", "торнадо", "ураган", "поплава", "поплаве", "шумски пожар"]
+      "hi": ["प्राकृतिक आपदा", "भूकंप", "सुनामी", "बवंडर", "तूफान", "बाढ़", "जंगल की आग"],
+      "sr": ["природна катастрофа", "земљотрес", "цунами", "торнадо", "ураган", "поплава", "шумски пожар"],
+      "it": ["disastro naturale", "terremoto", "tsunami", "tornado", "uragano", "alluvione", "incendio boschivo"],
+      "pt": ["desastre natural", "terremoto", "tsunami", "tornado", "furacão", "enchente", "incêndio florestal"],
+      "de": ["Naturkatastrophe", "Erdbeben", "Tsunami", "Tornado", "Hurrikan", "Überschwemmung", "Waldbrand"]
     },
+
     "police brutality": {
       "en": ["police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion"],
       "es": ["brutalidad policial", "ataque brutal", "encarcelamiento injusto", "chantaje", "extorsión"],
       "fr": ["brutalité policière", "attaque brutale", "séquestration", "chantage", "extorsion"],
-      "zh": ["警察暴力", "野蠻攻擊", "非法監禁", "敲詐勒索", "勒索"],
+      "zh": ["警察暴力", "殘暴攻擊", "非法監禁", "勒索", "敲詐"],
       "ru": ["жестокость полиции", "жестокое нападение", "незаконное лишение свободы", "шантаж", "вымогательство"],
-      "hi": ["पुलिस की बर्बरता", "क्रूर हमला", "झूठा कारावास", "ब्लैकमेल", "जबरन वसूली"],
-      "sr": ["полицијска бруталност", "бруталан напад", "незаконито затварање", "уцена", "изнуда", "рекетирање"]
+      "hi": ["पुलिस की बर्बरता", "क्रूर हमला", "अवैध कारावास", "ब्लैकमेल", "जबरन वसूली"],
+      "sr": ["полицијска бруталност", "бруталан напад", "незаконито лишавање слободе", "уцена", "изнуда"],
+      "it": ["brutalità della polizia", "attacco brutale", "detenzione illegittima", "ricatto", "estorsione"],
+      "pt": ["brutalidade policial", "ataque brutal", "prisão ilegal", "chantagem", "extorsão"],
+      "de": ["Polizeigewalt", "brutaler Angriff", "unrechtmäßige Inhaftierung", "Erpressung", "Nötigung"]
     }
   }
 }

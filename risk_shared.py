@@ -1,10 +1,11 @@
-# risk_shared.py — Shared enrichment & analytics (canonical detectors + helpers) • v2025-08-22+patch2 (2025-08-25)
+# risk_shared.py — Shared enrichment & analytics (canonical detectors + helpers) • v2025-08-22+patch3 (2025-08-31)
 # Used by: RSS Processor, Threat Engine, Scorer, Advisor. No metered LLM calls here.
 
 from __future__ import annotations
 import re
 import math
-from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional, Sequence
 
 try:
     from unidecode import unidecode
@@ -362,3 +363,146 @@ def relevance_flags(text: str) -> List[str]:
     if info_ops_flags(text):
         flags.append("info_ops")
     return flags
+
+# =====================================================================
+#                KEYWORD / CO-OCCURRENCE MATCHER (NEW)
+# =====================================================================
+
+# Broad terms only matter when paired with an impact word/phrase (below).
+BROAD_TERMS_DEFAULT: List[str] = [
+    "travel advisory", "security alert", "embassy alert",
+    "state of emergency", "martial law", "curfew", "lockdown",
+    "heightened security", "evacuation order", "shelter in place",
+    "airport closure", "border closure", "flight cancellation", "flight cancellations",
+    "airspace closed", "no-fly zone", "ground stop", "notam",
+    "strike", "walkout", "industrial action", "work stoppage",
+    "internet shutdown", "telecom outage", "nationwide outage",
+    "power blackout", "blackout",
+]
+
+# Impact terms represent real-world consequences or violence.
+IMPACT_TERMS_DEFAULT: List[str] = [
+    "killed", "dead", "fatalities", "fatality",
+    "injured", "wounded", "shot", "stabbed", "burned",
+    "looted", "arson", "clashes", "barricades",
+    "arrested", "detained", "deported",
+    "closed", "suspended", "cancelled", "canceled", "disrupted", "delayed", "blocked",
+    "evacuated", "evacuation", "trapped", "missing",
+    "curfew", "martial law", "state of emergency",
+]
+
+# Tokenizer & sentence-split (operate on normalized text)
+_WORD = re.compile(r"\b[\w]+\b", re.UNICODE)
+_SENT_SPLIT = re.compile(r"(?<=[\.\!\?\u2026])\s+|\n+")
+
+def _tokenize(text: str) -> List[str]:
+    return _WORD.findall(_normalize(text))
+
+def _sentences(text: str) -> List[str]:
+    nt = _normalize(text)
+    return [s.strip() for s in _SENT_SPLIT.split(nt) if s.strip()]
+
+def _compile_phrase_regex(phrases: Sequence[str]) -> re.Pattern:
+    """
+    Compile phrases against *normalized* text.
+    Example: 'no-fly zone' becomes tokens ['no','fly','zone'] and matches with flexible whitespace.
+    """
+    parts: List[str] = []
+    for p in phrases:
+        p = _normalize(p)
+        if not p:
+            continue
+        toks = [re.escape(tok) for tok in p.split()]
+        parts.append(r"\b" + r"\s+".join(toks) + r"\b")
+    if not parts:
+        return re.compile(r"^\a$")  # never matches
+    return re.compile("|".join(parts), re.IGNORECASE)
+
+def _phrase_token_positions(tokens: List[str], phrases: Sequence[str]) -> List[int]:
+    """Return starting token indices where a phrase (as tokens) occurs."""
+    positions: List[int] = []
+    ph_tokens = [tuple(_normalize(p).split()) for p in phrases if _normalize(p)]
+    n = len(tokens)
+    for i in range(n):
+        for ph in ph_tokens:
+            L = len(ph)
+            if L and i + L <= n and tuple(tokens[i:i+L]) == ph:
+                positions.append(i)
+    return positions
+
+@dataclass
+class MatchResult:
+    hit: bool
+    rule: Optional[str]
+    matches: Dict[str, List[str]]
+
+class KeywordMatcher:
+    """
+    Rules:
+      1) If any strict keyword appears anywhere               -> HIT ("keyword")
+      2) Else, if any sentence has >=1 broad AND >=1 impact  -> HIT ("broad+impact(sent)")
+      3) Else, if any broad within 'window' tokens of impact -> HIT ("broad+impact(window)")
+      4) Else -> no hit
+    """
+    def __init__(self,
+                 keywords: Sequence[str],
+                 broad_terms: Sequence[str] = BROAD_TERMS_DEFAULT,
+                 impact_terms: Sequence[str] = IMPACT_TERMS_DEFAULT,
+                 window: int = 12):
+        self.keywords_list = list(dict.fromkeys([_normalize(x) for x in keywords if _normalize(x)]))
+        self.broad_list    = list(dict.fromkeys([_normalize(x) for x in broad_terms if _normalize(x)]))
+        self.impact_list   = list(dict.fromkeys([_normalize(x) for x in impact_terms if _normalize(x)]))
+        self.window        = max(1, int(window))
+        self._kw_re        = _compile_phrase_regex(self.keywords_list)
+        self._broad_re     = _compile_phrase_regex(self.broad_list)
+        self._impact_re    = _compile_phrase_regex(self.impact_list)
+
+    def decide(self, text: str, title: str = "") -> MatchResult:
+        full = f"{title or ''} {text or ''}"
+
+        # Rule 1: strict keywords anywhere
+        nt = _normalize(full)
+        kw_hits = sorted(set(m.group(0).lower() for m in self._kw_re.finditer(nt)))
+        if kw_hits:
+            return MatchResult(True, "keyword", {"keywords": kw_hits})
+
+        # Rule 2: sentence-level co-occurrence
+        for sent in _sentences(full):
+            b = sorted(set(m.group(0).lower() for m in self._broad_re.finditer(sent)))
+            if not b:
+                continue
+            i = sorted(set(m.group(0).lower() for m in self._impact_re.finditer(sent)))
+            if b and i:
+                return MatchResult(True, "broad+impact(sent)", {"broad": b, "impact": i})
+
+        # Rule 3: token-window co-occurrence
+        toks = _tokenize(full)
+        if toks:
+            bpos = _phrase_token_positions(toks, self.broad_list)
+            ipos = _phrase_token_positions(toks, self.impact_list)
+            if bpos and ipos:
+                w = self.window
+                for bi in bpos:
+                    for ii in ipos:
+                        if abs(bi - ii) <= w:
+                            return MatchResult(True, f"broad+impact({w})", {})
+        return MatchResult(False, None, {})
+
+# Convenience: build a module-level default matcher from our current catalog.
+def build_default_matcher(window: int = 12) -> KeywordMatcher:
+    return KeywordMatcher(
+        keywords=list(KEYWORD_SET),  # your strict set from categories+domains; override as needed
+        broad_terms=BROAD_TERMS_DEFAULT,
+        impact_terms=IMPACT_TERMS_DEFAULT,
+        window=window,
+    )
+
+# Construct once; callers can import DEFAULT_MATCHER or build their own.
+DEFAULT_MATCHER: KeywordMatcher = build_default_matcher(window=12)
+
+def decide_with_default_keywords(text: str, title: str = "") -> MatchResult:
+    """
+    One-liner for quick use in RSS intake:
+      res = decide_with_default_keywords(body, title)
+    """
+    return DEFAULT_MATCHER.decide(text, title)

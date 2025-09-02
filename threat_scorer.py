@@ -1,4 +1,5 @@
-# threat_scorer.py — Deterministic risk scoring & signals (Final v2025-08-12 + norm/prob/aux v2025-08-22 + relevance nudges v2025-08-25)
+# threat_scorer.py — Deterministic risk scoring & signals
+# v2025-08-31 (aligned with rss_processor matcher + risk_shared taxonomies)
 # Used by Threat Engine (no LLM, no DB writes)
 
 from __future__ import annotations
@@ -57,25 +58,6 @@ def _parse_dt(obj: Any) -> Optional[datetime]:
 def _today_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-def _bucket_daily_counts(incidents: List[Dict[str, Any]], days: int = 56) -> List[int]:
-    """
-    Returns a list of length `days`, ordered oldest..newest (each entry = count on that day).
-    """
-    if days <= 0:
-        return []
-    end = _today_utc().date()
-    start = end - timedelta(days=days - 1)
-    buckets = { (start + timedelta(d)): 0 for d in range(days) }
-    for inc in incidents or []:
-        dt = _parse_dt(inc.get("published"))
-        if not dt:
-            continue
-        d = dt.date()
-        if start <= d <= end:
-            buckets[d] = buckets.get(d, 0) + 1
-    # return in chronological order
-    return [buckets[start + timedelta(d)] for d in range(days)]
-
 def _ratio(a: float, b: float, default: float = 1.0) -> float:
     if b <= 0:
         return default
@@ -90,51 +72,133 @@ def _label_from_score(score: float) -> str:
     if score >= 35: return "Moderate"
     return "Low"
 
-# --------------------------- severity & context terms (patch 1 & 2) ---------------------------
+# --------------------------- severity & context terms ---------------------------
 
 SEVERE_TERMS = [
     # kinetic / physical
-    "ied","vbied","suicide","explosion","mass shooting","kidnap","kidnapping","armed","gunfire",
-    "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage",
-    "blast","grenade","improvised explosive","car bomb","truck bomb","assassination","arson",
-    "shelling","mortar","drone strike","airstrike","air strike","artillery",
+    "ied","vbied","suicide","suicide bomber","explosion","multiple explosions","mass shooting",
+    "kidnap","kidnapping","armed","gunfire","shooting","stabbing","grenade","assassination",
+    "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage","car bomb","truck bomb","arson",
+    "shelling","mortar","drone strike","airstrike","air strike","artillery","bombing","roadside bomb","improvised explosive",
     # cyber
-    "ransomware","breach","data leak","data leakage","zero-day","zero day","cve-","credential stuffing","ddos","wiper",
+    "ransomware","breach","data leak","data leakage","data breach","zero-day","zero day","cve-","credential stuffing","ddos","wiper","malware",
     # spacing/oddities
     "i e d","v b i e d",
 ]
 
 MOBILITY_TERMS = [
-    "airport","border","highway","rail","metro","bridge","port","road closure","detour","traffic suspended","service suspended"
+    "airport","border","highway","rail","metro","bridge","port","road closure","detour","traffic suspended","service suspended","runway","airspace","notam","ground stop"
 ]
 
 INFRA_TERMS = [
-    "substation","grid","pipeline","telecom","fiber","power outage","blackout","water plant","dam","subsea cable","transformer"
+    "substation","grid","pipeline","telecom","fiber","power outage","blackout","water plant","dam","subsea cable","transformer","refinery","substation fire","transformer fire"
 ]
 
-# --------------------------- core API ---------------------------
+# --------------------------- scoring core ---------------------------
+
+def _kw_rule_bonus(rule: Optional[str]) -> float:
+    """
+    Bonus points based on matcher rule:
+      - broad+impact(sentence)  → +8
+      - broad+impact(window)    → +5
+      - keyword/other/None      → +0
+    Accepts slight spelling variants ('sent').
+    """
+    if not rule:
+        return 0.0
+    r = (rule or "").lower()
+    if "broad+impact" in r and ("sentence" in r or "sent" in r):
+        return 8.0
+    if "broad+impact" in r and "window" in r:
+        return 5.0
+    return 0.0
+
+def _kw_salience_points(text_norm: str) -> float:
+    """
+    Map compute_keyword_weight (0..1) → 0..55 points.
+    Same shape as older scorer (55% weight).
+    """
+    kw = compute_keyword_weight(text_norm)
+    return 55.0 * _clamp(kw, 0.0, 1.0)
+
+def _trigger_points(triggers: Optional[List[str]]) -> float:
+    """
+    0..25 points, saturates at 6 triggers.
+    """
+    t = min(len(triggers or []), 6)
+    return (25.0 / 6.0) * float(t)
+
+def _severity_points(text_norm: str) -> Tuple[float, int]:
+    """
+    Each severe hit → +5 points, cap at 20.
+    Return (points, hit_count).
+    """
+    hits = sum(1 for k in SEVERE_TERMS if k in text_norm)
+    pts = min(20.0, 5.0 * float(hits))
+    return pts, hits
+
+def _mobinfra_bonus(text_norm: str) -> float:
+    """
+    Mobility/infrastructure presence → small +3 bonus (kept conservative).
+    """
+    if any(t in text_norm for t in (MOBILITY_TERMS + INFRA_TERMS)):
+        return 3.0
+    return 0.0
+
+def _nudge_points(text_norm: str) -> float:
+    """
+    Contextual bounded nudges identical to earlier behavior.
+    """
+    bonus = 0.0
+    if any(k in text_norm for k in ["suicide bomber","vbied","mass shooting","multiple explosions"]):
+        bonus += 10.0
+    if "curfew" in text_norm and "checkpoint" in text_norm:
+        bonus += 5.0
+    if ("airport" in text_norm and ("closure" in text_norm or "suspended" in text_norm or "runway" in text_norm)):
+        bonus += 5.0
+    if (("cve-" in text_norm) or ("zero-day" in text_norm) or ("zero day" in text_norm)) and (("ransomware" in text_norm) or ("breach" in text_norm)):
+        bonus += 5.0
+    return bonus
+
+def _score_components(
+    text_norm: str,
+    triggers: Optional[List[str]],
+    kw_match: Optional[Dict[str, Any]] = None
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Deterministic mapping of signals → points. Returns (total_points, breakdown).
+    - keyword salience (0..55)
+    - triggers (0..25)
+    - severity (0..20)
+    - kw_rule bonus (+0/+5/+8)
+    - mobility/infra bonus (+3)
+    - nudges (+ up to 10)
+    """
+    breakdown: Dict[str, float] = {}
+
+    breakdown["keywords"] = _kw_salience_points(text_norm)
+    breakdown["triggers"] = _trigger_points(triggers)
+    sev_pts, _ = _severity_points(text_norm)
+    breakdown["severity"] = sev_pts
+    breakdown["kw_rule_bonus"] = _kw_rule_bonus((kw_match or {}).get("rule"))
+    breakdown["mobinfra_bonus"] = _mobinfra_bonus(text_norm)
+    breakdown["nudges"] = _nudge_points(text_norm)
+
+    total = sum(breakdown.values())
+    # global clamp for safety
+    total = _clamp(total, 5.0, 100.0)
+    return total, breakdown
+
+# --------------------------- public API ---------------------------
 
 def compute_now_risk(alert_text: str, triggers: Optional[List[str]] = None, location: Optional[str] = None) -> float:
     """
-    Fast heuristic risk (0..100) based on keyword salience, trigger density, and severity terms.
-    Deterministic and explainable; tuned for triage (not a medical device).
+    Backward-compatible fast heuristic risk (0..100).
+    NOTE: For full rule-aware scoring (including kw_match), call assess_threat_level.
     """
     text = _norm(alert_text or "")
-    kw = compute_keyword_weight(text)              # 0..1
-    trig = min(len(triggers or []), 6) / 6.0       # 0..1
-
-    # --- severity basket (patch 1)
-    sev_hits = sum(1 for k in SEVERE_TERMS if k in text)
-    sev = _clamp(sev_hits / 5.0, 0.0, 1.0)
-
-    # --- mobility/infra boost (patch 2)
-    if any(t in text for t in (MOBILITY_TERMS + INFRA_TERMS)):
-        sev = min(1.0, sev + 0.15)
-
-    # Weighted blend → 0..100 (bias slightly high for safety)
-    raw = 100.0 * (0.55 * kw + 0.25 * trig + 0.20 * sev)
-    # Floor/ceil to avoid flat zeros and make “Low” actionable
-    return float(round(_clamp(raw, 5.0, 97.0), 1))
+    score, _ = _score_components(text, triggers, kw_match=None)
+    return float(round(score, 1))
 
 def assess_threat_level(
     alert_text: str,
@@ -153,56 +217,74 @@ def assess_threat_level(
       - score (0..100)
       - confidence (0..1)
       - reasoning (short string)
-      - threat_label (duplicate of label)
-      - threat_level (duplicate of label)
       - sentiment (aux)
       - domains (aux)
+      - kw_rule (aux, for debugging)
+      - score_breakdown (aux dict of point buckets)
     """
     text = _norm(alert_text or "")
-    score = compute_now_risk(text, triggers, location)
+    kw_match = (source_alert or {}).get("kw_match") if source_alert else None
 
-    # Minimal deterministic confidence:
-    #   base 0.60 + distance-from-50 + keyword bonus + trigger bonus
-    kw = compute_keyword_weight(text)
-    trig = min(len(triggers or []), 6) / 6.0
-    conf = 0.60 + 0.20 * (abs(score - 50.0) / 50.0) + 0.10 * (1.0 if kw > 0.6 else 0.0) + 0.05 * (1.0 if trig > 0.5 else 0.0)
+    # Points
+    score, breakdown = _score_components(text, triggers, kw_match=kw_match)
+
+    # Confidence:
+    # base 0.60 + distance-from-50 + keyword bonus + trigger bonus + kw_rule bonus
+    kw_weight = compute_keyword_weight(text)              # 0..1
+    trig_norm = min(len(triggers or []), 6) / 6.0         # 0..1
+
+    conf = 0.60
+    conf += 0.20 * (abs(score - 50.0) / 50.0)
+    conf += 0.10 * (1.0 if kw_weight > 0.60 else 0.0)
+    conf += 0.05 * (1.0 if trig_norm > 0.50 else 0.0)
+    if kw_match and isinstance(kw_match.get("rule"), str):
+        r = kw_match["rule"].lower()
+        if "broad+impact" in r and ("sentence" in r or "sent" in r):
+            conf += 0.05
+        elif "broad+impact" in r and "window" in r:
+            conf += 0.03
     confidence = round(_clamp(conf, 0.40, 0.95), 2)
 
-    # Sentiment band + domains (aux fields)
+    # Sentiment & domains (aux)
     sentiment = run_sentiment_analysis(text)
     domains = detect_domains(text)
 
-    # Escalation nudges for very specific phrases (bounded)
-    if any(k in text for k in ["suicide bomber","vbied","mass shooting","multiple explosions"]):
-        score = min(100.0, score + 10.0)
-    if "curfew" in text and "checkpoint" in text:
-        score = min(100.0, score + 5.0)
-
-    # Additional bounded nudges (patch 3)
-    if ("airport" in text and ("closure" in text or "suspended" in text)):
-        score = min(100.0, score + 5.0)
-    if (("cve-" in text) or ("zero-day" in text) or ("zero day" in text)) and (("ransomware" in text) or ("breach" in text)):
-        score = min(100.0, score + 5.0)
-
-    # Slight confidence floor for very high scores (patch 3)
+    # Slight confidence floor for very high scores
     if score >= 85.0:
         confidence = max(confidence, 0.75)
 
     label = _label_from_score(score)
 
-    # Reasoning (patch 4): include score and severity hit count for debuggability
+    # Reasoning: concise and deterministic
     sev_hits = sum(1 for k in SEVERE_TERMS if k in text)
-    reasoning_bits = []
-    reasoning_bits.append(f"score={round(score,1)}")
-    reasoning_bits.append(f"salience={kw:.2f}")
-    reasoning_bits.append(f"sev_hits={sev_hits}")
-    reasoning_bits.append(f"triggers={len(triggers or [])}")
-    reasoning_bits.append(f"sentiment='{sentiment}'")
+    reasoning_bits = [
+        f"score={round(score,1)}",
+        f"salience={kw_weight:.2f}",
+        f"sev_hits={sev_hits}",
+        f"triggers={len(triggers or [])}",
+        f"sentiment='{sentiment}'"
+    ]
     if domains:
         reasoning_bits.append(f"domains={','.join(domains[:4])}")
+    if kw_match and kw_match.get("rule"):
+        reasoning_bits.append(f"kw_rule={kw_match.get('rule')}")
     if source_alert and source_alert.get("source"):
         reasoning_bits.append(f"source={source_alert.get('source')}")
     reasoning = "; ".join(reasoning_bits)
+
+    # Attach a compact view of kw matches for debugging
+    kw_rule = (kw_match or {}).get("rule")
+    kw_matches = (kw_match or {}).get("matches") or {}
+    # For readability, trim any huge lists
+    trimmed_matches = {}
+    for k, v in kw_matches.items():
+        try:
+            if isinstance(v, list) and len(v) > 8:
+                trimmed_matches[k] = v[:8] + ["+more"]
+            else:
+                trimmed_matches[k] = v
+        except Exception:
+            continue
 
     return {
         "label": label,
@@ -213,7 +295,13 @@ def assess_threat_level(
         "reasoning": reasoning,
         "sentiment": sentiment,
         "domains": domains,
+        # extras (non-breaking)
+        "kw_rule": kw_rule,
+        "kw_matches": trimmed_matches,
+        "score_breakdown": {k: round(v, 1) for k, v in breakdown.items()},
     }
+
+# --------------------------- trends & stats (unchanged) ---------------------------
 
 def compute_trend_direction(incidents: List[Dict[str, Any]]) -> str:
     """
