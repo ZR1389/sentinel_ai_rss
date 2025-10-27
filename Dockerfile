@@ -1,4 +1,4 @@
-# FORCE REBUILD 2025-07-30
+# FORCE REBUILD 2025-10-27b
 FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -8,11 +8,14 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies (build + runtime libs for reportlab)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc libffi-dev libssl-dev libxml2-dev \
-    libxslt1-dev zlib1g-dev curl && \
-    rm -rf /var/lib/apt/lists/*
+    libxslt1-dev zlib1g-dev curl \
+    libfreetype6-dev libfreetype6 \
+    libjpeg62-turbo-dev libjpeg62-turbo \
+    libpng-dev libpng16-16 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
@@ -28,5 +31,4 @@ COPY . .
 
 EXPOSE 8080
 
-# Default: Gunicorn for web, can override in Railway for scheduler
-CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:8080"]
+CMD ["sh", "-c", "python seed_plans.py && gunicorn main:app --bind 0.0.0.0:8080 --timeout 120"]
