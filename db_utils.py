@@ -254,8 +254,12 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         incident_count_30d = a.get("incident_count_30d", 0) or 0
         recent_count_7d    = a.get("recent_count_7d", 0) or 0
         baseline_avg_7d    = a.get("baseline_avg_7d", 0) or 0
-        baseline_ratio     = a.get("baseline_ratio", 1.0)
-        trend_direction    = a.get("trend_direction") or "stable"
+
+        baseline_ratio = a.get("baseline_ratio")
+        if baseline_ratio is None:
+            baseline_ratio = 1.0
+
+        trend_direction = a.get("trend_direction") or "stable"
 
         return (
             aid,
