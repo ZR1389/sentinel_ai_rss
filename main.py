@@ -467,12 +467,31 @@ def auth_verify_confirm():
         return _build_cors_response(make_response(jsonify({"error": msg}), 400))
     return _build_cors_response(jsonify({"ok": True, "message": msg}))
 
-@app.route("/auth/status", methods=["GET"])
+@app.route("/auth/status", methods=["GET", "OPTIONS"])
 def auth_status():
-    email = request.headers.get("X-User-Email") or request.args.get("email") or ""
-    email = email.strip().lower()
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    # Try to get email from JWT token first
+    auth_header = request.headers.get("Authorization", "")
+    email = None
+    
+    if auth_header.startswith("Bearer ") and get_logged_in_email:
+        try:
+            # Use the existing get_logged_in_email from auth_utils
+            # It handles JWT decoding internally
+            email = get_logged_in_email()
+        except Exception as e:
+            logger.warning(f"JWT decode failed in auth_status: {e}")
+    
+    # Fallback to old headers (for compatibility)
+    if not email:
+        email = request.headers.get("X-User-Email") or request.args.get("email") or ""
+        email = email.strip().lower()
+    
     if not email:
         return _build_cors_response(make_response(jsonify({"error": "Missing email"}), 400))
+    
     verified = _is_verified(email)
     plan_name = "FREE"
     if get_plan:
@@ -482,7 +501,29 @@ def auth_status():
                 plan_name = p.upper()
         except Exception:
             pass
-    return _build_cors_response(jsonify({"ok": True, "email_verified": bool(verified), "plan": plan_name}))
+    
+    # Get usage info
+    usage_data = {"chat_messages_used": 0, "chat_messages_limit": 3}
+    try:
+        from plan_utils import get_usage
+        u = get_usage(email)
+        if isinstance(u, dict):
+            usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
+            # Get limit from plan
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email)
+            usage_data["chat_messages_limit"] = limits.get("chat_messages_per_month", 3)
+    except Exception as e:
+        logger.warning(f"Failed to get usage in auth_status: {e}")
+    
+    return _build_cors_response(jsonify({
+        "ok": True, 
+        "email": email,
+        "email_verified": bool(verified), 
+        "plan": plan_name,
+        "usage": usage_data
+    }))
+
 
 # ---------- Profile (login required; unmetered) ----------
 @app.route("/profile/me", methods=["GET"])
