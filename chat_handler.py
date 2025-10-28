@@ -358,13 +358,15 @@ def handle_user_query(
             usage_info["fallback_reason"] = "advisor_error_no_alerts"
             log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
 
+        reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
         payload = {
-            "reply": advisory_result,
+            "reply": reply_text,
             "plan": plan_name,
             "alerts": [],
             "usage": usage_info,
             "session_id": session_id,
             "no_data": True,
+            "metadata": advisory_result if isinstance(advisory_result, dict) else {}
         }
         set_cache(cache_key, payload)
         log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
@@ -447,12 +449,16 @@ def handle_user_query(
         pass
 
     # ---------------- Return & cache ----------------
+    # Extract reply string from advisory_result (which is a dict)
+    reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
+    
     payload = {
-        "reply": advisory_result,
+        "reply": reply_text,
         "plan": plan_name,
         "alerts": results,
         "usage": usage_info,
         "session_id": session_id,
+        "metadata": advisory_result if isinstance(advisory_result, dict) else {}
     }
     set_cache(cache_key, payload)
     log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
