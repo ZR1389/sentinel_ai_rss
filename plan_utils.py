@@ -1,4 +1,4 @@
-# plan_utils.py — plans, usage & gating • v2025-08-13 (with is_active)
+# plan_utils.py — plans, usage & gating • v2025-08-13 (with is_active) - FIXED for user_id
 
 from __future__ import annotations
 import os
@@ -11,7 +11,7 @@ from security_log_utils import log_security_event  # keep your existing logger
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DEFAULT_PLAN = os.getenv("DEFAULT_PLAN", "FREE").upper()
-# Which plans count as “paid” for feature gating (Telegram/Email/Push/PDF)
+# Which plans count as "paid" for feature gating (Telegram/Email/Push/PDF)
 PAID_PLANS = set(
     p.strip().upper() for p in os.getenv("PAID_PLANS", "PRO,ENTERPRISE").split(",") if p.strip()
 )
@@ -41,6 +41,13 @@ def _sanitize_email(email: str | None) -> str | None:
     e = email.strip().lower()
     return e if e and "@" in e else None
 
+def _get_user_id(email: str) -> int | None:
+    """Get user_id from email"""
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE email=%s", (email,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
 
 # ---------------------------- Users & Plans ----------------------------
 
@@ -54,21 +61,25 @@ def ensure_user_exists(email: str, plan: str = DEFAULT_PLAN) -> None:
     plan = (plan or DEFAULT_PLAN).upper()
     with _conn() as conn, conn.cursor() as cur:
         # users row
-        cur.execute("SELECT 1 FROM users WHERE email=%s", (email,))
-        if not cur.fetchone():
+        cur.execute("SELECT id FROM users WHERE email=%s", (email,))
+        row = cur.fetchone()
+        if not row:
             # Your users table HAS is_active boolean default true — set it explicitly
             cur.execute(
-                "INSERT INTO users (email, plan, is_active) VALUES (%s, %s, %s)",
+                "INSERT INTO users (email, plan, is_active) VALUES (%s, %s, %s) RETURNING id",
                 (email, plan, True),
             )
+            user_id = cur.fetchone()[0]
             log_security_event(event_type="user_created", email=email, details=f"Created new user with plan {plan}")
+        else:
+            user_id = row[0]
 
         # user_usage row (initialize period at start-of-month)
-        cur.execute("SELECT 1 FROM user_usage WHERE email=%s", (email,))
+        cur.execute("SELECT 1 FROM user_usage WHERE user_id=%s", (user_id,))
         if not cur.fetchone():
             cur.execute(
-                "INSERT INTO user_usage (email, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
-                (email, 0, _first_of_month_utc().replace(tzinfo=None)),
+                "INSERT INTO user_usage (user_id, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
+                (user_id, 0, _first_of_month_utc().replace(tzinfo=None)),
             )
             log_security_event(event_type="usage_row_created", email=email, details="Initialized user_usage row")
         conn.commit()
@@ -123,23 +134,27 @@ def _maybe_monthly_reset(email: str) -> None:
     """
     If last_reset is prior to current month, reset usage to 0 and set last_reset to first-of-month.
     """
+    user_id = _get_user_id(email)
+    if not user_id:
+        return
+        
     anchor = _first_of_month_utc().replace(tzinfo=None)
     with _conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT chat_messages_used, last_reset FROM user_usage WHERE email=%s", (email,))
+        cur.execute("SELECT chat_messages_used, last_reset FROM user_usage WHERE user_id=%s", (user_id,))
         row = cur.fetchone()
         if not row:
             # initialize row (should have been created in ensure_user_exists)
             cur.execute(
-                "INSERT INTO user_usage (email, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
-                (email, 0, anchor),
+                "INSERT INTO user_usage (user_id, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
+                (user_id, 0, anchor),
             )
             conn.commit()
             return
         _, last_reset = row
         if last_reset is None or last_reset < anchor:
             cur.execute(
-                "UPDATE user_usage SET chat_messages_used = 0, last_reset = %s WHERE email=%s",
-                (anchor, email),
+                "UPDATE user_usage SET chat_messages_used = 0, last_reset = %s WHERE user_id=%s",
+                (anchor, user_id),
             )
             conn.commit()
             log_security_event(event_type="usage_monthly_reset", email=email, details=f"Reset usage at {anchor.isoformat()}")
@@ -153,9 +168,13 @@ def get_usage(email: str) -> dict:
     # ensure row and maybe reset
     ensure_user_exists(email)
     _maybe_monthly_reset(email)
+    
+    user_id = _get_user_id(email)
+    if not user_id:
+        return {"email": email, "chat_messages_used": 0}
 
     with _conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT chat_messages_used FROM user_usage WHERE email=%s", (email,))
+        cur.execute("SELECT chat_messages_used FROM user_usage WHERE user_id=%s", (user_id,))
         row = cur.fetchone()
         usage = {"email": email, "chat_messages_used": int(row[0]) if row else 0}
         log_security_event(event_type="usage_fetched", email=email, details=f"Usage: {usage}")
@@ -169,9 +188,13 @@ def check_user_message_quota(email: str, plan_limits: dict) -> tuple[bool, str]:
     email = _sanitize_email(email)
     ensure_user_exists(email)
     _maybe_monthly_reset(email)
+    
+    user_id = _get_user_id(email)
+    if not user_id:
+        return False, "User not found"
 
     with _conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT chat_messages_used FROM user_usage WHERE email=%s", (email,))
+        cur.execute("SELECT chat_messages_used FROM user_usage WHERE user_id=%s", (user_id,))
         row = cur.fetchone()
         used = int(row[0]) if row else 0
 
@@ -197,20 +220,24 @@ def increment_user_message_usage(email: str) -> None:
     email = _sanitize_email(email)
     ensure_user_exists(email)
     _maybe_monthly_reset(email)
+    
+    user_id = _get_user_id(email)
+    if not user_id:
+        return
 
     with _conn() as conn, conn.cursor() as cur:
         # upsert-like behavior
-        cur.execute("SELECT 1 FROM user_usage WHERE email=%s", (email,))
+        cur.execute("SELECT 1 FROM user_usage WHERE user_id=%s", (user_id,))
         if cur.fetchone():
             cur.execute(
-                "UPDATE user_usage SET chat_messages_used = chat_messages_used + 1 WHERE email=%s",
-                (email,),
+                "UPDATE user_usage SET chat_messages_used = chat_messages_used + 1 WHERE user_id=%s",
+                (user_id,),
             )
             log_security_event(event_type="quota_increment", email=email, details="Incremented chat_messages_used")
         else:
             cur.execute(
-                "INSERT INTO user_usage (email, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
-                (email, 1, _first_of_month_utc().replace(tzinfo=None)),
+                "INSERT INTO user_usage (user_id, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
+                (user_id, 1, _first_of_month_utc().replace(tzinfo=None)),
             )
             log_security_event(event_type="quota_increment", email=email, details="Created user_usage and incremented")
         conn.commit()
