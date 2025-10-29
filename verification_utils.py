@@ -134,9 +134,18 @@ def _log_ip(ip: str):
     execute("INSERT INTO email_verification_ip_log (ip) VALUES (%s)", (ip,))
 
 def _put_code(email: str, code: str):
+    """
+    Store a new verification code for the email.
+    FIXED: Delete any existing codes for this email first to avoid primary key conflicts.
+    """
     if execute is None:
         raise RuntimeError("DB helpers unavailable")
     expires = _now() + timedelta(minutes=CODE_TTL_MIN)
+    
+    # Delete any existing codes for this email first
+    execute("DELETE FROM email_verification_codes WHERE email=%s", (email,))
+    
+    # Insert the new code
     execute(
         "INSERT INTO email_verification_codes (email, code, expires_at) VALUES (%s, %s, %s)",
         (email, code, expires),
@@ -169,7 +178,7 @@ def _mark_verified(email: str) -> bool:
 def _send_via_brevo(to_email: str, code: str) -> Tuple[bool, str]:
     """
     Sends the code via Brevo. If not configured, we still return success so the flow
-    isn’t blocked in dev (user can paste the code surfaced by logs, etc).
+    isn't blocked in dev (user can paste the code surfaced by logs, etc).
     """
     if not BREVO_API_KEY or not VERIFY_FROM_EMAIL or not requests:
         # Dev fallback

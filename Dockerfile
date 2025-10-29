@@ -31,4 +31,4 @@ COPY . .
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "python seed_plans.py && gunicorn main:app --bind 0.0.0.0:8080 --timeout 120"]
+CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:8080", "--timeout", "120"]

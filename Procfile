@@ -1,3 +1,3 @@
-web: python seed_plans.py && gunicorn main:app --bind 0.0.0.0:8080 --timeout 120
+web: gunicorn main:app --bind 0.0.0.0:8080 --timeout 120
 worker: python3 scheduler.py
 notify: python3 scheduler_notify.py
