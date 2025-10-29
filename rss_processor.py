@@ -228,7 +228,8 @@ ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))
 
 # NEW: toggle and window for co-occurrence matcher (defaults match risk_shared)
 RSS_ENABLE_COOCCURRENCE = str(os.getenv("RSS_ENABLE_COOCCURRENCE", "true")).lower() in ("1","true","yes","y")
-RSS_COOC_WINDOW_TOKENS  = int(os.getenv("RSS_COOC_WINDOW_TOKENS", "12"))
+RSS_COOC_WINDOW_TOKENS  = int(os.getenv("RSS_COOC_WINDOW_TOKENS", "15"))  # Increased from 12 to 15
+RSS_MIN_TEXT_LENGTH     = int(os.getenv("RSS_MIN_TEXT_LENGTH", "100"))  # New: minimum text length
 
 if not GEOCODE_ENABLED:
     logger.info("CITYUTILS_ENABLE_GEOCODE is FALSE — geocoding disabled in rss_processor.")
@@ -348,25 +349,44 @@ except Exception as e:
     logger.debug("Matcher build failed; will use legacy contains-only filter: %s", e)
     MATCHER = None
 
-def _kw_decide(title: str, text: str) -> Tuple[bool, Dict[str, Any]]:
+def _kw_decide(title: str, text: str, lang: str = "en") -> Tuple[bool, Dict[str, Any]]:
     """
-    Returns (hit, details). If matcher exists, details carries rule/matches.
-    Falls back to simple contains-any-keyword.
+    Multi-tier filtering for quality alerts:
+    1. Length check (min 100 chars)
+    2. Strict co-occurrence (broad+impact within window)
+    3. Fallback: require 2+ threat keywords
+    Returns (hit, details).
     """
+    # 1. Length check - skip very short articles
+    combined = f"{title or ''}\n{text or ''}"
+    if len(combined.strip()) < 100:
+        return False, {"hit": False, "rule": "too_short", "matches": {}}
+    
     blob_title = title or ""
     blob_text = text or ""
+    
+    # 2. Try strict co-occurrence first (best quality)
     if MATCHER is not None and RSS_ENABLE_COOCCURRENCE:
         try:
             res = MATCHER.decide(blob_text, title=blob_title)
-            return bool(res.hit), {"hit": bool(res.hit), "rule": res.rule, "matches": res.matches}
+            if res.hit:
+                return True, {"hit": True, "rule": res.rule, "matches": res.matches, "tier": "strict"}
         except Exception as e:
             logger.debug("Matcher decide error, falling back: %s", e)
-
-    # Legacy simple contains (normalized)
-    t = _normalize(f"{blob_title}\n{blob_text}")
-    for kw in KEYWORDS:
-        if kw in t:
-            return True, {"hit": True, "rule": "keyword", "matches": {"keywords": [kw]}}
+    
+    # 3. Fallback: require at least 2 keyword matches for quality
+    # This prevents single keyword false positives
+    t = _normalize(combined)
+    matched_keywords = [kw for kw in KEYWORDS if kw in t]
+    
+    if len(matched_keywords) >= 2:  # Require 2+ keywords
+        return True, {
+            "hit": True, 
+            "rule": "keyword_multi", 
+            "matches": {"keywords": matched_keywords[:5]},  # Store max 5 for logging
+            "tier": "fallback"
+        }
+    
     return False, {"hit": False, "rule": None, "matches": {}}
 
 try:
