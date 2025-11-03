@@ -6,6 +6,8 @@
 # - Output guard ensures all sections exist and at least one playbook/alternatives appear
 # - NEW (2025-08-25): multi-alert merge, predictive tone from future_risk_probability,
 #   source reliability & info-ops flags, soft sports-context guard, proactive monitoring meta.
+# - UPDATED (2025-11-02): Sequential LLM routing (Primary: DeepSeek → Fallback: OpenAI → Tertiary: Grok)
+#   with model_used logging; optional env override ADVISOR_PROVIDER_* without changing defaults.
 
 import os
 import json
@@ -15,13 +17,31 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
+from llm_router import route_llm
+
 # -------- LLM clients / prompts (soft imports so advisor always loads) --------
+# Specialized: Grok (x.ai)
 try:
     from xai_client import grok_chat  # type: ignore
 except Exception:
     def grok_chat(messages, temperature=0.2):
         return None  # graceful no-op
 
+# Primary: DeepSeek (you created deepseek_client.py)
+try:
+    from deepseek_client import deepseek_chat  # type: ignore
+except Exception:
+    def deepseek_chat(messages, temperature=0.2):
+        return None
+
+# Fallback: OpenAI (you created openai_client_wrapper.py)
+try:
+    from openai_client_wrapper import openai_chat  # type: ignore
+except Exception:
+    def openai_chat(messages, temperature=0.2):
+        return None
+
+# (Optional) direct OpenAI import left intact for other modules that may import advisor
 try:
     from openai import OpenAI  # type: ignore
 except Exception:
@@ -63,13 +83,15 @@ except Exception:
     def relevance_flags(text: str) -> List[str]: return []
 
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and OpenAI) else None
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # kept for compatibility elsewhere
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 TEMPERATURE = float(os.getenv("ADVISOR_TEMPERATURE", 0.2))
+
+# ---------- Model usage tracking ----------
+_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0}
 
 # ---------- Domain priority ----------
 DOMAIN_PRIORITY = [
@@ -152,7 +174,7 @@ DOMAIN_PLAYBOOKS: Dict[str, List[str]] = {
     ],
 }
 
-# ---------- Role inference ----------
+# ---------- Role inference data ----------
 ROLE_KEYWORDS: Dict[str, List[str]] = {
     "traveler": ["traveler","tourist","visitor","student","backpacker","vacation","holiday"],
     "executive": ["executive","exec","ceo","c-suite","vip","founder","chairman","board"],
@@ -614,11 +636,15 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         {"role": "user", "content": user_content},
     ]
 
-    try:
-        advisory = grok_chat(messages, temperature=TEMPERATURE) or ""
-    except Exception as e:
-        logger.error(f"[Advisor] LLM failed: {e}")
+    # Sequential routing: DeepSeek → OpenAI → Grok
+    text, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts)
+
+    if not text:
+        logger.error("[Advisor] All providers failed; using deterministic fallback.")
         return _fallback_advisory(alert, trend_line, input_data)
+
+    logger.info(f"[Advisor] model_used={model_used} | usage_counts={_model_usage_counts}")
+    advisory = text
 
     if trend_line not in advisory:
         advisory += ("\n\n" + trend_line)

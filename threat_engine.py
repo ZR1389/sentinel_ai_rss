@@ -18,12 +18,30 @@ import logging
 import numpy as np
 import pycountry
 from dotenv import load_dotenv
+from decimal import Decimal  # <-- for safe JSON default
 
 # -------- Optional LLM clients / prompts (do not fail engine if absent) --------
 try:
     from openai import OpenAI
 except Exception:
     OpenAI = None  # type: ignore
+
+# New: optional wrappers (safe imports)
+try:
+    from deepseek_client import deepseek_chat
+except Exception:
+    deepseek_chat = None  # type: ignore
+
+try:
+    from openai_client_wrapper import openai_chat
+except Exception:
+    openai_chat = None  # type: ignore
+
+try:
+    # Your existing file — we call grok_chat from here
+    from xai_client import grok_chat
+except Exception:
+    grok_chat = None  # type: ignore
 
 try:
     from prompts import THREAT_SUMMARIZE_SYSTEM_PROMPT
@@ -64,18 +82,32 @@ from threat_scorer import (
     early_warning_indicators,
 )
 
+from llm_router import route_llm
+
 # ---------- Setup ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("threat_engine")
 
+# New: simple per-run counters for model usage & a safe bucket state
+_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "none": 0}
+_bucket_daily_counts = {}  # prevents earlier NameError if referenced by external utils
+
 def json_default(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
+    # Fix: make Decimal JSON-serializable
+    if isinstance(obj, Decimal):
+        try:
+            return float(obj)
+        except Exception:
+            return str(obj)
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # used by deepseek_client.py
+GROK_API_KEY = os.getenv("GROK_API_KEY")          # used by xai_client.py
 DATABASE_URL = os.getenv("DATABASE_URL")
 RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
 
@@ -343,19 +375,14 @@ def summarize_single_alert(alert: dict) -> dict:
     try: alert["keyword_weight"] = compute_keyword_weight(full_text)
     except Exception: pass
 
-    # Quick LLM summary (optional)
-    g_summary = None
-    try:
-        from xai_client import grok_chat
-        messages = [
-            {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
-            {"role": "user", "content": full_text}
-        ]
-        g_summary = grok_chat(messages, temperature=TEMPERATURE)
-    except Exception as e:
-        logger.error(f"[Grok summary error] {e}")
-
+    # Quick LLM summary (now routed & tracked)
+    messages = [
+    {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
+    {"role": "user", "content": full_text},
+    ]
+    g_summary, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts)
     alert["gpt_summary"] = g_summary or alert.get("gpt_summary") or ""
+    alert["model_used"] = model_used  # <-- explicit auditability
 
     # Category/subcategory (fallbacks if missing)
     if not alert.get("category") or not alert.get("category_confidence"):
@@ -525,6 +552,20 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
                 json.dump(old_failed, f, indent=2, ensure_ascii=False, default=json_default)
         except Exception as e:
             logger.error(f"[Failed alert backup error] {e}")
+
+    # End-of-run usage summary (nice for logs / cost tracking)
+    try:
+        total_proc = len(summarized)
+        logger.info(
+            "[Model usage summary] deepseek=%s, openai=%s, grok=%s, none=%s | Total processed: %s",
+            _model_usage_counts["deepseek"],
+            _model_usage_counts["openai"],
+            _model_usage_counts["grok"],
+            _model_usage_counts["none"],
+            total_proc
+        )
+    except Exception:
+        pass
 
     return unique_alerts
 
