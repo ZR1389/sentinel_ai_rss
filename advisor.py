@@ -13,6 +13,7 @@ import os
 import json
 import logging
 import re
+import decimal
 from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
@@ -246,6 +247,13 @@ def clean_auto_sections(advisory: str) -> str:
 def strip_excessive_blank_lines(text: str) -> str:
     # Replace 3+ consecutive newlines with 2 newlines, and strip trailing whitespace
     return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+# ---------- JSON serialization helper for Decimal ----------
+def _json_serialize(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, decimal.Decimal):
+        return float(obj)
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 # ---------- Utilities ----------
 def _first_present(domains: List[str]) -> Optional[str]:
@@ -572,36 +580,50 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
     anomaly = alert.get("anomaly_flag", alert.get("is_anomaly"))
     next_review = _monitoring_cadence(alert.get("trend_direction") or "stable", bool(anomaly), roles, alert.get("future_risk_probability"))
 
+    # FIXED: Convert Decimal to float for JSON serialization
+    def _convert_decimal_to_float(obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        return obj
+
+    # Convert all Decimal values in alert to float
+    processed_alert = {}
+    for key, value in alert.items():
+        if isinstance(value, decimal.Decimal):
+            processed_alert[key] = float(value)
+        else:
+            processed_alert[key] = value
+
     payload = {
-        "region": alert.get("region") or alert.get("city") or alert.get("country"),
-        "city": alert.get("city"),
-        "country": alert.get("country"),
-        "category": alert.get("category") or alert.get("threat_label"),
-        "subcategory": alert.get("subcategory") or "Unspecified",
-        "label": alert.get("label"),
-        "score": alert.get("score"),
-        "confidence": alert.get("confidence"),
+        "region": processed_alert.get("region") or processed_alert.get("city") or processed_alert.get("country"),
+        "city": processed_alert.get("city"),
+        "country": processed_alert.get("country"),
+        "category": processed_alert.get("category") or processed_alert.get("threat_label"),
+        "subcategory": processed_alert.get("subcategory") or "Unspecified",
+        "label": processed_alert.get("label"),
+        "score": _convert_decimal_to_float(processed_alert.get("score")),
+        "confidence": _convert_decimal_to_float(processed_alert.get("confidence")),
         "domains": domains,
-        "reports_analyzed": alert.get("reports_analyzed") or alert.get("num_reports") or 1,
-        "sources": _normalize_sources(alert.get("sources") or []),
-        "incident_count_30d": alert.get("incident_count_30d") if alert.get("incident_count_30d") is not None else "n/a",
-        "recent_count_7d": alert.get("recent_count_7d") if alert.get("recent_count_7d") is not None else "n/a",
-        "baseline_avg_7d": alert.get("baseline_avg_7d") if alert.get("baseline_avg_7d") is not None else "n/a",
-        "baseline_ratio": alert.get("baseline_ratio") if alert.get("baseline_ratio") is not None else "n/a",
-        "trend_direction": alert.get("trend_direction") if alert.get("trend_direction") is not None else "stable",
+        "reports_analyzed": processed_alert.get("reports_analyzed") or processed_alert.get("num_reports") or 1,
+        "sources": _normalize_sources(processed_alert.get("sources") or []),
+        "incident_count_30d": processed_alert.get("incident_count_30d") if processed_alert.get("incident_count_30d") is not None else "n/a",
+        "recent_count_7d": processed_alert.get("recent_count_7d") if processed_alert.get("recent_count_7d") is not None else "n/a",
+        "baseline_avg_7d": processed_alert.get("baseline_avg_7d") if processed_alert.get("baseline_avg_7d") is not None else "n/a",
+        "baseline_ratio": _convert_decimal_to_float(processed_alert.get("baseline_ratio")) if processed_alert.get("baseline_ratio") is not None else "n/a",
+        "trend_direction": processed_alert.get("trend_direction") if processed_alert.get("trend_direction") is not None else "stable",
         "anomaly_flag": anomaly if anomaly is not None else False,
-        "cluster_id": alert.get("cluster_id"),
-        "early_warning_indicators": alert.get("early_warning_indicators") or [],
-        "future_risk_probability": alert.get("future_risk_probability"),
+        "cluster_id": processed_alert.get("cluster_id"),
+        "early_warning_indicators": processed_alert.get("early_warning_indicators") or [],
+        "future_risk_probability": _convert_decimal_to_float(processed_alert.get("future_risk_probability")),
         "domain_playbook_hits": hits,
-        "alternatives": _alternatives_if_needed(alert),
+        "alternatives": _alternatives_if_needed(processed_alert),
         "roles": roles,
         "role_actions": role_blocks,
         "next_review_hours": next_review,
         "profile_data": profile_data or {},
         "user_message": user_message,
-        "incident_count": alert.get("incident_count", alert.get("incident_count_30d", "n/a")),
-        "threat_type": alert.get("category", alert.get("threat_type", "risk")),
+        "incident_count": processed_alert.get("incident_count", processed_alert.get("incident_count_30d", "n/a")),
+        "threat_type": processed_alert.get("category", processed_alert.get("threat_type", "risk")),
     }
     return payload, roles, hits
 
@@ -652,9 +674,10 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         ADVISOR_STRUCTURED_SYSTEM_PROMPT,
     ])
 
+    # FIXED: Use custom JSON serializer for Decimal objects
     user_content = ADVISOR_STRUCTURED_USER_PROMPT.format(
         user_message=user_message,
-        input_data=json.dumps(input_data, ensure_ascii=False),
+        input_data=json.dumps(input_data, ensure_ascii=False, default=_json_serialize),
         trend_citation_line=trend_line,
         trend_direction=input_data.get("trend_direction", "stable"),
         incident_count_30d=input_data.get("incident_count_30d", "n/a"),
@@ -719,7 +742,13 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     region = input_data.get("region") or "Unknown location"
     risk_level = alert.get("label") or "Unknown"
     threat_type = input_data.get("category") or "Other"
-    confidence = int(round(100 * float(alert.get("confidence", 0.7))))
+    
+    # FIXED: Convert Decimal confidence to float
+    confidence_val = alert.get("confidence", 0.7)
+    if isinstance(confidence_val, decimal.Decimal):
+        confidence_val = float(confidence_val)
+    confidence = int(round(100 * float(confidence_val)))
+    
     sources = ", ".join([s.get("name","Source") for s in input_data.get("sources") or []]) or "Multiple"
     domains = input_data.get("domains") or []
     hits = input_data.get("domain_playbook_hits") or {}
@@ -837,7 +866,7 @@ def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
             return {"reply": result, "alerts": alerts}
         if isinstance(result, dict) and "reply" in result:
             return result
-        return {"reply": json.dumps(result, ensure_ascii=False), "alerts": alerts}
+        return {"reply": json.dumps(result, ensure_ascii=False, default=_json_serialize), "alerts": alerts}
     except Exception:
         alert = alerts[0] if alerts else {}
         advisory = render_advisory(alert, query, profile)
