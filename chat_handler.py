@@ -361,7 +361,7 @@ def handle_user_query(
         log.warning("[PROFILE] fetch_user_profile failed: %s", e)
 
     # ---------------- Proactive trigger heuristic ----------------
-    # FIXED: Ensure score is converted to float before comparison
+    # FIXED: Ensure ALL numerical comparisons use converted floats
     all_low = False
     alerts_stale = False
     
@@ -384,13 +384,21 @@ def handle_user_query(
             log.warning("Error calculating all_low heuristic: %s", e)
             all_low = False
 
-        # Check if alerts are stale
+        # Check if alerts are stale - FIXED: Ensure proper datetime comparison
         try:
             latest_iso = max((_iso_date(a) for a in db_alerts), default="")
             if latest_iso:
-                dt = datetime.fromisoformat(latest_iso.replace("Z", "+00:00"))
-                alerts_stale = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).days >= 7
-        except Exception:
+                # Ensure proper datetime parsing and comparison
+                if latest_iso.endswith('Z'):
+                    latest_iso = latest_iso[:-1] + '+00:00'
+                dt = datetime.fromisoformat(latest_iso)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                current_time = datetime.now(timezone.utc)
+                time_diff = current_time - dt
+                alerts_stale = time_diff.days >= 7
+        except Exception as e:
+            log.warning("Error calculating alerts_stale heuristic: %s", e)
             alerts_stale = False
 
     # ----------- SMARTER NO-DATA / NO ALERTS GUARD -----------
@@ -454,7 +462,7 @@ def handle_user_query(
     # ---------------- Build alert payloads ----------------
     results: List[Dict[str, Any]] = []
     for alert in db_alerts or []:
-        # FIXED: Ensure score is properly converted to float
+        # FIXED: Ensure ALL numerical fields are properly converted to floats
         raw_score = alert.get("score")
         try:
             score_float = float(raw_score) if raw_score is not None else 0.0
@@ -466,6 +474,19 @@ def handle_user_query(
             confidence_float = float(raw_confidence) if raw_confidence is not None else 0.0
         except (TypeError, ValueError):
             confidence_float = 0.0
+
+        # FIXED: Convert other numerical fields that might cause comparison issues
+        raw_trend_score = alert.get("trend_score")
+        try:
+            trend_score_float = float(raw_trend_score) if raw_trend_score is not None else 0.0
+        except (TypeError, ValueError):
+            trend_score_float = 0.0
+
+        raw_future_risk = alert.get("future_risk_probability")
+        try:
+            future_risk_float = float(raw_future_risk) if raw_future_risk is not None else 0.0
+        except (TypeError, ValueError):
+            future_risk_float = 0.0
             
         results.append({
             "uuid": _ensure_str(alert.get("uuid", "")),
@@ -490,12 +511,12 @@ def handle_user_query(
             "legal_risk": _ensure_str(alert.get("legal_risk", "")),
             "cyber_ot_risk": _ensure_str(alert.get("cyber_ot_risk", "")),
             "environmental_epidemic_risk": _ensure_str(alert.get("environmental_epidemic_risk", "")),
-            # New schema fields
+            # New schema fields - FIXED: All numerical fields converted
             "domains": _ensure_list(alert.get("domains")),
             "trend_direction": _ensure_str(alert.get("trend_direction", "")),
-            "trend_score": _ensure_num(alert.get("trend_score", 0)),
+            "trend_score": trend_score_float,  # Now guaranteed to be float
             "trend_score_msg": _ensure_str(alert.get("trend_score_msg", "")),
-            "future_risk_probability": _ensure_num(alert.get("future_risk_probability", 0)),
+            "future_risk_probability": future_risk_float,  # Now guaranteed to be float
             "anomaly_flag": bool(alert.get("anomaly_flag") or alert.get("is_anomaly") or False),
             "early_warning_indicators": _ensure_list(alert.get("early_warning_indicators")),
             "reports_analyzed": int(alert.get("reports_analyzed") or 0),
