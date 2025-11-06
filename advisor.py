@@ -2,7 +2,7 @@
 # - Reads enriched alerts (schema aligned)
 # - Enforces PHYSICAL+DIGITAL, NOW+PREP, role-specific sections
 # - Programmatic domain playbook hits, richer alternatives
-# - Mandatory “Because X trend, do Y” line
+# - Mandatory "Because X trend, do Y" line
 # - Output guard ensures all sections exist and at least one playbook/alternatives appear
 # - NEW (2025-08-25): multi-alert merge, predictive tone from future_risk_probability,
 #   source reliability & info-ops flags, soft sports-context guard, proactive monitoring meta.
@@ -161,7 +161,7 @@ DOMAIN_PLAYBOOKS: Dict[str, List[str]] = {
         "Stage inventory; pre-book logistics windows; diversify last-mile carriers.",
     ],
     "insider_threat": [
-        "Tighten badge controls; enforce ‘no tailgating’; monitor privileged access anomalies.",
+        "Tighten badge controls; enforce 'no tailgating'; monitor privileged access anomalies.",
     ],
     "residential_premises": [
         "Harden perimeter lighting; door-control posture; store valuables away from master bedroom.",
@@ -466,14 +466,29 @@ def _aggregate_alerts(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     if not alerts:
         return {}
-    # sort by score desc, then future_risk_probability
-    def _s(a): 
-        try: 
-            return (float(a.get("score", 0) or 0), float(a.get("future_risk_probability", 0) or 0))
-        except Exception:
-            return (0.0, 0.0)
-    top = sorted(alerts, key=_s, reverse=True)[:3]
+    
+    # FIXED: Proper type conversion for numerical comparisons
+    def _get_sort_key(a):
+        try:
+            # Convert score to float safely
+            score_str = a.get("score")
+            score = float(score_str) if score_str is not None else 0.0
+        except (TypeError, ValueError):
+            score = 0.0
+            
+        try:
+            # Convert future_risk_probability to float safely
+            future_risk_str = a.get("future_risk_probability")
+            future_risk = float(future_risk_str) if future_risk_str is not None else 0.0
+        except (TypeError, ValueError):
+            future_risk = 0.0
+            
+        return (score, future_risk)
+    
+    # Sort by score desc, then future_risk_probability
+    top = sorted(alerts, key=_get_sort_key, reverse=True)[:3]
     base = dict(top[0])
+    
     # domains
     dset = []
     for a in top:
@@ -481,6 +496,7 @@ def _aggregate_alerts(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
             if d not in dset:
                 dset.append(d)
     base["domains"] = dset[:8]
+    
     # sources
     src = []
     for a in top:
@@ -492,12 +508,33 @@ def _aggregate_alerts(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
             if item not in src:
                 src.append(item)
     base["sources"] = src[:6]
-    # aggregates
-    base["score"] = top[0].get("score", base.get("score"))
+    
+    # aggregates - FIXED: Ensure proper type conversion
+    try:
+        base["score"] = float(top[0].get("score", base.get("score"))) if top[0].get("score") is not None else base.get("score")
+    except (TypeError, ValueError):
+        base["score"] = base.get("score")
+        
     base["label"] = top[0].get("label", base.get("label"))
-    base["confidence"] = top[0].get("confidence", base.get("confidence"))
+    
+    try:
+        base["confidence"] = float(top[0].get("confidence", base.get("confidence"))) if top[0].get("confidence") is not None else base.get("confidence")
+    except (TypeError, ValueError):
+        base["confidence"] = base.get("confidence")
+        
     base["anomaly_flag"] = any(a.get("anomaly_flag", a.get("is_anomaly")) for a in top)
-    base["future_risk_probability"] = max([a.get("future_risk_probability") or 0 for a in top] + [0])
+    
+    # FIXED: Convert future_risk_probability to float before max comparison
+    future_risks = []
+    for a in top:
+        risk_val = a.get("future_risk_probability")
+        try:
+            if risk_val is not None:
+                future_risks.append(float(risk_val))
+        except (TypeError, ValueError):
+            continue
+    base["future_risk_probability"] = max(future_risks) if future_risks else 0
+    
     # keep strongest trend if any increasing present
     trends = [str(a.get("trend_direction") or "stable") for a in top]
     base["trend_direction"] = "increasing" if "increasing" in trends else ("decreasing" if "decreasing" in trends else trends[0])
@@ -744,7 +781,7 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     lines.append(f"• {trend_line}")
 
     lines.append("ANALYST CTA —")
-    lines.append("• Reply ‘monitor 12h’ for an auto-check, or request a routed analyst review if risk increases.")
+    lines.append("• Reply 'monitor 12h' for an auto-check, or request a routed analyst review if risk increases.")
 
     out = "\n".join(lines)
     out = ensure_sections(out)
