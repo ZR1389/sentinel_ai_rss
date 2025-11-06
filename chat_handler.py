@@ -2,7 +2,7 @@
 # Notes:
 # - Do NOT meter or plan-gate here. /chat route in main.py handles quota after success.
 # - This module now includes a *soft* verification guard (defense-in-depth):
-#   if user email isn’t verified, we return a structured message with next steps.
+#   if user email isn't verified, we return a structured message with next steps.
 
 from __future__ import annotations
 import json
@@ -219,6 +219,10 @@ def handle_user_query(
     - NO metering/gating here — /chat endpoint meters AFTER success.
     - Soft verification guard here (defense-in-depth). If not verified, we return an instruction payload.
     - `threat_type` maps to `alerts.category` (Option A schema).
+    
+    Compatible with main.py calling patterns:
+    1. handle_user_query({"query": "...", "profile_data": {...}, "input_data": {...}}, email="user@example.com")
+    2. handle_user_query("query string", email="user@example.com")
     """
     log.info("handle_user_query: ENTERED | email=%s", email)
 
@@ -239,6 +243,38 @@ def handle_user_query(
             "actions": {"send_code": "/auth/verify/send", "confirm_code": "/auth/verify/confirm"},
         }
 
+    # Extract parameters from message dict (compatible with main.py _advisor_call)
+    if isinstance(message, dict):
+        # Extract from the structure used by main.py's _advisor_call
+        query = message.get("query", "")
+        profile_data = message.get("profile_data", {})
+        input_data = message.get("input_data", {})
+        
+        # Extract region and threat_type from input_data if provided
+        if not region and "region" in input_data:
+            region = input_data.get("region")
+        if not threat_type and "threat_type" in input_data:
+            threat_type = input_data.get("threat_type")
+        
+        # Extract city_list from input_data if provided
+        if not city_list and "city_list" in input_data:
+            city_list = input_data.get("city_list")
+        
+        # Use body if provided in input_data
+        if not body and "body" in input_data:
+            body = input_data.get("body", {})
+    else:
+        # Legacy string-only support
+        query = str(message or "")
+        profile_data = {}
+        input_data = {}
+
+    query = (query or "").strip()
+    if not query:
+        query = "Please provide a security threat assessment for my area."
+
+    log.info("Query content: %s", query)
+
     # Plan/usage are informational only
     plan_name = "FREE"
     if get_plan:
@@ -254,11 +290,6 @@ def handle_user_query(
             usage_info.update(get_usage(email) or {})
         except Exception as e:
             log.warning("get_usage failed: %s", e)
-
-    # Parse query text
-    query = message.get("query", "") if isinstance(message, dict) else str(message or "")
-    query = (query or "").strip()
-    log.info("Query content: %s", query)
 
     # Normalize region/category
     region = _normalize_value(region, None)
@@ -322,14 +353,38 @@ def handle_user_query(
     user_profile: Dict[str, Any] = {}
     try:
         user_profile = fetch_user_profile(email) or {}
+        # Merge with profile_data from main.py if provided
+        if profile_data and isinstance(profile_data, dict):
+            user_profile.update(profile_data)
         log.info("[PROFILE] Loaded profile for %s", email)
     except Exception as e:
         log.warning("[PROFILE] fetch_user_profile failed: %s", e)
 
     # ---------------- Proactive trigger heuristic ----------------
-    all_low = all((a.get("score") or 0) < 55 for a in (db_alerts or [])) if db_alerts else False
+    # FIXED: Ensure score is converted to float before comparison
+    all_low = False
     alerts_stale = False
+    
     if db_alerts:
+        try:
+            # Convert all scores to float before comparison
+            scores = []
+            for alert in db_alerts:
+                score_str = alert.get("score")
+                if score_str is not None:
+                    try:
+                        scores.append(float(score_str))
+                    except (TypeError, ValueError):
+                        scores.append(0.0)
+                else:
+                    scores.append(0.0)
+            
+            all_low = all(score < 55 for score in scores) if scores else False
+        except Exception as e:
+            log.warning("Error calculating all_low heuristic: %s", e)
+            all_low = False
+
+        # Check if alerts are stale
         try:
             latest_iso = max((_iso_date(a) for a in db_alerts), default="")
             if latest_iso:
@@ -399,6 +454,19 @@ def handle_user_query(
     # ---------------- Build alert payloads ----------------
     results: List[Dict[str, Any]] = []
     for alert in db_alerts or []:
+        # FIXED: Ensure score is properly converted to float
+        raw_score = alert.get("score")
+        try:
+            score_float = float(raw_score) if raw_score is not None else 0.0
+        except (TypeError, ValueError):
+            score_float = 0.0
+            
+        raw_confidence = alert.get("confidence")
+        try:
+            confidence_float = float(raw_confidence) if raw_confidence is not None else 0.0
+        except (TypeError, ValueError):
+            confidence_float = 0.0
+            
         results.append({
             "uuid": _ensure_str(alert.get("uuid", "")),
             "title": _ensure_str(alert.get("title", "")),
@@ -409,8 +477,8 @@ def handle_user_query(
             "subcategory": _ensure_str(alert.get("subcategory", "")),
             "threat_level": _ensure_label(alert.get("threat_level", "")),
             "threat_label": _ensure_label(alert.get("threat_label") or alert.get("label") or ""),
-            "score": _ensure_num(alert.get("score", 0)),
-            "confidence": _ensure_num(alert.get("confidence", 0)),
+            "score": score_float,  # Now guaranteed to be float
+            "confidence": confidence_float,  # Now guaranteed to be float
             "published": _iso_date(alert),
             "city": _ensure_str(alert.get("city", "")),
             "country": _ensure_str(alert.get("country", "")),
