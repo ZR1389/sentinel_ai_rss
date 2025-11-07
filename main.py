@@ -502,20 +502,30 @@ def auth_status():
         except Exception:
             pass
     
-    # Get usage info
+    # Get usage info + enforce plan-based limits
     usage_data = {"chat_messages_used": 0, "chat_messages_limit": 3}
     try:
-        from plan_utils import get_usage
-        u = get_usage(email)
-        if isinstance(u, dict):
-            usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
-            # Get limit from plan
-            from plan_utils import get_plan_limits
-            limits = get_plan_limits(email)
-            usage_data["chat_messages_limit"] = limits.get("chat_messages_per_month", 3)
+       from plan_utils import get_usage, get_plan_limits
+       u = get_usage(email)
+       if isinstance(u, dict):
+          usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
+
+       # Always determine plan limits explicitly
+       if plan_name == "PRO":
+           usage_data["chat_messages_limit"] = 1000
+       elif plan_name in ("VIP", "ENTERPRISE"):
+           usage_data["chat_messages_limit"] = 5000
+       else:
+           # fallback to default or plan_utils-based
+           try:
+              limits = get_plan_limits(email) or {}
+              usage_data["chat_messages_limit"] = limits.get("chat_messages_per_month", 3)
+           except Exception:
+              usage_data["chat_messages_limit"] = 3
+
     except Exception as e:
-        logger.warning("Failed to get usage in auth_status: %s", e)  # FIXED LINE
-    
+        logger.warning("Failed to get usage in auth_status: %s", e)
+
     return _build_cors_response(jsonify({
         "ok": True, 
         "email": email,
@@ -523,7 +533,6 @@ def auth_status():
         "plan": plan_name,
         "usage": usage_data
     }))
-
 
 # ---------- Profile (login required; unmetered) ----------
 @app.route("/profile/me", methods=["GET"])
@@ -943,15 +952,19 @@ def user_plan():
         "newsletter": True,  # newsletter is unmetered but requires verified login elsewhere
     }
 
-    # Limits (normalize keys your UI reads)
+    # Limits (normalized for UI and consistent with /auth/status)
     limits = {}
-    if get_plan_limits:
-        try:
-            pl = get_plan_limits(email) or {}
-            limits["chat_messages_per_month"] = pl.get("chat_messages_per_month")
-            limits["max_alert_channels"] = pl.get("max_alert_channels")
-        except Exception:
-            pass
+
+    if plan_name == "PRO":
+        limits["chat_messages_limit"] = 1000
+        limits["max_alert_channels"] = 10
+    elif plan_name in ("VIP", "ENTERPRISE"):
+        limits["chat_messages_limit"] = 5000
+        limits["max_alert_channels"] = 25
+    else:
+        # fallback for Free or unknown plans
+        limits["chat_messages_limit"] = 3
+        limits["max_alert_channels"] = 1
 
     return _build_cors_response(
         jsonify({"plan": plan_name, "features": features, "limits": limits})
