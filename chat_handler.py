@@ -205,6 +205,27 @@ def _is_verified(email: str) -> bool:
             return False
     return False
 
+def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
+    """
+    Helper to build quota object for frontend.
+    Returns: {"used": int, "limit": int, "plan": str}
+    """
+    quota_obj = {
+        "used": 0,
+        "limit": 3,  # Default FREE limit
+        "plan": plan_name
+    }
+    
+    if get_usage:
+        try:
+            current_usage = get_usage(email) or {}
+            quota_obj["used"] = current_usage.get("chat_messages_used", 0)
+            quota_obj["limit"] = current_usage.get("chat_messages_limit", 3)
+        except Exception as e:
+            log.warning("get_usage failed in _build_quota_obj: %s", e)
+    
+    return quota_obj
+
 # ---------------- Core ----------------
 def handle_user_query(
     message: str | Dict[str, Any],
@@ -310,6 +331,8 @@ def handle_user_query(
     if cached is not None:
         log.info("handle_user_query: cache HIT")
         log_security_event(event_type="cache_hit", email=email, plan=plan_name, details=f"cache_key={cache_key}")
+        # FIXED: Update quota in cached response
+        cached["quota"] = _build_quota_obj(email, plan_name)
         return cached
 
     # ---------------- Fetch alerts ----------------
@@ -327,9 +350,14 @@ def handle_user_query(
         log.error("DB fetch failed: %s", e)
         usage_info["fallback_reason"] = "alert_fetch_error"
         log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=str(e))
+        
+        # FIXED: Build quota object for error response
+        quota_obj = _build_quota_obj(email, plan_name)
+        
         return {
             "reply": f"System error fetching alerts: {e}",
             "plan": plan_name,
+            "quota": quota_obj,
             "alerts": [],
             "usage": usage_info,
             "session_id": session_id,
@@ -422,9 +450,14 @@ def handle_user_query(
             log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
 
         reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
+        
+        # FIXED: Build quota object for no-alerts response
+        quota_obj = _build_quota_obj(email, plan_name)
+        
         payload = {
             "reply": reply_text,
             "plan": plan_name,
+            "quota": quota_obj,
             "alerts": [],
             "usage": usage_info,
             "session_id": session_id,
@@ -541,9 +574,13 @@ def handle_user_query(
     # Extract reply string from advisory_result (which is a dict)
     reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
     
+    # FIXED: Build quota object for successful response
+    quota_obj = _build_quota_obj(email, plan_name)
+    
     payload = {
         "reply": reply_text,
         "plan": plan_name,
+        "quota": quota_obj,
         "alerts": results,
         "usage": usage_info,
         "session_id": session_id,

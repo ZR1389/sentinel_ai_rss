@@ -482,7 +482,7 @@ def auth_status():
             # It handles JWT decoding internally
             email = get_logged_in_email()
         except Exception as e:
-            logger.warning(f"JWT decode failed in auth_status: {e}")
+            logger.warning("JWT decode failed in auth_status: %s", e)  # FIXED LINE
     
     # Fallback to old headers (for compatibility)
     if not email:
@@ -514,7 +514,7 @@ def auth_status():
             limits = get_plan_limits(email)
             usage_data["chat_messages_limit"] = limits.get("chat_messages_per_month", 3)
     except Exception as e:
-        logger.warning(f"Failed to get usage in auth_status: {e}")
+        logger.warning("Failed to get usage in auth_status: %s", e)  # FIXED LINE
     
     return _build_cors_response(jsonify({
         "ok": True, 

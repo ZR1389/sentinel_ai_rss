@@ -181,7 +181,7 @@ ROLE_KEYWORDS: Dict[str, List[str]] = {
     "executive": ["executive","exec","ceo","c-suite","vip","founder","chairman","board"],
     "logistics_driver": ["driver","logistics","truck","fleet","delivery","last-mile","dispatcher"],
     "it_secops": ["it","secops","security engineer","admin","administrator","ciso","sysadmin","sre","devops"],
-    "ngo_aid": ["ngo","aid","humanitarian","non-profit","charity","relief","mission"],
+    "ngo_aid": ["ngo","aid","humanitarian","non-profit","charity","relight","mission"],
     "family_parent_teen": ["family","parent","mom","dad","teen","child","children","kids"],
     "journalist": ["journalist","reporter","press","media","photojournalist","stringer","pi"],
     "diplomat": ["diplomat","embassy","consular","consulate","mission","attaché"],
@@ -213,11 +213,38 @@ REQUIRED_HEADERS = [
 ]
 
 def ensure_sections(advisory: str) -> str:
+    """
+    Fixed: Only add sections if they don't exist OR exist but have no meaningful content
+    """
     out = advisory.strip()
+    
     for pat in REQUIRED_HEADERS:
-        if not re.search(pat, out, flags=re.MULTILINE):
-            header = pat.strip("^$").replace(r"\ ", " ")
-            out += f"\n\n{header}\n• [auto] Section added (no content)"
+        header_text = pat.strip("^$").replace(r"\ ", " ").replace(r" —", " —")
+        
+        # Check if section exists with content
+        section_exists = False
+        lines = out.split('\n')
+        
+        for i, line in enumerate(lines):
+            if re.search(pat, line, flags=re.MULTILINE):
+                # Check if this section has content beyond the header
+                has_content = False
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    next_line = lines[j].strip()
+                    if next_line and not re.search(r'^[A-Z][A-Z\s/]+ —', next_line):
+                        if next_line not in ['', '• [auto] Section added (no content)']:
+                            has_content = True
+                            break
+                    if re.search(r'^[A-Z][A-Z\s/]+ —', next_line):
+                        break
+                
+                if has_content:
+                    section_exists = True
+                    break
+        
+        if not section_exists:
+            out += f"\n\n{header_text}\n• [auto] Section added (no content)"
+    
     return out
 
 def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) -> str:
@@ -242,7 +269,10 @@ def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) 
 
 def clean_auto_sections(advisory: str) -> str:
     # Remove lines like '• [auto] Section added (no content)' for cleaner UI
-    return re.sub(r"\n?• \[auto\] Section added \(no content\)", "", advisory)
+    cleaned = re.sub(r"\n?• \[auto\] Section added \(no content\)", "", advisory)
+    # Also remove any completely empty sections that might result
+    cleaned = re.sub(r'\n\n[A-Z][A-Z\s/]+ —\s*\n(\s*\n)+', '\n\n', cleaned)
+    return cleaned
 
 def strip_excessive_blank_lines(text: str) -> str:
     # Replace 3+ consecutive newlines with 2 newlines, and strip trailing whitespace
