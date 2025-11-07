@@ -209,6 +209,7 @@ def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
     """
     Helper to build quota object for frontend.
     Returns: {"used": int, "limit": int, "plan": str}
+    FIXED: Now properly determines limit based on plan instead of relying on get_usage
     """
     quota_obj = {
         "used": 0,
@@ -216,13 +217,30 @@ def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
         "plan": plan_name
     }
     
+    # Get current usage count
     if get_usage:
         try:
             current_usage = get_usage(email) or {}
             quota_obj["used"] = current_usage.get("chat_messages_used", 0)
-            quota_obj["limit"] = current_usage.get("chat_messages_limit", 3)
         except Exception as e:
             log.warning("get_usage failed in _build_quota_obj: %s", e)
+    
+    # Determine limit based on plan (same logic as main.py)
+    try:
+        if plan_name == "PRO":
+            quota_obj["limit"] = 1000
+        elif plan_name in ("VIP", "ENTERPRISE"):
+            quota_obj["limit"] = 5000
+        else:
+            # Try to get from plan_utils
+            try:
+                from plan_utils import get_plan_limits
+                limits = get_plan_limits(email) or {}
+                quota_obj["limit"] = limits.get("chat_messages_per_month", 3)
+            except Exception:
+                quota_obj["limit"] = 3
+    except Exception as e:
+        log.warning("Failed to determine limit in _build_quota_obj: %s", e)
     
     return quota_obj
 
