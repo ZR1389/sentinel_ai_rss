@@ -385,11 +385,49 @@ def auth_login():
         except Exception:
             verified = _is_verified(email)
 
+    # Get plan name from database
+    plan_name = DEFAULT_PLAN
+    if get_plan:
+        try:
+            p = get_plan(email)
+            if isinstance(p, str) and p:
+                plan_name = p.upper()
+        except Exception:
+            pass
+
+    # Get usage data
+    usage_data = {"chat_messages_used": 0, "chat_messages_limit": 3}
+    try:
+        from plan_utils import get_usage, get_plan_limits
+        u = get_usage(email)
+        if isinstance(u, dict):
+            usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
+        
+        # Determine limit based on plan
+        if plan_name == "PRO":
+            usage_data["chat_messages_limit"] = 1000
+        elif plan_name in ("VIP", "ENTERPRISE"):
+            usage_data["chat_messages_limit"] = 5000
+        else:
+            try:
+                limits = get_plan_limits(email) or {}
+                usage_data["chat_messages_limit"] = limits.get("chat_messages_per_month", 3)
+            except Exception:
+                usage_data["chat_messages_limit"] = 3
+    except Exception as e:
+        logger.warning("Failed to get usage in auth_login: %s", e)
+
     return _build_cors_response(jsonify({
         "ok": True,
         "access_token": access_token,
-        "refresh_bundle": refresh_bundle,  # "refresh_id:token"
+        "refresh_token": refresh_bundle,
         "email_verified": bool(verified),
+        "plan": plan_name,
+        "quota": {
+            "used": usage_data["chat_messages_used"],
+            "limit": usage_data["chat_messages_limit"],
+            "plan": plan_name
+        }
     }))
 
 @app.route("/auth/refresh", methods=["POST", "OPTIONS"])
@@ -475,22 +513,24 @@ def auth_status():
     # Try to get email from JWT token first
     auth_header = request.headers.get("Authorization", "")
     email = None
-    
-    if auth_header.startswith("Bearer ") and get_logged_in_email:
+
+    if auth_header.startswith("Bearer "):
         try:
-            # Use the existing get_logged_in_email from auth_utils
-            # It handles JWT decoding internally
-            email = get_logged_in_email()
+           from auth_utils import decode_token
+           token = auth_header.split(" ", 1)[1].strip()
+           payload = decode_token(token)
+           if payload and payload.get("type") == "access":
+               email = payload.get("user_email")
         except Exception as e:
-            logger.warning("JWT decode failed in auth_status: %s", e)  # FIXED LINE
-    
+            logger.warning("JWT decode failed in auth_status: %s", e)
+
     # Fallback to old headers (for compatibility)
     if not email:
         email = request.headers.get("X-User-Email") or request.args.get("email") or ""
         email = email.strip().lower()
-    
+
     if not email:
-        return _build_cors_response(make_response(jsonify({"error": "Missing email"}), 400))
+        return _build_cors_response(make_response(jsonify({"error": "Missing or invalid token"}), 401))
     
     verified = _is_verified(email)
     plan_name = "FREE"
@@ -954,7 +994,6 @@ def user_plan():
 
     # Limits (normalized for UI and consistent with /auth/status)
     limits = {}
-
     if plan_name == "PRO":
         limits["chat_messages_limit"] = 1000
         limits["max_alert_channels"] = 10
@@ -966,9 +1005,23 @@ def user_plan():
         limits["chat_messages_limit"] = 3
         limits["max_alert_channels"] = 1
 
-    return _build_cors_response(
-        jsonify({"plan": plan_name, "features": features, "limits": limits})
-    )
+    # Get current usage
+    usage_data = {"chat_messages_used": 0}
+    try:
+        from plan_utils import get_usage
+        u = get_usage(email)
+        if isinstance(u, dict):
+            usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
+    except Exception as e:
+        logger.warning("Failed to get usage in user_plan: %s", e)
+
+    return _build_cors_response(jsonify({
+        "plan": plan_name,
+        "features": features,
+        "limits": limits,
+        "used": usage_data["chat_messages_used"],
+        "limit": limits["chat_messages_limit"]
+    }))
 
 # ---------- Incident Email Alerts (preference, paid-gated when enabling) ----------
 @app.route("/email_alerts_status", methods=["GET", "OPTIONS"])

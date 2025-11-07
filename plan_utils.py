@@ -81,7 +81,7 @@ def ensure_user_exists(email: str, plan: str = DEFAULT_PLAN) -> None:
                 "INSERT INTO user_usage (user_id, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
                 (user_id, 0, _first_of_month_utc().replace(tzinfo=None)),
             )
-            log_security_event(event_type="usage_row_created", email=email, details="Initialized user_usage row")
+            logger.info("Initialized user_usage row for %s", email)
         conn.commit()
 
 
@@ -116,12 +116,10 @@ def get_plan_limits(email: str) -> dict:
             """, (email,))
             row = cur.fetchone()
             if not row:
-                log_security_event(event_type="plan_limits_default", email=email, details="Inactive or no plan; default limits")
+                logger.warning("get_plan_limits: Inactive or no plan for %s; using default limits", email)
                 return {"plan": "FREE", "chat_messages_per_month": 0}
             plan, msgs = row[0], row[1]
-            limits = {"plan": (plan or "FREE").upper(), "chat_messages_per_month": int(msgs or 0)}
-            log_security_event(event_type="plan_limits_fetched", email=email, plan=limits["plan"], details=f"Limits: {limits}")
-            return limits
+            return {"plan": (plan or "FREE").upper(), "chat_messages_per_month": int(msgs or 0)}
     except Exception as e:
         logger.error("get_plan_limits error: %s", e)
         log_security_event(event_type="plan_limits_error", email=email, details=str(e))
@@ -157,7 +155,7 @@ def _maybe_monthly_reset(email: str) -> None:
                 (anchor, user_id),
             )
             conn.commit()
-            log_security_event(event_type="usage_monthly_reset", email=email, details=f"Reset usage at {anchor.isoformat()}")
+            logger.info("Monthly usage reset for %s at %s", email, anchor.isoformat())
 
 
 def get_usage(email: str) -> dict:
@@ -176,9 +174,7 @@ def get_usage(email: str) -> dict:
     with _conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT chat_messages_used FROM user_usage WHERE user_id=%s", (user_id,))
         row = cur.fetchone()
-        usage = {"email": email, "chat_messages_used": int(row[0]) if row else 0}
-        log_security_event(event_type="usage_fetched", email=email, details=f"Usage: {usage}")
-        return usage
+        return {"email": email, "chat_messages_used": int(row[0]) if row else 0}
 
 
 def check_user_message_quota(email: str, plan_limits: dict) -> tuple[bool, str]:
@@ -208,7 +204,11 @@ def check_user_message_quota(email: str, plan_limits: dict) -> tuple[bool, str]:
             details=f"Monthly chat quota reached. Used: {used}, Limit: {limit}",
         )
         return False, "Monthly chat message quota reached for your plan."
-    log_security_event(event_type="quota_ok", email=email, details=f"Used: {used}, Limit: {limit}")
+    
+    # Only log if approaching limit (>90%)
+    if limit > 0 and used / limit > 0.9:
+        logger.warning("User %s approaching quota limit: %d/%d (%.1f%%)", email, used, limit, (used/limit)*100)
+    
     return True, ""
 
 
@@ -233,13 +233,11 @@ def increment_user_message_usage(email: str) -> None:
                 "UPDATE user_usage SET chat_messages_used = chat_messages_used + 1 WHERE user_id=%s",
                 (user_id,),
             )
-            log_security_event(event_type="quota_increment", email=email, details="Incremented chat_messages_used")
         else:
             cur.execute(
                 "INSERT INTO user_usage (user_id, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
                 (user_id, 1, _first_of_month_utc().replace(tzinfo=None)),
             )
-            log_security_event(event_type="quota_increment", email=email, details="Created user_usage and incremented")
         conn.commit()
 
 
