@@ -52,14 +52,16 @@ try:
         get_plan_limits,
         check_user_message_quota,
         increment_user_message_usage,
-        require_paid_feature,  # for gated features
-        get_plan,              # plan lookup for /auth/refresh access token issuance
+        require_paid_feature,
+        get_plan,
+        DEFAULT_PLAN,
     )
 except Exception as e:
     logger.error("plan_utils import failed: %s", e)
     ensure_user_exists = get_plan_limits = check_user_message_quota = increment_user_message_usage = None
     require_paid_feature = None
     get_plan = None
+    DEFAULT_PLAN = "FREE"
 
 # ---------- Advisory orchestrator (prefer chat_handler) ----------
 _advisor_callable = None
