@@ -61,7 +61,7 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     Bulk upsert raw alerts. Expected fields:
     uuid, title, summary, en_snippet, link, source, published (datetime or iso),
     region, country, city, tags (list[str]), language,
-    latitude, longitude  <-- NEW
+    latitude, longitude, location_method, location_confidence  <-- NEW
     """
     if not alerts:
         logger.info("No alerts to write.")
@@ -69,7 +69,7 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     cols = [
         "uuid","title","summary","en_snippet","link","source","published",
         "region","country","city","tags","language","ingested_at",
-        "latitude","longitude"  # <<-- NEW
+        "latitude","longitude","location_method","location_confidence"  # <<-- NEW
     ]
 
     def _coerce(a: Dict[str, Any]) -> Tuple:
@@ -113,6 +113,8 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("ingested_at") or datetime.utcnow(),
             a.get("latitude"),   # <<-- NEW
             a.get("longitude"),  # <<-- NEW
+            a.get("location_method"),  # <<-- NEW
+            a.get("location_confidence"),  # <<-- NEW
         )
 
     rows = [_coerce(a) for a in alerts]
