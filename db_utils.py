@@ -62,7 +62,9 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     Bulk upsert raw alerts. Expected fields:
     uuid, title, summary, en_snippet, link, source, published (datetime or iso),
     region, country, city, tags (list[str] or json), language,
-    latitude, longitude, source_tag, source_kind, source_priority
+    latitude, longitude,
+    source_tag, source_kind, source_priority,
+    location_sharing (bool), location_confidence (float)
     """
     if not alerts:
         logger.info("No alerts to write.")
@@ -72,7 +74,8 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "uuid","title","summary","en_snippet","link","source","published",
         "region","country","city","tags","language","ingested_at",
         "latitude","longitude",
-        "source_tag","source_kind","source_priority"  # persisted from rss_processor
+        "source_tag","source_kind","source_priority",
+        "location_sharing","location_confidence"
     ]
 
     def _coerce(a: Dict[str, Any]) -> Tuple:
@@ -106,6 +109,35 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         except Exception:
             sp = None
 
+        # Coerce location_sharing to bool/None
+        ls = a.get("location_sharing")
+        if isinstance(ls, str):
+            ls_str = ls.strip().lower()
+            if ls_str in ("true", "1", "yes", "y"):
+                ls = True
+            elif ls_str in ("false", "0", "no", "n"):
+                ls = False
+            else:
+                ls = None
+        elif isinstance(ls, (int, float)):
+            try:
+                ls = bool(int(ls))
+            except Exception:
+                ls = None
+        elif isinstance(ls, bool):
+            pass
+        else:
+            # leave None or other unexpected types as None
+            if ls is not None:
+                ls = None
+
+        # Coerce location_confidence to float/None
+        lc = a.get("location_confidence")
+        try:
+            lc = float(lc) if lc is not None else None
+        except Exception:
+            lc = None
+
         return (
             aid,
             a.get("title"),
@@ -125,6 +157,8 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("source_tag"),
             a.get("source_kind"),
             sp,
+            ls,
+            lc,
         )
 
     rows = [_coerce(a) for a in alerts]
