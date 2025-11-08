@@ -43,6 +43,318 @@ import logging
 logging.basicConfig(level=logging.DEBUG, force=True)
 logger = logging.getLogger("rss_processor")
 
+# ============================================================================
+# HYBRID LOCATION EXTRACTION MODULE
+# Add this section after the imports and before the geocode functions
+# (around line 45, after logger setup)
+# ============================================================================
+
+# ---------------------------- spaCy NER Setup -------------------------
+try:
+    import spacy
+    nlp = spacy.load("en_core_web_sm")
+    logger.info("[NER] spaCy model loaded successfully")
+    SPACY_AVAILABLE = True
+except Exception as e:
+    logger.warning("[NER] spaCy not available: %s - falling back to keywords/LLM", e)
+    nlp = None
+    SPACY_AVAILABLE = False
+
+# ---------------------------- Location Keywords Setup -------------------------
+LOCATION_KEYWORDS = None
+try:
+    keywords_path = os.path.join(os.path.dirname(__file__), "location_keywords.json")
+    with open(keywords_path, "r", encoding="utf-8") as f:
+        LOCATION_KEYWORDS = json.load(f)
+    logger.info("[KEYWORDS] Loaded %d countries, %d cities from location_keywords.json", 
+                len(LOCATION_KEYWORDS.get("countries", {})), 
+                len(LOCATION_KEYWORDS.get("cities", {})))
+except Exception as e:
+    logger.warning("[KEYWORDS] location_keywords.json not found: %s", e)
+    LOCATION_KEYWORDS = {"countries": {}, "cities": {}, "regions": {}}
+
+# ---------------------------- LLM Router for Location Extraction -------------------------
+try:
+    from llm_router import route_llm
+    LLM_AVAILABLE = True
+    logger.info("[LLM] LLM router available for location extraction fallback")
+except Exception as e:
+    logger.warning("[LLM] LLM router not available: %s", e)
+    LLM_AVAILABLE = False
+    route_llm = None
+
+# ============================================================================
+# HYBRID LOCATION EXTRACTION FUNCTIONS
+# ============================================================================
+
+def extract_locations_ner(text: str) -> Dict[str, Optional[str]]:
+    """
+    Extract locations using spaCy NER.
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    if not SPACY_AVAILABLE or not nlp:
+        return {"city": None, "country": None, "region": None}
+    
+    try:
+        # Limit to first 500 chars for speed
+        doc = nlp(text[:500])
+        locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
+        
+        if not locations:
+            return {"city": None, "country": None, "region": None}
+        
+        # Try to map first location to known country/city
+        primary = locations[0].lower().strip()
+        
+        # Check if it's a known country
+        if primary in LOCATION_KEYWORDS["countries"]:
+            country = LOCATION_KEYWORDS["countries"][primary]
+            region = _map_country_to_region(country)
+            return {"city": None, "country": country, "region": region}
+        
+        # Check if it's a known city
+        if primary in LOCATION_KEYWORDS["cities"]:
+            city_data = LOCATION_KEYWORDS["cities"][primary]
+            region = _map_country_to_region(city_data["country"])
+            return {
+                "city": city_data["city"],
+                "country": city_data["country"],
+                "region": region
+            }
+        
+        # Return the raw NER result if no match
+        return {"city": None, "country": locations[0], "region": None}
+        
+    except Exception as e:
+        logger.error("[NER] Error extracting locations: %s", e)
+        return {"city": None, "country": None, "region": None}
+
+
+def extract_locations_keywords(text: str) -> Dict[str, Optional[str]]:
+    """
+    Extract locations using keyword matching.
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    if not LOCATION_KEYWORDS:
+        return {"city": None, "country": None, "region": None}
+    
+    text_lower = text.lower()
+    
+    # Check cities first (more specific)
+    for keyword, city_data in LOCATION_KEYWORDS["cities"].items():
+        if keyword in text_lower:
+            region = _map_country_to_region(city_data["country"])
+            logger.debug("[KEYWORDS] Matched city: %s -> %s, %s", 
+                        keyword, city_data["city"], city_data["country"])
+            return {
+                "city": city_data["city"],
+                "country": city_data["country"],
+                "region": region
+            }
+    
+    # Check countries
+    for keyword, country in LOCATION_KEYWORDS["countries"].items():
+        if keyword in text_lower:
+            region = _map_country_to_region(country)
+            logger.debug("[KEYWORDS] Matched country: %s -> %s", keyword, country)
+            return {"city": None, "country": country, "region": region}
+    
+    return {"city": None, "country": None, "region": None}
+
+
+def extract_locations_llm(title: str, summary: str) -> Dict[str, Optional[str]]:
+    """
+    Extract locations using LLM as last resort.
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    if not LLM_AVAILABLE or not route_llm:
+        return {"city": None, "country": None, "region": None}
+    
+    try:
+        prompt = f"""Extract the PRIMARY geographic location this news article is about.
+
+Title: {title}
+Summary: {summary[:300]}
+
+Return ONLY a JSON object:
+{{
+    "country": "Country name or null",
+    "city": "City name or null",
+    "region": "Geographic region (e.g., Europe, Middle East, Asia) or null"
+}}
+
+Rules:
+- If article is about MULTIPLE countries, pick the PRIMARY one
+- If article is about global/abstract topics, return all null
+- Don't use the source domain - focus on article content
+- Use standard country names in English
+
+Examples:
+- "Typhoon hits Vietnam" → {{"country": "Vietnam", "city": null, "region": "Southeast Asia"}}
+- "UK train attack" → {{"country": "United Kingdom", "city": null, "region": "Europe"}}
+- "Climate change threatens oceans" → {{"country": null, "city": null, "region": null}}
+"""
+        
+        messages = [{"role": "user", "content": prompt}]
+        response, model_used = route_llm(messages, temperature=0)
+        
+        if not response:
+            logger.warning("[LLM] No response from LLM")
+            return {"city": None, "country": None, "region": None}
+        
+        # Parse JSON response
+        try:
+            # Remove markdown code blocks if present
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            if response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            response = response.strip()
+            
+            result = json.loads(response)
+            logger.info("[LLM] Extracted using %s: %s", model_used, result)
+            return {
+                "city": result.get("city"),
+                "country": result.get("country"),
+                "region": result.get("region")
+            }
+        except json.JSONDecodeError as e:
+            logger.error("[LLM] Failed to parse JSON: %s. Response: %s", e, response[:200])
+            return {"city": None, "country": None, "region": None}
+        
+    except Exception as e:
+        logger.error("[LLM] Error extracting locations: %s", e)
+        return {"city": None, "country": None, "region": None}
+
+
+def _map_country_to_region(country: str) -> Optional[str]:
+    """Map a country to its geographic region."""
+    if not country:
+        return None
+    
+    # Define region mappings
+    region_map = {
+        "Europe": [
+            "Albania", "Andorra", "Austria", "Belarus", "Belgium", "Bosnia and Herzegovina",
+            "Bulgaria", "Croatia", "Cyprus", "Czech Republic", "Denmark", "Estonia",
+            "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland",
+            "Italy", "Kosovo", "Latvia", "Liechtenstein", "Lithuania", "Luxembourg",
+            "Malta", "Moldova", "Monaco", "Montenegro", "Netherlands", "North Macedonia",
+            "Norway", "Poland", "Portugal", "Romania", "Russia", "San Marino", "Serbia",
+            "Slovakia", "Slovenia", "Spain", "Sweden", "Switzerland", "Ukraine",
+            "United Kingdom", "Vatican City"
+        ],
+        "Asia": [
+            "Afghanistan", "Armenia", "Azerbaijan", "Bahrain", "Bangladesh", "Bhutan",
+            "Brunei", "Cambodia", "China", "Georgia", "India", "Indonesia", "Japan",
+            "Jordan", "Kazakhstan", "Kuwait", "Kyrgyzstan", "Laos", "Lebanon", "Malaysia",
+            "Maldives", "Mongolia", "Myanmar", "Nepal", "North Korea", "Oman", "Pakistan",
+            "Palestine", "Philippines", "Qatar", "Saudi Arabia", "Singapore", "South Korea",
+            "Sri Lanka", "Syria", "Taiwan", "Tajikistan", "Thailand", "Timor-Leste",
+            "Turkey", "Turkmenistan", "United Arab Emirates", "Uzbekistan", "Vietnam", "Yemen"
+        ],
+        "Africa": [
+            "Algeria", "Angola", "Benin", "Botswana", "Burkina Faso", "Burundi", "Cameroon",
+            "Cape Verde", "Central African Republic", "Chad", "Comoros", "Democratic Republic of Congo",
+            "Djibouti", "Egypt", "Equatorial Guinea", "Eritrea", "Ethiopia", "Gabon", "Gambia",
+            "Ghana", "Guinea", "Guinea-Bissau", "Ivory Coast", "Kenya", "Lesotho", "Liberia",
+            "Libya", "Madagascar", "Malawi", "Mali", "Mauritania", "Mauritius", "Morocco",
+            "Mozambique", "Namibia", "Niger", "Nigeria", "Rwanda", "Senegal", "Seychelles",
+            "Sierra Leone", "Somalia", "South Africa", "South Sudan", "Sudan", "Tanzania",
+            "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"
+        ],
+        "North America": [
+            "Canada", "Mexico", "United States"
+        ],
+        "Central America": [
+            "Belize", "Costa Rica", "El Salvador", "Guatemala", "Honduras", "Nicaragua", "Panama"
+        ],
+        "South America": [
+            "Argentina", "Bolivia", "Brazil", "Chile", "Colombia", "Ecuador", "Guyana",
+            "Paraguay", "Peru", "Suriname", "Uruguay", "Venezuela"
+        ],
+        "Oceania": [
+            "Australia", "Fiji", "Kiribati", "Marshall Islands", "Micronesia", "Nauru",
+            "New Zealand", "Palau", "Papua New Guinea", "Samoa", "Solomon Islands",
+            "Tonga", "Tuvalu", "Vanuatu"
+        ],
+        "Middle East": [
+            "Bahrain", "Egypt", "Iran", "Iraq", "Israel", "Jordan", "Kuwait", "Lebanon",
+            "Oman", "Palestine", "Qatar", "Saudi Arabia", "Syria", "Turkey",
+            "United Arab Emirates", "Yemen"
+        ]
+    }
+    
+    for region, countries in region_map.items():
+        if country in countries:
+            return region
+    
+    return None
+
+
+def should_use_llm(title: str, summary: str) -> bool:
+    """
+    Determine if LLM should be used for this article.
+    Only use expensive LLM for important, specific articles.
+    """
+    # Skip if abstract/global topics
+    abstract_keywords = [
+        "climate change", "global warming", "study shows", "research finds",
+        "scientists say", "world", "worldwide", "international study",
+        "according to report", "new study"
+    ]
+    text_lower = f"{title} {summary}".lower()
+    if any(kw in text_lower for kw in abstract_keywords):
+        logger.debug("[LLM] Skipping abstract topic: %s", title[:50])
+        return False
+    
+    # Skip if too short (likely not substantial news)
+    if len(title) < 20 or len(summary) < 50:
+        logger.debug("[LLM] Skipping short article: %s", title[:50])
+        return False
+    
+    return True
+
+
+def extract_location_hybrid(title: str, summary: str, source: str) -> Dict[str, Optional[str]]:
+    """
+    Hybrid location extraction with fallback chain.
+    Priority: NER → Keywords → LLM (optional)
+    
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    text = f"{title} {summary}"
+    
+    # 1. Try NER first (fast, accurate)
+    result = extract_locations_ner(text)
+    if result["country"]:
+        logger.info("[HYBRID] NER extracted: %s", result)
+        return result
+    
+    # 2. Try keyword matching
+    result = extract_locations_keywords(text)
+    if result["country"]:
+        logger.info("[HYBRID] Keywords extracted: %s", result)
+        return result
+    
+    # 3. Last resort: LLM (only for high-value articles)
+    if should_use_llm(title, summary):
+        result = extract_locations_llm(title, summary)
+        if result["country"]:
+            logger.info("[HYBRID] LLM extracted: %s", result)
+            return result
+    
+    # 4. No location found
+    logger.warning("[HYBRID] No location found for: %s", title[:50])
+    return {"city": None, "country": None, "region": None}
+
+# ============================================================================
+# END OF HYBRID LOCATION EXTRACTION MODULE
+# ============================================================================
+
 # ---------------------------- Geocode switch -------------------------
 GEOCODE_ENABLED = (os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1","true","yes","y"))
 
@@ -778,9 +1090,10 @@ async def _build_alert_from_entry(
         if not hit:
             return None
 
-    # ------ CITY/COUNTRY/LAT/LON FROM tag + fuzzy fallback ------
+    # ------ HYBRID LOCATION EXTRACTION ------
     city = None
     country = None
+    region = None  # NEW - add region tracking
     latitude = None
     longitude = None
 
@@ -794,13 +1107,14 @@ async def _build_alert_from_entry(
             return _titlecase(tag.split("country:", 1)[1].strip())
         return None
 
-    # 1) If it's a local feed, prefer the city in the tag
+    # PRIORITY 1: Try source tag (for local/country feeds)
     city_string = extract_city_from_source_tag(source_tag)
     logger.debug("[rss_processor] source_tag=%r city_string=%r", source_tag, city_string)
+
     if city_string:
-        city, country = normalize_city(city_string)  # parses "City, Country" too
+        # Source tag provided a city - use existing normalization logic
+        city, country = normalize_city(city_string)
         city, country = _apply_city_defaults(city, country)
-        # If explicit country tag also present, fill if still missing
         ctag = extract_country_from_source_tag(source_tag)
         if ctag and not country:
             country = ctag
@@ -808,40 +1122,65 @@ async def _build_alert_from_entry(
         if city and GEOCODE_ENABLED:
             latitude, longitude = get_city_coords(city, country)
             logger.debug("[rss_processor] geocode for %r,%r -> (%r,%r)", city, country, latitude, longitude)
+        # Map country to region
+        if country:
+            region = _map_country_to_region(country)
     else:
-        # 2) If it's a country feed (no city), at least set the country
+        # PRIORITY 2: Try country tag
         ctry = extract_country_from_source_tag(source_tag)
         if ctry:
             country = ctry
+            region = _map_country_to_region(country)
             logger.debug("[rss_processor] country from country: tag -> %r", country)
 
-    # 3) Fuzzy fallback from text if still no city
-    if not city:
+    # PRIORITY 3: If still no location, use HYBRID extraction from content
+    if not city and not country:
+        logger.debug("[rss_processor] No location from tags, using hybrid extraction...")
+        location_result = extract_location_hybrid(title, summary, source)
+        city = location_result.get("city")
+        country = location_result.get("country")
+        region = location_result.get("region")
+        
+        # Apply defaults and geocode if we got a city
+        if city or country:
+            city, country = _apply_city_defaults(city, country)
+            if city and GEOCODE_ENABLED:
+                latitude, longitude = get_city_coords(city, country)
+                logger.debug("[rss_processor] geocode (hybrid) for %r,%r -> (%r,%r)", 
+                            city, country, latitude, longitude)
+            # Update region if we got country from apply_defaults
+            if country and not region:
+                region = _map_country_to_region(country)
+
+    # PRIORITY 4: Fuzzy fallback (only if hybrid also failed)
+    if not city and _cu_fuzzy_match_city:
         try:
-            guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
+            guess_city = fuzzy_match_city(f"{title} {summary}")
             if guess_city:
                 city, country = normalize_city(guess_city)
                 city, country = _apply_city_defaults(city, country)
-                # If tag had explicit country and we still don't have one, fill it
                 if not country:
                     ctag = extract_country_from_source_tag(source_tag)
                     if ctag:
                         country = ctag
-                        logger.debug("[rss_processor] country filled from tag after fuzzy: %r", country)
                 if city and GEOCODE_ENABLED:
                     latitude, longitude = get_city_coords(city, country)
-                    logger.debug("[rss_processor] geocode (fuzzy) for %r,%r -> (%r,%r)", city, country, latitude, longitude)
+                    logger.debug("[rss_processor] geocode (fuzzy) for %r,%r -> (%r,%r)", 
+                                city, country, latitude, longitude)
+                if country and not region:
+                    region = _map_country_to_region(country)
         except Exception as e:
             logger.error(f"[rss_processor] Exception in fallback city: {e}")
 
-    # 4) If city present but country missing, try CITY_DEFAULTS one more time
+    # Final city/country defaults check
     city, country = _apply_city_defaults(city, country)
 
-    # 5) If still no country but we do have coords, reverse from polygons (no network)
+    # Reverse geocode if we have coords but no country
     if (not country) and (latitude is not None and longitude is not None):
         rc = _reverse_country_from_lonlat(float(longitude), float(latitude))
         if rc:
             country = rc
+            region = _map_country_to_region(country)
             logger.debug("[rss_processor] country filled by reverse lon/lat -> %r", country)
 
     lang = _safe_lang(text_blob)
@@ -865,13 +1204,12 @@ async def _build_alert_from_entry(
         "source": source,
         "published": (published or _now_utc()).replace(tzinfo=None),
         "tags": tags,
-        "region": None,
+        "region": region or None,
         "country": country or None,
         "city": city or None,
         "language": lang,
         "latitude": latitude,
         "longitude": longitude,
-        # New: store keyword match diagnostics for Threat Scorer/Engine
         "kw_match": km,
     }
     if source_tag:
