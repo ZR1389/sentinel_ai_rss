@@ -1,5 +1,5 @@
 # rss_processor.py — Aggressive diagnostics, fetch, and ingest for production debugging
-# v2025-08-24 PATCHED+COUNTRY+NO-BACKOFF+MATCHER (2025-08-31)
+# v2025-08-24 PATCHED+COUNTRY+NO-BACKOFF+MATCHER (2025-08-31) + FULL
 # - No backoff (ever)
 # - Optional per-host throttle (can be fully disabled via HOST_THROTTLE_ENABLED=false)
 # - Postgres geocode cache
@@ -8,6 +8,7 @@
 # - Reverse country from (lon,lat) via countries.geojson (no external deps)
 # - NEW: Keyword/Co-occurrence matcher aligned with risk_shared + threat_keywords.json,
 #        storing kw_match for Threat Scorer/Engine.
+# - Content-first hybrid location extractor with normalization and provenance fields
 
 from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys
@@ -43,11 +44,22 @@ import logging
 logging.basicConfig(level=logging.DEBUG, force=True)
 logger = logging.getLogger("rss_processor")
 
-# ============================================================================
+# -----------------------------------------------------------------------------
+# basic normalizer (placed at top as requested)
+def _normalize(s: str) -> str:
+    if not s:
+        return ""
+    try:
+        s2 = unidecode(s)
+    except Exception:
+        s2 = s
+    s2 = s2.lower()
+    s2 = re.sub(r"\s+", " ", s2).strip()
+    return s2
+
+# -----------------------------------------------------------------------------
 # HYBRID LOCATION EXTRACTION MODULE
-# Add this section after the imports and before the geocode functions
-# (around line 45, after logger setup)
-# ============================================================================
+# -----------------------------------------------------------------------------
 
 # ---------------------------- spaCy NER Setup -------------------------
 try:
@@ -66,8 +78,8 @@ try:
     keywords_path = os.path.join(os.path.dirname(__file__), "location_keywords.json")
     with open(keywords_path, "r", encoding="utf-8") as f:
         LOCATION_KEYWORDS = json.load(f)
-    logger.info("[KEYWORDS] Loaded %d countries, %d cities from location_keywords.json", 
-                len(LOCATION_KEYWORDS.get("countries", {})), 
+    logger.info("[KEYWORDS] Loaded %d countries, %d cities from location_keywords.json",
+                len(LOCATION_KEYWORDS.get("countries", {})),
                 len(LOCATION_KEYWORDS.get("cities", {})))
 except Exception as e:
     logger.warning("[KEYWORDS] location_keywords.json not found: %s", e)
@@ -83,159 +95,67 @@ except Exception as e:
     LLM_AVAILABLE = False
     route_llm = None
 
-# ============================================================================
-# HYBRID LOCATION EXTRACTION FUNCTIONS
-# ============================================================================
-
-def extract_locations_ner(text: str) -> Dict[str, Optional[str]]:
+# ---------------------------- Country normalization helper -------------------------
+def _normalize_country_name(raw: Optional[str]) -> Optional[str]:
     """
-    Extract locations using spaCy NER.
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    Normalize a raw country token to a canonical name present in LOCATION_KEYWORDS
+    or via pycountry. Returns canonical English country name or the original
+    title-cased if no mapping found.
     """
-    if not SPACY_AVAILABLE or not nlp:
-        return {"city": None, "country": None, "region": None}
-    
+    if not raw:
+        return None
+    s = _normalize(raw)
     try:
-        # Limit to first 500 chars for speed
-        doc = nlp(text[:500])
-        locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
-        
-        if not locations:
-            return {"city": None, "country": None, "region": None}
-        
-        # Try to map first location to known country/city
-        primary = locations[0].lower().strip()
-        
-        # Check if it's a known country
-        if primary in LOCATION_KEYWORDS["countries"]:
-            country = LOCATION_KEYWORDS["countries"][primary]
-            region = _map_country_to_region(country)
-            return {"city": None, "country": country, "region": region}
-        
-        # Check if it's a known city
-        if primary in LOCATION_KEYWORDS["cities"]:
-            city_data = LOCATION_KEYWORDS["cities"][primary]
-            region = _map_country_to_region(city_data["country"])
-            return {
-                "city": city_data["city"],
-                "country": city_data["country"],
-                "region": region
-            }
-        
-        # Return the raw NER result if no match
-        return {"city": None, "country": locations[0], "region": None}
-        
-    except Exception as e:
-        logger.error("[NER] Error extracting locations: %s", e)
-        return {"city": None, "country": None, "region": None}
+        # direct keyword mapping (location_keywords keys are normalized)
+        if s in LOCATION_KEYWORDS.get("countries", {}):
+            return LOCATION_KEYWORDS["countries"][s]
+    except Exception:
+        pass
 
-
-def extract_locations_keywords(text: str) -> Dict[str, Optional[str]]:
-    """
-    Extract locations using keyword matching.
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
-    """
-    if not LOCATION_KEYWORDS:
-        return {"city": None, "country": None, "region": None}
-    
-    text_lower = text.lower()
-    
-    # Check cities first (more specific)
-    for keyword, city_data in LOCATION_KEYWORDS["cities"].items():
-        if keyword in text_lower:
-            region = _map_country_to_region(city_data["country"])
-            logger.debug("[KEYWORDS] Matched city: %s -> %s, %s", 
-                        keyword, city_data["city"], city_data["country"])
-            return {
-                "city": city_data["city"],
-                "country": city_data["country"],
-                "region": region
-            }
-    
-    # Check countries
-    for keyword, country in LOCATION_KEYWORDS["countries"].items():
-        if keyword in text_lower:
-            region = _map_country_to_region(country)
-            logger.debug("[KEYWORDS] Matched country: %s -> %s", keyword, country)
-            return {"city": None, "country": country, "region": region}
-    
-    return {"city": None, "country": None, "region": None}
-
-
-def extract_locations_llm(title: str, summary: str) -> Dict[str, Optional[str]]:
-    """
-    Extract locations using LLM as last resort.
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
-    """
-    if not LLM_AVAILABLE or not route_llm:
-        return {"city": None, "country": None, "region": None}
-    
+    # try pycountry for aliases / codes / fuzzy
     try:
-        prompt = f"""Extract the PRIMARY geographic location this news article is about.
-
-Title: {title}
-Summary: {summary[:300]}
-
-Return ONLY a JSON object:
-{{
-    "country": "Country name or null",
-    "city": "City name or null",
-    "region": "Geographic region (e.g., Europe, Middle East, Asia) or null"
-}}
-
-Rules:
-- If article is about MULTIPLE countries, pick the PRIMARY one
-- If article is about global/abstract topics, return all null
-- Don't use the source domain - focus on article content
-- Use standard country names in English
-
-Examples:
-- "Typhoon hits Vietnam" → {{"country": "Vietnam", "city": null, "region": "Southeast Asia"}}
-- "UK train attack" → {{"country": "United Kingdom", "city": null, "region": "Europe"}}
-- "Climate change threatens oceans" → {{"country": null, "city": null, "region": null}}
-"""
-        
-        messages = [{"role": "user", "content": prompt}]
-        response, model_used = route_llm(messages, temperature=0)
-        
-        if not response:
-            logger.warning("[LLM] No response from LLM")
-            return {"city": None, "country": None, "region": None}
-        
-        # Parse JSON response
+        import pycountry
+        # try exact name
         try:
-            # Remove markdown code blocks if present
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-            response = response.strip()
-            
-            result = json.loads(response)
-            logger.info("[LLM] Extracted using %s: %s", model_used, result)
-            return {
-                "city": result.get("city"),
-                "country": result.get("country"),
-                "region": result.get("region")
-            }
-        except json.JSONDecodeError as e:
-            logger.error("[LLM] Failed to parse JSON: %s. Response: %s", e, response[:200])
-            return {"city": None, "country": None, "region": None}
-        
-    except Exception as e:
-        logger.error("[LLM] Error extracting locations: %s", e)
-        return {"city": None, "country": None, "region": None}
+            c = pycountry.countries.get(name=raw)
+            if c:
+                return c.name
+        except Exception:
+            pass
+        # alpha2
+        try:
+            c = pycountry.countries.get(alpha_2=(raw or "").upper())
+            if c:
+                return c.name
+        except Exception:
+            pass
+        # alpha3
+        try:
+            c = pycountry.countries.get(alpha_3=(raw or "").upper())
+            if c:
+                return c.name
+        except Exception:
+            pass
+        # fuzzy search
+        try:
+            res = pycountry.countries.search_fuzzy(raw)
+            if res:
+                return res[0].name
+        except Exception:
+            pass
+    except Exception:
+        # pycountry not installed or failed - fall back
+        pass
 
+    # fallback to titlecased raw
+    return (raw or "").strip().title()
 
-def _map_country_to_region(country: str) -> Optional[str]:
-    """Map a country to its geographic region."""
+# ---------------------------- Map country -> region -------------------------
+def _map_country_to_region(country: Optional[str]) -> Optional[str]:
+    """Map a country to its geographic region (expects canonical country names)."""
     if not country:
         return None
-    
-    # Define region mappings
+    # simple region map (kept similar to prior mapping)
     region_map = {
         "Europe": [
             "Albania", "Andorra", "Austria", "Belarus", "Belgium", "Bosnia and Herzegovina",
@@ -266,41 +186,134 @@ def _map_country_to_region(country: str) -> Optional[str]:
             "Sierra Leone", "Somalia", "South Africa", "South Sudan", "Sudan", "Tanzania",
             "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"
         ],
-        "North America": [
-            "Canada", "Mexico", "United States"
-        ],
-        "Central America": [
-            "Belize", "Costa Rica", "El Salvador", "Guatemala", "Honduras", "Nicaragua", "Panama"
-        ],
-        "South America": [
-            "Argentina", "Bolivia", "Brazil", "Chile", "Colombia", "Ecuador", "Guyana",
-            "Paraguay", "Peru", "Suriname", "Uruguay", "Venezuela"
-        ],
-        "Oceania": [
-            "Australia", "Fiji", "Kiribati", "Marshall Islands", "Micronesia", "Nauru",
-            "New Zealand", "Palau", "Papua New Guinea", "Samoa", "Solomon Islands",
-            "Tonga", "Tuvalu", "Vanuatu"
-        ],
-        "Middle East": [
-            "Bahrain", "Egypt", "Iran", "Iraq", "Israel", "Jordan", "Kuwait", "Lebanon",
-            "Oman", "Palestine", "Qatar", "Saudi Arabia", "Syria", "Turkey",
-            "United Arab Emirates", "Yemen"
-        ]
+        "North America": ["Canada", "Mexico", "United States"],
+        "Central America": ["Belize", "Costa Rica", "El Salvador", "Guatemala", "Honduras", "Nicaragua", "Panama"],
+        "South America": ["Argentina", "Bolivia", "Brazil", "Chile", "Colombia", "Ecuador", "Guyana",
+                          "Paraguay", "Peru", "Suriname", "Uruguay", "Venezuela"],
+        "Oceania": ["Australia", "Fiji", "Kiribati", "Marshall Islands", "Micronesia", "Nauru",
+                    "New Zealand", "Palau", "Papua New Guinea", "Samoa", "Solomon Islands",
+                    "Tonga", "Tuvalu", "Vanuatu"],
+        "Middle East": ["Bahrain", "Egypt", "Iran", "Iraq", "Israel", "Jordan", "Kuwait", "Lebanon",
+                        "Oman", "Palestine", "Qatar", "Saudi Arabia", "Syria", "Turkey",
+                        "United Arab Emirates", "Yemen"]
     }
-    
     for region, countries in region_map.items():
         if country in countries:
             return region
-    
     return None
 
+# ---------------------------- NER / Keyword / LLM extractors -------------------------
+def extract_locations_ner(text: str) -> Dict[str, Optional[str]]:
+    """
+    Extract locations using spaCy NER.
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    if not SPACY_AVAILABLE or not nlp:
+        return {"city": None, "country": None, "region": None}
+    try:
+        doc = nlp(text[:500])
+        locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
+        if not locations:
+            return {"city": None, "country": None, "region": None}
+        primary_raw = locations[0].strip()
+        primary = _normalize(primary_raw)
+        # Check if it's a known country
+        if primary in LOCATION_KEYWORDS.get("countries", {}):
+            country = LOCATION_KEYWORDS["countries"][primary]
+            country = _normalize_country_name(country)
+            region = _map_country_to_region(country)
+            return {"city": None, "country": country, "region": region}
+        # Check if it's a known city
+        if primary in LOCATION_KEYWORDS.get("cities", {}):
+            city_data = LOCATION_KEYWORDS["cities"][primary]
+            country = _normalize_country_name(city_data.get("country"))
+            region = _map_country_to_region(city_data.get("country"))
+            return {"city": city_data.get("city"), "country": country, "region": region}
+        # otherwise normalize as country token (NER often returns place names)
+        country_norm = _normalize_country_name(primary_raw)
+        return {"city": None, "country": country_norm, "region": None}
+    except Exception as e:
+        logger.error("[NER] Error extracting locations: %s", e)
+        return {"city": None, "country": None, "region": None}
+
+def extract_locations_keywords(text: str) -> Dict[str, Optional[str]]:
+    """
+    Extract locations using keyword matching.
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    if not LOCATION_KEYWORDS:
+        return {"city": None, "country": None, "region": None}
+    text_lower = (text or "").lower()
+    # Check cities first (more specific)
+    for keyword, city_data in LOCATION_KEYWORDS.get("cities", {}).items():
+        if keyword in text_lower:
+            region = _map_country_to_region(city_data.get("country"))
+            logger.debug("[KEYWORDS] Matched city: %s -> %s, %s", keyword, city_data.get("city"), city_data.get("country"))
+            return {"city": city_data.get("city"), "country": city_data.get("country"), "region": region}
+    # Check countries
+    for keyword, country in LOCATION_KEYWORDS.get("countries", {}).items():
+        if keyword in text_lower:
+            region = _map_country_to_region(country)
+            logger.debug("[KEYWORDS] Matched country: %s -> %s", keyword, country)
+            return {"city": None, "country": country, "region": region}
+    return {"city": None, "country": None, "region": None}
+
+def extract_locations_llm(title: str, summary: str) -> Dict[str, Optional[str]]:
+    """
+    Extract locations using LLM as last resort.
+    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    """
+    if not LLM_AVAILABLE or not route_llm:
+        return {"city": None, "country": None, "region": None}
+    try:
+        prompt = f"""Extract the PRIMARY geographic location this news article is about.
+
+Title: {title}
+Summary: {summary[:300]}
+
+Return ONLY a JSON object:
+{{
+    "country": "Country name or null",
+    "city": "City name or null",
+    "region": "Geographic region (e.g., Europe, Middle East, Asia) or null"
+}}
+
+Rules:
+- If article is about MULTIPLE countries, pick the PRIMARY one
+- If article is about global/abstract topics, return all null
+- Don't use the source domain - focus on article content
+- Use standard country names in English
+"""
+        messages = [{"role": "user", "content": prompt}]
+        response, model_used = route_llm(messages, temperature=0)
+        if not response:
+            logger.warning("[LLM] No response from LLM")
+            return {"city": None, "country": None, "region": None}
+        try:
+            resp = response.strip()
+            if resp.startswith("```json"):
+                resp = resp[7:]
+            if resp.startswith("```"):
+                resp = resp[3:]
+            if resp.endswith("```"):
+                resp = resp[:-3]
+            resp = resp.strip()
+            result = json.loads(resp)
+            country_norm = _normalize_country_name(result.get("country"))
+            logger.info("[LLM] Extracted using %s: %s -> normalized country=%s", model_used, result, country_norm)
+            return {"city": result.get("city"), "country": country_norm, "region": result.get("region")}
+        except json.JSONDecodeError as e:
+            logger.error("[LLM] Failed to parse JSON: %s. Response snippet: %s", e, response[:200])
+            return {"city": None, "country": None, "region": None}
+    except Exception as e:
+        logger.error("[LLM] Error extracting locations: %s", e)
+        return {"city": None, "country": None, "region": None}
 
 def should_use_llm(title: str, summary: str) -> bool:
     """
     Determine if LLM should be used for this article.
     Only use expensive LLM for important, specific articles.
     """
-    # Skip if abstract/global topics
     abstract_keywords = [
         "climate change", "global warming", "study shows", "research finds",
         "scientists say", "world", "worldwide", "international study",
@@ -310,50 +323,52 @@ def should_use_llm(title: str, summary: str) -> bool:
     if any(kw in text_lower for kw in abstract_keywords):
         logger.debug("[LLM] Skipping abstract topic: %s", title[:50])
         return False
-    
-    # Skip if too short (likely not substantial news)
-    if len(title) < 20 or len(summary) < 50:
+    if len(title or "") < 20 or len(summary or "") < 50:
         logger.debug("[LLM] Skipping short article: %s", title[:50])
         return False
-    
     return True
-
 
 def extract_location_hybrid(title: str, summary: str, source: str) -> Dict[str, Optional[str]]:
     """
-    Hybrid location extraction with fallback chain.
-    Priority: NER → Keywords → LLM (optional)
-    
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
+    Hybrid location extraction with provenance.
+    Priority: NER -> Keywords -> LLM (optional)
+    Returns: {"city","country","region","method","confidence"}
     """
     text = f"{title} {summary}"
-    
-    # 1. Try NER first (fast, accurate)
-    result = extract_locations_ner(text)
-    if result["country"]:
-        logger.info("[HYBRID] NER extracted: %s", result)
-        return result
-    
-    # 2. Try keyword matching
-    result = extract_locations_keywords(text)
-    if result["country"]:
-        logger.info("[HYBRID] Keywords extracted: %s", result)
-        return result
-    
-    # 3. Last resort: LLM (only for high-value articles)
-    if should_use_llm(title, summary):
-        result = extract_locations_llm(title, summary)
-        if result["country"]:
-            logger.info("[HYBRID] LLM extracted: %s", result)
-            return result
-    
-    # 4. No location found
-    logger.warning("[HYBRID] No location found for: %s", title[:50])
-    return {"city": None, "country": None, "region": None}
+    # NER
+    try:
+        ner_res = extract_locations_ner(text)
+        if ner_res and ner_res.get("country"):
+            ner_res["method"] = "ner"
+            ner_res["confidence"] = "high"
+            return ner_res
+    except Exception:
+        pass
+    # Keywords
+    try:
+        kw_res = extract_locations_keywords(text)
+        if kw_res and kw_res.get("country"):
+            kw_res["method"] = "keywords"
+            kw_res["confidence"] = "high"
+            return kw_res
+    except Exception:
+        pass
+    # LLM fallback
+    try:
+        if should_use_llm(title, summary):
+            llm_res = extract_locations_llm(title, summary)
+            if llm_res and llm_res.get("country"):
+                llm_res["method"] = "llm"
+                llm_res["confidence"] = "medium"
+                return llm_res
+    except Exception:
+        pass
+    # nothing found
+    return {"city": None, "country": None, "region": None, "method": "none", "confidence": "none"}
 
-# ============================================================================
-# END OF HYBRID LOCATION EXTRACTION MODULE
-# ============================================================================
+# -----------------------------------------------------------------------------
+# END HYBRID LOCATION EXTRACTION
+# -----------------------------------------------------------------------------
 
 # ---------------------------- Geocode switch -------------------------
 GEOCODE_ENABLED = (os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1","true","yes","y"))
@@ -481,9 +496,9 @@ if save_raw_alerts_to_db is None:
 
         cols = [
             "uuid","title","summary","en_snippet","link","source","published",
-            "tags","region","country","city","language","latitude","longitude"
+            "tags","region","country","city","location_method","location_confidence","language","latitude","longitude"
         ]
-        placeholders = "%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s"
+        placeholders = "%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s"
         sql = f"INSERT INTO raw_alerts ({','.join(cols)}) VALUES ({placeholders}) ON CONFLICT (uuid) DO NOTHING"
 
         wrote = 0
@@ -503,6 +518,8 @@ if save_raw_alerts_to_db is None:
                             a.get("region"),
                             a.get("country"),
                             a.get("city"),
+                            a.get("location_method"),
+                            a.get("location_confidence"),
                             a.get("language") or "en",
                             a.get("latitude"),
                             a.get("longitude"),
@@ -555,13 +572,6 @@ FILTER_KEYWORDS_FALLBACK = [
     "earthquake","flood","wildfire","hurricane","storm","heatwave","outbreak","epidemic","pandemic","cholera","dengue","covid","ebola"
 ]
 
-def _normalize(s: str) -> str:
-    if not s:
-        return ""
-    s = unidecode(s).lower()
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
 # --------- Load threat keywords from JSON and/or risk_shared ----------
 def _load_keywords() -> Tuple[List[str], str]:
     source_mode = (os.getenv("KEYWORDS_SOURCE", "merge") or "merge").lower()
@@ -605,7 +615,6 @@ def _load_keywords() -> Tuple[List[str], str]:
 
     if use_risk:
         try:
-            # Pull canonical lists to merge
             from risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
             for lst in list(CATEGORY_KEYWORDS.values()) + list(DOMAIN_KEYWORDS.values()):
                 for k in lst:
@@ -655,7 +664,6 @@ try:
                 window=RSS_COOC_WINDOW_TOKENS,
             )
         else:
-            # Fallback to risk_shared default builder (uses its own keyword set)
             MATCHER = build_default_matcher(window=RSS_COOC_WINDOW_TOKENS)
 except Exception as e:
     logger.debug("Matcher build failed; will use legacy contains-only filter: %s", e)
@@ -669,15 +677,13 @@ def _kw_decide(title: str, text: str, lang: str = "en") -> Tuple[bool, Dict[str,
     3. Fallback: require 2+ threat keywords
     Returns (hit, details).
     """
-    # 1. Length check - skip very short articles
     combined = f"{title or ''}\n{text or ''}"
     if len(combined.strip()) < 100:
         return False, {"hit": False, "rule": "too_short", "matches": {}}
-    
+
     blob_title = title or ""
     blob_text = text or ""
-    
-    # 2. Try strict co-occurrence first (best quality)
+
     if MATCHER is not None and RSS_ENABLE_COOCCURRENCE:
         try:
             res = MATCHER.decide(blob_text, title=blob_title)
@@ -685,20 +691,18 @@ def _kw_decide(title: str, text: str, lang: str = "en") -> Tuple[bool, Dict[str,
                 return True, {"hit": True, "rule": res.rule, "matches": res.matches, "tier": "strict"}
         except Exception as e:
             logger.debug("Matcher decide error, falling back: %s", e)
-    
-    # 3. Fallback: require at least 2 keyword matches for quality
-    # This prevents single keyword false positives
+
     t = _normalize(combined)
     matched_keywords = [kw for kw in KEYWORDS if kw in t]
-    
-    if len(matched_keywords) >= 2:  # Require 2+ keywords
+
+    if len(matched_keywords) >= 2:
         return True, {
-            "hit": True, 
-            "rule": "keyword_multi", 
-            "matches": {"keywords": matched_keywords[:5]},  # Store max 5 for logging
+            "hit": True,
+            "rule": "keyword_multi",
+            "matches": {"keywords": matched_keywords[:5]},
             "tier": "fallback"
         }
-    
+
     return False, {"hit": False, "rule": None, "matches": {}}
 
 try:
@@ -770,7 +774,8 @@ def _safe_lang(text: str, default: str = "en") -> str:
 
 def _first_sentence(text: str) -> str:
     t = (text or "").strip()
-    if not t: return ""
+    if not t:
+        return ""
     parts = re.split(r'(?<=[.!?。！？])\s+', t)
     return parts[0] if parts else t
 
@@ -845,7 +850,6 @@ class TokenBucket:
         self.tokens = float(self.capacity)
         self.updated = _now_utc().timestamp()
     async def acquire(self):
-        # Completely bypass throttle if disabled
         if not HOST_THROTTLE_ENABLED:
             return
         now = _now_utc().timestamp()
@@ -949,7 +953,6 @@ CITY_DEFAULTS = {
     "vienna": "Austria",
     "zurich": "Switzerland",
     "amsterdam": "Netherlands",
-    # Added for your observed feeds:
     "hong kong": "Hong Kong",
     "tel aviv": "Israel",
     "tehran": "Iran, Islamic Republic of",
@@ -965,7 +968,7 @@ def _apply_city_defaults(city: Optional[str], country: Optional[str]) -> Tuple[O
     return city, country
 
 # --- Reverse country from (lon,lat) using countries.geojson (no deps) ---
-COUNTRIES_GEOJSON_PATH = os.getenv("COUNTRIES_GEOJSON_PATH")  # same env as map_api
+COUNTRIES_GEOJSON_PATH = os.getenv("COUNTRIES_GEOJSON_PATH")
 _COUNTRIES_GJ = None
 _POLY_INDEX: Optional[List[Tuple[str, List[List[Tuple[float,float]]]]]] = None
 _BBOX_INDEX: Optional[List[Tuple[str, Tuple[float,float,float,float]]]] = None
@@ -1043,14 +1046,12 @@ def _reverse_country_from_lonlat(lon: Optional[float], lat: Optional[float]) -> 
     if _POLY_INDEX is None or _BBOX_INDEX is None:
         if not _load_countries_gj():
             return None
-    # bbox prefilter
     cands = []
     for name, (minx, miny, maxx, maxy) in _BBOX_INDEX or []:
         if (minx - 0.2) <= lon <= (maxx + 0.2) and (miny - 0.2) <= lat <= (maxy + 0.2):
             cands.append(name)
     if not cands:
         return None
-    # even-odd rule across rings
     for name, rings in _POLY_INDEX or []:
         if name not in cands:
             continue
@@ -1062,7 +1063,8 @@ def _reverse_country_from_lonlat(lon: Optional[float], lat: Optional[float]) -> 
             return name
     return None
 
-# ---------------- Build alert (now receives source_tag directly) ------
+# ---------------- Build alert ------
+
 async def _build_alert_from_entry(
     entry: Dict[str, Any],
     source_url: str,
@@ -1090,12 +1092,14 @@ async def _build_alert_from_entry(
         if not hit:
             return None
 
-    # ------ HYBRID LOCATION EXTRACTION ------
+    # ------ HYBRID LOCATION EXTRACTION (PREFERRED: content-derived -> then feed tag) ------
     city = None
     country = None
-    region = None  # NEW - add region tracking
+    region = None
     latitude = None
     longitude = None
+    location_method = None
+    location_confidence = None
 
     def extract_city_from_source_tag(tag: Optional[str]) -> Optional[str]:
         if tag and tag.startswith("local:"):
@@ -1107,53 +1111,56 @@ async def _build_alert_from_entry(
             return _titlecase(tag.split("country:", 1)[1].strip())
         return None
 
-    # PRIORITY 1: Try source tag (for local/country feeds)
-    city_string = extract_city_from_source_tag(source_tag)
-    logger.debug("[rss_processor] source_tag=%r city_string=%r", source_tag, city_string)
+    logger.debug("[rss_processor] Running hybrid extraction for title: %s", title[:80])
+    location_result = extract_location_hybrid(title, summary, source)
+    hy_city = location_result.get("city")
+    hy_country = location_result.get("country")
+    hy_region = location_result.get("region")
+    hy_method = location_result.get("method")
+    hy_conf = location_result.get("confidence")
 
-    if city_string:
-        # Source tag provided a city - use existing normalization logic
-        city, country = normalize_city(city_string)
-        city, country = _apply_city_defaults(city, country)
-        ctag = extract_country_from_source_tag(source_tag)
-        if ctag and not country:
-            country = ctag
-            logger.debug("[rss_processor] country filled from tag: %r", country)
-        if city and GEOCODE_ENABLED:
-            latitude, longitude = get_city_coords(city, country)
-            logger.debug("[rss_processor] geocode for %r,%r -> (%r,%r)", city, country, latitude, longitude)
-        # Map country to region
-        if country:
-            region = _map_country_to_region(country)
+    if hy_city or hy_country:
+        city = hy_city
+        country = hy_country
+        region = hy_region
+        location_method = hy_method
+        location_confidence = hy_conf
+        logger.info("[HYBRID] Content-derived location: %s / %s / %s (method=%s conf=%s)", city, country, region, location_method, location_confidence)
     else:
-        # PRIORITY 2: Try country tag
-        ctry = extract_country_from_source_tag(source_tag)
-        if ctry:
-            country = ctry
-            region = _map_country_to_region(country)
-            logger.debug("[rss_processor] country from country: tag -> %r", country)
-
-    # PRIORITY 3: If still no location, use HYBRID extraction from content
-    if not city and not country:
-        logger.debug("[rss_processor] No location from tags, using hybrid extraction...")
-        location_result = extract_location_hybrid(title, summary, source)
-        city = location_result.get("city")
-        country = location_result.get("country")
-        region = location_result.get("region")
-        
-        # Apply defaults and geocode if we got a city
-        if city or country:
+        logger.debug("[rss_processor] Hybrid extraction returned no country/city; checking source_tag: %r", source_tag)
+        city_string = extract_city_from_source_tag(source_tag)
+        if city_string:
+            city, country = normalize_city(city_string)
             city, country = _apply_city_defaults(city, country)
+            ctag = extract_country_from_source_tag(source_tag)
+            if ctag and not country:
+                country = ctag
+                logger.debug("[rss_processor] country filled from tag: %r", country)
             if city and GEOCODE_ENABLED:
                 latitude, longitude = get_city_coords(city, country)
-                logger.debug("[rss_processor] geocode (hybrid) for %r,%r -> (%r,%r)", 
-                            city, country, latitude, longitude)
-            # Update region if we got country from apply_defaults
-            if country and not region:
+                logger.debug("[rss_processor] geocode for %r,%r -> (%r,%r)", city, country, latitude, longitude)
+            if country:
                 region = _map_country_to_region(country)
+            location_method = "feed_tag"
+            location_confidence = "low"
+        else:
+            ctry = extract_country_from_source_tag(source_tag)
+            if ctry:
+                country = ctry
+                region = _map_country_to_region(country)
+                logger.debug("[rss_processor] country from country tag -> %r", country)
+                location_method = "feed_tag"
+                location_confidence = "low"
 
-    # PRIORITY 4: Fuzzy fallback (only if hybrid also failed)
-    if not city and _cu_fuzzy_match_city:
+    # If hybrid found only a city but not country, try to fill country from source tag
+    if city and (not country):
+        ctag = extract_country_from_source_tag(source_tag)
+        if ctag:
+            country = ctag
+            logger.debug("[rss_processor] Filling missing country from tag for city %r -> %r", city, country)
+
+    # If still no location, attempt fuzzy fallback
+    if not city and not country and _cu_fuzzy_match_city:
         try:
             guess_city = fuzzy_match_city(f"{title} {summary}")
             if guess_city:
@@ -1165,23 +1172,44 @@ async def _build_alert_from_entry(
                         country = ctag
                 if city and GEOCODE_ENABLED:
                     latitude, longitude = get_city_coords(city, country)
-                    logger.debug("[rss_processor] geocode (fuzzy) for %r,%r -> (%r,%r)", 
-                                city, country, latitude, longitude)
+                    logger.debug("[rss_processor] geocode (fuzzy) for %r,%r -> (%r,%r)", city, country, latitude, longitude)
                 if country and not region:
                     region = _map_country_to_region(country)
+                location_method = location_method or "fuzzy"
+                location_confidence = location_confidence or "low"
         except Exception as e:
             logger.error(f"[rss_processor] Exception in fallback city: {e}")
 
-    # Final city/country defaults check
+    # Final defaults
     city, country = _apply_city_defaults(city, country)
 
-    # Reverse geocode if we have coords but no country
+    # reverse geocode from coords if present
     if (not country) and (latitude is not None and longitude is not None):
         rc = _reverse_country_from_lonlat(float(longitude), float(latitude))
         if rc:
             country = rc
             region = _map_country_to_region(country)
             logger.debug("[rss_processor] country filled by reverse lon/lat -> %r", country)
+            location_method = location_method or "reverse_geocode"
+            location_confidence = location_confidence or "medium"
+
+    # if still missing region but country present, map it
+    if country and not region:
+        region = _map_country_to_region(country)
+
+    # Log mismatch between feed tag and content-derived
+    try:
+        tag_country = extract_country_from_source_tag(source_tag)
+        if tag_country and country and (tag_country.lower() != (country or "").lower()):
+            logger.info("[LOCATION MISMATCH] feed tag country=%r vs content country=%r for title=%s", tag_country, country, title[:120])
+    except Exception:
+        pass
+
+    # ensure defaults for provenance
+    if not location_method:
+        location_method = "none"
+    if not location_confidence:
+        location_confidence = "none"
 
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
@@ -1207,6 +1235,9 @@ async def _build_alert_from_entry(
         "region": region or None,
         "country": country or None,
         "city": city or None,
+        # provenance
+        "location_method": location_method,
+        "location_confidence": location_confidence,
         "language": lang,
         "latitude": latitude,
         "longitude": longitude,
