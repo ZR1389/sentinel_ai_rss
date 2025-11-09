@@ -64,7 +64,7 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     region, country, city, tags (list[str] or json), language,
     latitude, longitude,
     source_tag, source_kind, source_priority,
-    location_sharing (bool), location_confidence (float)
+    location_method (str), location_confidence (str), location_sharing (bool)
     """
     if not alerts:
         logger.info("No alerts to write.")
@@ -75,7 +75,7 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "region","country","city","tags","language","ingested_at",
         "latitude","longitude",
         "source_tag","source_kind","source_priority",
-        "location_sharing","location_confidence"
+        "location_method","location_confidence","location_sharing"
     ]
 
     def _coerce(a: Dict[str, Any]) -> Tuple:
@@ -131,12 +131,15 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             if ls is not None:
                 ls = None
 
-        # Coerce location_confidence to float/None
+        # Coerce location_confidence to text (not float)
         lc = a.get("location_confidence")
-        try:
-            lc = float(lc) if lc is not None else None
-        except Exception:
-            lc = None
+        if lc is not None:
+            lc = str(lc)  # Keep as text: "high", "medium", "low", "none"
+        
+        # Get location_method as text
+        lm = a.get("location_method")
+        if lm is not None:
+            lm = str(lm)  # Keep as text: "ner", "keywords", "llm", "feed_tag", "fuzzy", "none"
 
         return (
             aid,
@@ -157,8 +160,9 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("source_tag"),
             a.get("source_kind"),
             sp,
-            ls,
-            lc,
+            lm,  # location_method (text)
+            lc,  # location_confidence (text)
+            ls,  # location_sharing (boolean)
         )
 
     rows = [_coerce(a) for a in alerts]
