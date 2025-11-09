@@ -490,16 +490,24 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         if not _kw_match(text_blob):
             return None
     city = None; country = None
+    location_method = None
+    location_confidence = None
     try:
         guess_city = fuzzy_match_city(f"{title} {summary}") if _cu_fuzzy_match_city else None
         if guess_city:
             city, country = normalize_city(guess_city)
+            if city:
+                location_method = "fuzzy_text_match"
+                location_confidence = "medium"
     except Exception:
         pass
     latitude = longitude = None
     if city and GEOCODE_ENABLED:
         with contextlib.suppress(Exception):
             latitude, longitude = get_city_coords(city, country)
+            if latitude and longitude:
+                # Successfully geocoded - upgrade confidence
+                location_confidence = "high"
     lang = _safe_lang(text_blob)
     uuid = _uuid_for(source, title, link)
     if fetch_one is not None:
@@ -526,6 +534,8 @@ async def _build_alert_from_entry(entry: Dict[str, Any], source_url: str, client
         "language": lang,
         "latitude": latitude,
         "longitude": longitude,
+        "location_method": location_method,
+        "location_confidence": location_confidence,
     }
 
 def _auto_tags(text: str) -> List[str]:
