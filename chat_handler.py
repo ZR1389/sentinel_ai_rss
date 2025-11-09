@@ -18,10 +18,14 @@ from dotenv import load_dotenv
 
 # DB helpers
 from db_utils import (
-    fetch_alerts_from_db,
+    fetch_alerts_from_db_strict_geo,
     fetch_past_incidents,
     fetch_user_profile,
+    _conn,
 )
+
+# Geographic intelligence system
+from location_service_consolidated import enhance_geographic_query
 
 # Optional single-value fetch for verification fallback
 try:
@@ -355,9 +359,27 @@ def handle_user_query(
 
     # ---------------- Fetch alerts ----------------
     try:
-        log.info("DB: fetch_alerts_from_db(...)")
-        db_alerts: List[Dict[str, Any]] = fetch_alerts_from_db(
-            region=region,
+        log.info("DB: fetch_alerts_from_db_strict_geo(...)")
+        
+        # Enhanced geographic parameter handling using dynamic intelligence
+        try:
+            geo_params = enhance_geographic_query(region)
+            country_param = geo_params.get('country')
+            city_param = geo_params.get('city')
+            region_param = geo_params.get('region')
+            
+            if country_param:
+                log.info(f"Geographic intelligence: '{region}' → country='{country_param}', city='{city_param}'")
+        except Exception as e:
+            log.warning(f"Geographic intelligence failed, using original region: {e}")
+            country_param = None
+            city_param = None
+            region_param = region
+        
+        db_alerts: List[Dict[str, Any]] = fetch_alerts_from_db_strict_geo(
+            region=region_param,
+            country=country_param,
+            city=city_param,
             category=threat_type,  # align with Option A schema
             limit=int(os.getenv("CHAT_ALERTS_LIMIT", "20")),
         )

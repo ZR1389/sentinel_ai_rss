@@ -312,16 +312,33 @@ def ewma_anomaly(counts: List[int], alpha: float = 0.4, k: float = 2.5) -> bool:
     return float(counts[-1]) > (mu + (k*sigma if sigma > 0 else 3.0))
 
 def extract_location(text: str) -> Tuple[Optional[str], Optional[str]]:
-    """Wrapper around city_utils; returns (city, country). Never raises."""
+    """
+    DEPRECATED: Use location_service_consolidated.detect_location() instead.
+    Wrapper around city_utils for backward compatibility.
+    """
+    import warnings
+    warnings.warn(
+        "extract_location from risk_shared is deprecated. Use location_service_consolidated.detect_location() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
     try:
-        from city_utils import fuzzy_match_city, normalize_city
-        c = fuzzy_match_city(text or "")
-        if c:
-            city, country = normalize_city(c)
-            return city, country
+        # Use consolidated location service
+        from location_service_consolidated import detect_location
+        result = detect_location(text or "")
+        return result.city, result.country
     except Exception:
-        pass
-    return None, None
+        # Fallback to original implementation
+        try:
+            from city_utils import fuzzy_match_city, normalize_city
+            c = fuzzy_match_city(text or "")
+            if c:
+                city, country = normalize_city(c)
+                return city, country
+        except Exception:
+            pass
+        return None, None
 
 # ---------------------- Optional: false-positive guards (non-breaking) ----------------------
 # These helpers are intentionally conservative and only fire when *clearly* in a sports context

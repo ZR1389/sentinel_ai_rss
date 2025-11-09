@@ -203,172 +203,36 @@ def _map_country_to_region(country: Optional[str]) -> Optional[str]:
     return None
 
 # ---------------------------- NER / Keyword / LLM extractors -------------------------
-def extract_locations_ner(text: str) -> Dict[str, Optional[str]]:
-    """
-    Extract locations using spaCy NER.
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
-    """
-    if not SPACY_AVAILABLE or not nlp:
-        return {"city": None, "country": None, "region": None}
-    try:
-        doc = nlp(text[:500])
-        locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
-        if not locations:
-            return {"city": None, "country": None, "region": None}
-        primary_raw = locations[0].strip()
-        primary = _normalize(primary_raw)
-        # Check if it's a known country
-        if primary in LOCATION_KEYWORDS.get("countries", {}):
-            country = LOCATION_KEYWORDS["countries"][primary]
-            country = _normalize_country_name(country)
-            region = _map_country_to_region(country)
-            return {"city": None, "country": country, "region": region}
-        # Check if it's a known city
-        if primary in LOCATION_KEYWORDS.get("cities", {}):
-            city_data = LOCATION_KEYWORDS["cities"][primary]
-            country = _normalize_country_name(city_data.get("country"))
-            region = _map_country_to_region(city_data.get("country"))
-            return {"city": city_data.get("city"), "country": country, "region": region}
-        # otherwise normalize as country token (NER often returns place names)
-        country_norm = _normalize_country_name(primary_raw)
-        return {"city": None, "country": country_norm, "region": None}
-    except Exception as e:
-        logger.error("[NER] Error extracting locations: %s", e)
-        return {"city": None, "country": None, "region": None}
+# -----------------------------------------------------------------------------
+# LEGACY LOCATION EXTRACTION FUNCTIONS - DEPRECATED
+# These functions have been moved to location_service_consolidated.py
+# Keep for backward compatibility but should not be used
+# -----------------------------------------------------------------------------
 
-def extract_locations_keywords(text: str) -> Dict[str, Optional[str]]:
-    """
-    Extract locations using keyword matching.
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
-    """
-    if not LOCATION_KEYWORDS:
-        return {"city": None, "country": None, "region": None}
-    text_lower = (text or "").lower()
-    # Check cities first (more specific)
-    for keyword, city_data in LOCATION_KEYWORDS.get("cities", {}).items():
-        if keyword in text_lower:
-            region = _map_country_to_region(city_data.get("country"))
-            logger.debug("[KEYWORDS] Matched city: %s -> %s, %s", keyword, city_data.get("city"), city_data.get("country"))
-            return {"city": city_data.get("city"), "country": city_data.get("country"), "region": region}
-    # Check countries
-    for keyword, country in LOCATION_KEYWORDS.get("countries", {}).items():
-        if keyword in text_lower:
-            region = _map_country_to_region(country)
-            logger.debug("[KEYWORDS] Matched country: %s -> %s", keyword, country)
-            return {"city": None, "country": country, "region": region}
-    return {"city": None, "country": None, "region": None}
-
-def extract_locations_llm(title: str, summary: str) -> Dict[str, Optional[str]]:
-    """
-    Extract locations using LLM as last resort.
-    Returns: {"city": str or None, "country": str or None, "region": str or None}
-    """
-    if not LLM_AVAILABLE or not route_llm:
-        return {"city": None, "country": None, "region": None}
-    try:
-        prompt = f"""Extract the PRIMARY geographic location this news article is about.
-
-Title: {title}
-Summary: {summary[:300]}
-
-Return ONLY a JSON object:
-{{
-    "country": "Country name or null",
-    "city": "City name or null",
-    "region": "Geographic region (e.g., Europe, Middle East, Asia) or null"
-}}
-
-Rules:
-- If article is about MULTIPLE countries, pick the PRIMARY one
-- If article is about global/abstract topics, return all null
-- Don't use the source domain - focus on article content
-- Use standard country names in English
-"""
-        messages = [{"role": "user", "content": prompt}]
-        response, model_used = route_llm(messages, temperature=0)
-        if not response:
-            logger.warning("[LLM] No response from LLM")
-            return {"city": None, "country": None, "region": None}
-        try:
-            resp = response.strip()
-            if resp.startswith("```json"):
-                resp = resp[7:]
-            if resp.startswith("```"):
-                resp = resp[3:]
-            if resp.endswith("```"):
-                resp = resp[:-3]
-            resp = resp.strip()
-            result = json.loads(resp)
-            country_norm = _normalize_country_name(result.get("country"))
-            logger.info("[LLM] Extracted using %s: %s -> normalized country=%s", model_used, result, country_norm)
-            return {"city": result.get("city"), "country": country_norm, "region": result.get("region")}
-        except json.JSONDecodeError as e:
-            logger.error("[LLM] Failed to parse JSON: %s. Response snippet: %s", e, response[:200])
-            return {"city": None, "country": None, "region": None}
-    except Exception as e:
-        logger.error("[LLM] Error extracting locations: %s", e)
-        return {"city": None, "country": None, "region": None}
-
-def should_use_llm(title: str, summary: str) -> bool:
-    """
-    Determine if LLM should be used for this article.
-    Only use expensive LLM for important, specific articles.
-    """
-    abstract_keywords = [
-        "climate change", "global warming", "study shows", "research finds",
-        "scientists say", "world", "worldwide", "international study",
-        "according to report", "new study"
-    ]
-    text_lower = f"{title} {summary}".lower()
-    if any(kw in text_lower for kw in abstract_keywords):
-        logger.debug("[LLM] Skipping abstract topic: %s", title[:50])
-        return False
-    if len(title or "") < 20 or len(summary or "") < 50:
-        logger.debug("[LLM] Skipping short article: %s", title[:50])
-        return False
-    return True
-
+# Deprecated: Use location_service_consolidated.detect_location() instead
 def extract_location_hybrid(title: str, summary: str, source: str) -> Dict[str, Optional[str]]:
-    """
-    Hybrid location extraction with provenance.
-    Priority: NER -> Keywords -> LLM (optional)
-    Returns: {"city","country","region","method","confidence"}
-    """
-    text = f"{title} {summary}"
-    # NER
+    """DEPRECATED: Use location_service_consolidated.detect_location() instead."""
+    import warnings
+    warnings.warn(
+        "extract_location_hybrid is deprecated. Use location_service_consolidated.detect_location() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    # For backward compatibility, delegate to consolidated service
     try:
-        ner_res = extract_locations_ner(text)
-        if ner_res and ner_res.get("country"):
-            ner_res["method"] = "ner"
-            ner_res["confidence"] = "high"
-            return ner_res
-    except Exception:
-        pass
-    # Keywords
-    try:
-        kw_res = extract_locations_keywords(text)
-        if kw_res and kw_res.get("country"):
-            kw_res["method"] = "keywords"
-            kw_res["confidence"] = "high"
-            return kw_res
-    except Exception:
-        pass
-    # LLM fallback
-    try:
-        if should_use_llm(title, summary):
-            llm_res = extract_locations_llm(title, summary)
-            if llm_res and llm_res.get("country"):
-                llm_res["method"] = "llm"
-                llm_res["confidence"] = "medium"
-                return llm_res
-    except Exception:
-        pass
-    # nothing found
-    return {"city": None, "country": None, "region": None, "method": "none", "confidence": "none"}
-
-# -----------------------------------------------------------------------------
-# END HYBRID LOCATION EXTRACTION
-# -----------------------------------------------------------------------------
+        from location_service_consolidated import detect_location
+        result = detect_location(text=summary or "", title=title or "")
+        return {
+            "city": result.city,
+            "country": result.country, 
+            "region": result.region,
+            "method": result.location_method,
+            "confidence": result.location_confidence
+        }
+    except Exception as e:
+        logger.error(f"Fallback location detection failed: {e}")
+        return {"city": None, "country": None, "region": None, "method": "error", "confidence": "none"}
 
 # ---------------------------- Geocode switch -------------------------
 GEOCODE_ENABLED = (os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1","true","yes","y"))
@@ -1111,13 +975,36 @@ async def _build_alert_from_entry(
             return _titlecase(tag.split("country:", 1)[1].strip())
         return None
 
-    logger.debug("[rss_processor] Running hybrid extraction for title: %s", title[:80])
-    location_result = extract_location_hybrid(title, summary, source)
-    hy_city = location_result.get("city")
-    hy_country = location_result.get("country")
-    hy_region = location_result.get("region")
-    hy_method = location_result.get("method")
-    hy_conf = location_result.get("confidence")
+    logger.debug("[rss_processor] Running centralized location detection for title: %s", title[:80])
+    
+    # Use centralized location service instead of scattered functions
+    try:
+        from location_service_consolidated import detect_location
+        
+        location_result = detect_location(
+            text=summary or "",
+            title=title or "",
+            latitude=latitude,
+            longitude=longitude
+        )
+        
+        hy_city = location_result.city
+        hy_country = location_result.country
+        hy_region = location_result.region
+        hy_method = location_result.location_method
+        hy_conf = location_result.location_confidence
+        
+        logger.debug("[rss_processor] Centralized location detection: %s → country=%s, city=%s, method=%s", 
+                    title[:50], hy_country, hy_city, hy_method)
+                    
+    except Exception as e:
+        logger.error("[rss_processor] Centralized location detection failed: %s", e)
+        # Set defaults instead of fallback to avoid circular dependencies
+        hy_city = None
+        hy_country = None
+        hy_region = None
+        hy_method = "error"
+        hy_conf = "none"
 
     if hy_city or hy_country:
         city = hy_city

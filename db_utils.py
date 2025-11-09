@@ -508,16 +508,22 @@ def fetch_alerts_from_db_strict_geo(
     where = []
     params: List[Any] = []
 
-    if region:
+    # Build WHERE conditions with priority logic
+    # When country and city are specified, prioritize them over region
+    if country and city:
+        where.append("country ILIKE %s AND city ILIKE %s")
+        params.extend([f"%{country}%", f"%{city}%"])
+    elif country:
+        where.append("country ILIKE %s")
+        params.append(f"%{country}%")
+    elif region:
         # More precise matching - check if it's a country name first
         where.append("(country ILIKE %s OR (region ILIKE %s AND country IS NOT NULL))")
         params.extend([f"%{region}%", f"%{region}%"])
-    if country:
-        where.append("country ILIKE %s")
-        params.append(f"%{country}%")
-    if city:
+    elif city:
         where.append("city ILIKE %s")
         params.append(f"%{city}%")
+    
     if category:
         where.append("category = %s")
         params.append(category)
@@ -561,24 +567,47 @@ def fetch_alerts_from_db_strict_geo(
             if r.get("trend_direction") is None:
                 r["trend_direction"] = "stable"
                 
-        # Filter out geographically irrelevant results post-query
-        if region and rows:
+        # Enhanced post-query geographic relevance filtering
+        if (region or country or city) and rows:
             filtered_rows = []
-            region_lower = region.lower()
+            
             for row in rows:
-                country = (row.get("country") or "").lower()
-                city = (row.get("city") or "").lower()
-                source = (row.get("source") or "").lower()
+                row_country = (row.get("country") or "").lower()
+                row_city = (row.get("city") or "").lower()
+                row_region = (row.get("region") or "").lower()
+                row_source = (row.get("source") or "").lower()
                 
-                # Check if the alert is actually about the requested region
-                is_relevant = (
-                    region_lower in country or
-                    region_lower in city or
-                    (region_lower in source and country and region_lower in country)
-                )
+                is_relevant = False
+                
+                # Exact country match has highest priority
+                if country and country.lower() in row_country:
+                    is_relevant = True
+                
+                # City match (if specified)
+                elif city and city.lower() in row_city:
+                    is_relevant = True
+                
+                # Region-based matching (fallback)
+                elif region:
+                    region_lower = region.lower()
+                    is_relevant = (
+                        region_lower in row_country or
+                        region_lower in row_city or
+                        region_lower in row_region or
+                        # Source geography check (e.g., Nigerian source for Nigeria query)
+                        (region_lower in row_source and row_country and region_lower in row_country)
+                    )
+                
+                # If no geographic filters specified, include all
+                elif not region and not country and not city:
+                    is_relevant = True
                 
                 if is_relevant:
                     filtered_rows.append(row)
+            
+            # Log filtering results for debugging
+            if len(filtered_rows) != len(rows):
+                logger.info(f"Geographic filtering: {len(rows)} → {len(filtered_rows)} alerts (region={region}, country={country}, city={city})")
                     
             return filtered_rows
                 
