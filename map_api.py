@@ -461,3 +461,95 @@ def country_risks():
     by_country: Dict[str, str] = {name: inv.get(sev_val, "low") for name, sev_val in by_country_sev.items()}
 
     return jsonify({"by_country": by_country})
+
+# ---------------- Individual incident details ----------------
+@map_api.route("/incidents/<incident_id>")
+def get_incident_details(incident_id: str):
+    """Get full details for a specific incident by UUID or ID."""
+    if not fetch_all:
+        return jsonify({"error": "Database unavailable"}), 503
+
+    try:
+        # Query for the specific incident
+        rows = fetch_all("""
+            SELECT uuid, title, link, source, category, subcategory, threat_level,
+                   threat_label, score, confidence, published, city, country, region,
+                   reasoning, forecast, historical_context, sentiment, legal_risk,
+                   cyber_ot_risk, environmental_epidemic_risk, gpt_summary, summary,
+                   trend_direction, trend_score, trend_score_msg, future_risk_probability,
+                   anomaly_flag, reports_analyzed, latitude, longitude, domains, sources,
+                   early_warning_indicators
+            FROM alerts 
+            WHERE uuid = %s
+            LIMIT 1
+        """, (incident_id,))
+
+        if not rows:
+            return jsonify({"error": "Incident not found"}), 404
+
+        row = rows[0]
+        
+        # Build detailed incident object
+        incident = {
+            "uuid": _row_get(row, "uuid"),
+            "title": _row_get(row, "title") or "",
+            "summary": _row_get(row, "gpt_summary") or _row_get(row, "summary") or "",
+            "link": _row_get(row, "link") or "",
+            "source": _row_get(row, "source") or "",
+            "category": _row_get(row, "category") or "",
+            "subcategory": _row_get(row, "subcategory") or "",
+            "threat_level": _row_get(row, "threat_level") or "",
+            "threat_label": _row_get(row, "threat_label") or "",
+            "score": float(_row_get(row, "score") or 0),
+            "confidence": float(_row_get(row, "confidence") or 0),
+            "published": _row_get(row, "published") or "",
+            "location": {
+                "city": _row_get(row, "city") or "",
+                "country": _row_get(row, "country") or "",
+                "region": _row_get(row, "region") or "",
+                "coordinates": {
+                    "lat": float(_row_get(row, "latitude") or 0),
+                    "lon": float(_row_get(row, "longitude") or 0)
+                }
+            },
+            "analysis": {
+                "reasoning": _row_get(row, "reasoning") or "",
+                "forecast": _row_get(row, "forecast") or "",
+                "historical_context": _row_get(row, "historical_context") or "",
+                "sentiment": _row_get(row, "sentiment") or "",
+                "trend_direction": _row_get(row, "trend_direction") or "",
+                "trend_score": float(_row_get(row, "trend_score") or 0),
+                "trend_score_msg": _row_get(row, "trend_score_msg") or "",
+                "future_risk_probability": float(_row_get(row, "future_risk_probability") or 0),
+                "anomaly_flag": bool(_row_get(row, "anomaly_flag")),
+                "reports_analyzed": int(_row_get(row, "reports_analyzed") or 0)
+            },
+            "risks": {
+                "legal_risk": _row_get(row, "legal_risk") or "",
+                "cyber_ot_risk": _row_get(row, "cyber_ot_risk") or "",
+                "environmental_epidemic_risk": _row_get(row, "environmental_epidemic_risk") or ""
+            },
+            "metadata": {
+                "domains": _safe_parse_json(_row_get(row, "domains")),
+                "sources": _safe_parse_json(_row_get(row, "sources")),
+                "early_warning_indicators": _safe_parse_json(_row_get(row, "early_warning_indicators"))
+            }
+        }
+
+        return jsonify(incident)
+
+    except Exception as e:
+        current_app.logger.error(f"Error fetching incident {incident_id}: {e}")
+        return jsonify({"error": "Database error"}), 500
+
+
+def _safe_parse_json(value):
+    """Safely parse JSON string or return empty list if invalid."""
+    if not value:
+        return []
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        return json.loads(value) if isinstance(value, str) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
