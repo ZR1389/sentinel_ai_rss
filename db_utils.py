@@ -249,7 +249,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "subcategory","domains","incident_count_30d","recent_count_7d","baseline_avg_7d",
         "baseline_ratio","trend_direction","anomaly_flag","future_risk_probability",
         "reports_analyzed","sources","cluster_id",
-        "latitude","longitude"
+        "latitude","longitude","location_method","location_confidence","location_sharing"
     ]
 
     def _json(v):
@@ -350,6 +350,9 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("cluster_id"),
             a.get("latitude"),
             a.get("longitude"),
+            a.get("location_method") or "unknown",
+            a.get("location_confidence") or "medium", 
+            bool(a.get("location_sharing", True)),
         )
 
     rows = [_coerce_row(a) for a in alerts]
@@ -412,7 +415,10 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         sources = EXCLUDED.sources,
         cluster_id = EXCLUDED.cluster_id,
         latitude = EXCLUDED.latitude,
-        longitude = EXCLUDED.longitude
+        longitude = EXCLUDED.longitude,
+        location_method = EXCLUDED.location_method,
+        location_confidence = EXCLUDED.location_confidence,
+        location_sharing = EXCLUDED.location_sharing
     """
     try:
         with _conn() as conn, conn.cursor() as cur:
@@ -464,7 +470,7 @@ def fetch_alerts_from_db(
              early_warning_indicators, series_id, incident_series, historical_context,
              domains, incident_count_30d, recent_count_7d, baseline_avg_7d,
              baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id,
-             latitude, longitude
+             latitude, longitude, location_method, location_confidence, location_sharing
       FROM alerts
       {where_sql}
       ORDER BY published DESC NULLS LAST
@@ -486,6 +492,96 @@ def fetch_alerts_from_db(
                 r["baseline_ratio"] = 1.0
             if r.get("trend_direction") is None:
                 r["trend_direction"] = "stable"
+        return rows
+
+def fetch_alerts_from_db_strict_geo(
+    region: Optional[str] = None,
+    country: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 20
+) -> List[Dict[str, Any]]:
+    """
+    Enhanced version with strict geographic filtering to prevent cross-contamination.
+    Only returns alerts where the primary location fields match the query.
+    """
+    where = []
+    params: List[Any] = []
+
+    if region:
+        # More precise matching - check if it's a country name first
+        where.append("(country ILIKE %s OR (region ILIKE %s AND country IS NOT NULL))")
+        params.extend([f"%{region}%", f"%{region}%"])
+    if country:
+        where.append("country ILIKE %s")
+        params.append(f"%{country}%")
+    if city:
+        where.append("city ILIKE %s")
+        params.append(f"%{city}%")
+    if category:
+        where.append("category = %s")
+        params.append(category)
+
+    # Add relevance filter to exclude obvious sports/entertainment
+    where.append("(title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s)")
+    params.extend(['%football%', '%soccer%', '%champion%', '%award%', '%hat-trick%', '%hatrrick%', '%UCL%', '%europa%'])
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    q = f"""
+      SELECT uuid, title, summary, gpt_summary, link, source, published,
+             region, country, city, category, subcategory,
+             threat_level, threat_label, score, confidence, reasoning,
+             sentiment, forecast, legal_risk, cyber_ot_risk, environmental_epidemic_risk,
+             tags, trend_score, trend_score_msg, trend_direction, is_anomaly, anomaly_flag,
+             early_warning_indicators, series_id, incident_series, historical_context,
+             domains, incident_count_30d, recent_count_7d, baseline_avg_7d,
+             baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id,
+             latitude, longitude, location_method, location_confidence, location_sharing
+      FROM alerts
+      {where_sql}
+      ORDER BY published DESC NULLS LAST
+      LIMIT %s
+    """
+    params.append(limit)
+    
+    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(q, tuple(params))
+        rows = cur.fetchall()
+        
+        # Supply safe defaults for missing keys
+        for r in rows:
+            if r.get("incident_count_30d") is None:
+                r["incident_count_30d"] = 0
+            if r.get("recent_count_7d") is None:
+                r["recent_count_7d"] = 0
+            if r.get("baseline_avg_7d") is None:
+                r["baseline_avg_7d"] = 0
+            if r.get("baseline_ratio") is None:
+                r["baseline_ratio"] = 1.0
+            if r.get("trend_direction") is None:
+                r["trend_direction"] = "stable"
+                
+        # Filter out geographically irrelevant results post-query
+        if region and rows:
+            filtered_rows = []
+            region_lower = region.lower()
+            for row in rows:
+                country = (row.get("country") or "").lower()
+                city = (row.get("city") or "").lower()
+                source = (row.get("source") or "").lower()
+                
+                # Check if the alert is actually about the requested region
+                is_relevant = (
+                    region_lower in country or
+                    region_lower in city or
+                    (region_lower in source and country and region_lower in country)
+                )
+                
+                if is_relevant:
+                    filtered_rows.append(row)
+                    
+            return filtered_rows
+                
         return rows
 
 # ---------------------------------------------------------------------

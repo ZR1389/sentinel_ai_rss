@@ -566,12 +566,38 @@ def summarize_single_alert(alert: dict) -> dict:
             alert["category"] = alert.get("category", "Other")
             alert["category_confidence"] = alert.get("category_confidence", 0.5)
 
-    if not alert.get("subcategory"):
-        try:
-            alert["subcategory"] = extract_threat_subcategory(full_text, alert["category"])
-        except Exception as e:
-            logger.error(f"[ThreatEngine][SubcategoryFallbackError] {e}")
-            alert["subcategory"] = "Unspecified"
+    # ENHANCED: Sports/Entertainment Filter - reject non-security content
+    category = alert.get("category", "")
+    title_lower = (alert.get("title", "") or "").lower()
+    summary_lower = (alert.get("summary", "") or "").lower()
+    
+    sports_keywords = [
+        "football", "soccer", "basketball", "tennis", "cricket", "rugby", "hockey",
+        "champion", "trophy", "tournament", "league", "match", "goal", "score",
+        "player", "team", "coach", "stadium", "fifa", "uefa", "olympics",
+        "hat-trick", "galatasaray", "ajax", "super lig", "award", "transfer"
+    ]
+    
+    entertainment_keywords = [
+        "movie", "film", "actor", "actress", "celebrity", "concert", "music",
+        "album", "song", "artist", "entertainment", "show", "tv", "series"
+    ]
+    
+    is_sports = (
+        category == "Sports" or
+        any(keyword in title_lower for keyword in sports_keywords) or
+        any(keyword in summary_lower for keyword in sports_keywords)
+    )
+    
+    is_entertainment = (
+        category == "Entertainment" or
+        any(keyword in title_lower for keyword in entertainment_keywords) or
+        any(keyword in summary_lower for keyword in entertainment_keywords)
+    )
+    
+    if is_sports or is_entertainment:
+        logger.info(f"Filtering out sports/entertainment content: {alert.get('title', '')[:80]}")
+        return None  # Skip non-security content
 
     # Domains — canonical via risk_shared (prefer scorer's domains if present)
     try:

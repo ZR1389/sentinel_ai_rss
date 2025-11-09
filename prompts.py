@@ -85,9 +85,22 @@ SECURITY_SUMMARIZE_PROMPT = (
     "If there are no security implications, explicitly state 'No significant security risk detected.'"
 )
 
+# --- Geographic Relevance Validation (NEW) ---
+GEOGRAPHIC_RELEVANCE_PROMPT = (
+    "Before using any alert in your analysis, verify geographic relevance:\n"
+    "✓ Alert location (country/city/region) matches the user's query location\n"
+    "✓ Sources are from or about the target geographic area\n"
+    "✓ Content discusses events in the specified location\n"
+    "✓ No cross-contamination from other countries/regions\n"
+    "If alerts are geographically irrelevant (e.g., Brazilian news for Nigeria query), "
+    "REJECT them and state 'No geographically relevant alerts found for [location]. "
+    "Recommend monitoring local sources: [suggest 2-3 credible local news sources].'\n"
+    "NEVER mix geographic regions in a single analysis."
+)
+
 # --- Enhanced Advisor Prompts (Location-aware, Operationally-focused) ---
 ADVISOR_STRUCTURED_SYSTEM_PROMPT = (
-    OUTPUT_FORMAT_PROMPT + "\n"
+    OUTPUT_FORMAT_PROMPT + "\n" + GEOGRAPHIC_RELEVANCE_PROMPT + "\n"
     "You are Sentinel AI, Zika Rakita's digital counterpart — a field-hardened security and intelligence advisor "
     "with more than 20 years of global operational experience. Output must be decisive, evidence-based, operationally useful, and proactive. "
     "Always use the following structure, even if there are no new incidents:\n"
@@ -532,4 +545,17 @@ PREDICTIVE_ANALYSIS_PROMPT = (
     "- Recommended monitoring priorities with specific watch criteria\n"
     "Ground predictions in evidence: historical precedents (similarity scores), seasonal patterns, geopolitical context. "
     "Factor location confidence into prediction precision and adjust geographic scope accordingly."
+)
+
+# --- Geographic Relevance Validation (NEW) ---
+GEOGRAPHIC_RELEVANCE_PROMPT = (
+    "Before using any alert in your analysis, verify geographic relevance:\n"
+    "✓ Alert location (country/city/region) matches the user's query location\n"
+    "✓ Sources are from or about the target geographic area\n"
+    "✓ Content discusses events in the specified location\n"
+    "✓ No cross-contamination from other countries/regions\n"
+    "If alerts are geographically irrelevant (e.g., Brazilian news for Nigeria query), "
+    "REJECT them and state 'No geographically relevant alerts found for [location]. "
+    "Recommend monitoring local sources: [suggest 2-3 credible local news sources].'\n"
+    "NEVER mix geographic regions in a single analysis."
 )
