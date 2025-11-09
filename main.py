@@ -1466,6 +1466,59 @@ def search_threats():
         logger.error("search_threats error: %s\n%s", e, traceback.format_exc())
         return _build_cors_response(make_response(jsonify({"error": "Search failed"}), 500))
 
+# ---------- Batch Alert Processing (128k context) ----------
+@app.route("/alerts/batch_enrich", methods=["POST", "OPTIONS"])
+def batch_enrich_alerts():
+    """Batch process multiple alerts using Moonshot's 128k context window"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+
+    try:
+        from llm_router import route_llm_batch
+    except Exception:
+        return _build_cors_response(make_response(jsonify({"error": "Batch processing unavailable"}), 503))
+
+    payload = _json_request()
+    limit = min(int(payload.get("limit", 10)), 20)  # Max 20 alerts per batch
+    
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+
+    try:
+        # Get recent unprocessed alerts for batch enrichment
+        alerts = fetch_all("""
+            SELECT uuid, title, summary, city, country, link, published
+            FROM alerts 
+            WHERE gpt_summary IS NULL OR gpt_summary = ''
+            ORDER BY published DESC 
+            LIMIT %s
+        """, (limit,))
+        
+        if not alerts:
+            return _build_cors_response(jsonify({
+                "ok": True,
+                "message": "No alerts need batch processing",
+                "processed": 0
+            }))
+
+        # Convert to dict format for processing
+        alerts_batch = [dict(alert) for alert in alerts]
+        
+        # Process batch with 128k context
+        result, model_used = route_llm_batch(alerts_batch)
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "alerts_processed": len(alerts_batch),
+            "model": model_used,
+            "enrichment_result": result[:500] + "..." if len(result) > 500 else result,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }))
+        
+    except Exception as e:
+        logger.error("batch_enrich_alerts error: %s\n%s", e, traceback.format_exc())
+        return _build_cors_response(make_response(jsonify({"error": "Batch enrichment failed"}), 500))
+
 # ---------- Entrypoint ----------
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")

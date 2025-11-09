@@ -42,7 +42,7 @@ QUATERNARY: OpenAI - Critical validation only
 ```bash
 # Primary Moonshot Configuration
 MOONSHOT_API_KEY=sk-uyqffKltC6afMsT9CgfJmSEaxJfyTqKBfJjUqqNwUIDUCPhx
-MOONSHOT_MODEL=moonshot-v1-8k
+MOONSHOT_MODEL=moonshot-v1-128k
 
 # LLM Provider Hierarchy
 ADVISOR_PROVIDER_PRIMARY=moonshot
@@ -63,11 +63,11 @@ LLM_CRITICAL_VALIDATION=openai
 - Task-specific routing logs provider selection
 - Automatic fallback when providers unavailable
 
-### ⚠️ Current Status
-- **API Key Issue**: Moonshot key may need verification/update
-- **Fallback Active**: System gracefully falls back to other providers
-- **Integration Complete**: All code changes implemented and tested
-- **Server Running**: New search endpoint active on port 8080
+### ✅ **API Key Issue RESOLVED**
+- **Problem**: Wrong API endpoint - was using `.cn` instead of `.ai`
+- **Solution**: Updated to correct endpoint `https://api.moonshot.ai/v1`
+- **Status**: ✅ **WORKING** - All endpoints functional
+- **Integration**: ✅ **COMPLETE** - Moonshot primary provider active
 
 ### 🔄 Next Steps
 1. Verify Moonshot API key format/validity with provider
@@ -76,9 +76,16 @@ LLM_CRITICAL_VALIDATION=openai
 4. Consider rate limiting for search endpoint
 
 ### 💰 Expected Cost Benefits
-- **Moonshot**: More cost-effective than OpenAI for bulk processing
+- **Moonshot 128k**: More cost-effective than 8k model for bulk processing
+- **Large Context**: Can process multiple alerts in single API call
 - **Grok**: Specialized for social media context
 - **DeepSeek**: Budget fallback for high-volume periods  
 - **OpenAI**: Reserved for critical validation only
+
+### 🚀 128k Model Advantages
+- **Batch Processing**: Handle multiple alerts in one API call
+- **Better Context**: More comprehensive threat analysis
+- **Cost Efficiency**: Lower per-token cost than 8k model
+- **Live Search**: Can analyze extensive context for real-time queries
 
 The integration is production-ready with robust fallback handling!

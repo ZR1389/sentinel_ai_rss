@@ -110,3 +110,50 @@ def route_llm_search(query, context="", usage_counts=None):
     
     usage_counts["none"] += 1
     return "Search temporarily unavailable", "none"
+
+def route_llm_batch(alerts_batch, usage_counts=None):
+    """
+    Specialized routing for batch processing multiple alerts in 128k context.
+    Uses Moonshot's large context window for cost-effective batch enrichment.
+    """
+    usage_counts = usage_counts or {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
+    
+    batch_provider = os.getenv("LLM_PRIMARY_ENRICHMENT", "moonshot").lower()
+    
+    # Create a batch processing prompt that takes advantage of 128k context
+    batch_content = ""
+    for i, alert in enumerate(alerts_batch[:20]):  # Process up to 20 alerts in one call
+        batch_content += f"ALERT {i+1}:\n"
+        batch_content += f"Title: {alert.get('title', 'N/A')}\n"
+        batch_content += f"Summary: {alert.get('summary', 'N/A')}\n"
+        batch_content += f"Location: {alert.get('city', 'N/A')}, {alert.get('country', 'N/A')}\n"
+        batch_content += f"Link: {alert.get('link', 'N/A')}\n"
+        batch_content += f"---\n"
+    
+    batch_messages = [
+        {
+            "role": "system",
+            "content": "You are a threat intelligence analyst processing multiple security alerts in batch. For each alert, provide: threat_level (critical/high/moderate/low), category, key_entities, geographic_impact, and actionable_insights. Return structured analysis maintaining alert order."
+        },
+        {
+            "role": "user", 
+            "content": f"Analyze these {len(alerts_batch)} security alerts:\n\n{batch_content}\n\nProvide structured threat analysis for each alert:"
+        }
+    ]
+    
+    logger.info(f"[LLM Batch Router] Processing {len(alerts_batch)} alerts with {batch_provider}")
+    
+    try:
+        if batch_provider == "moonshot" and moonshot_chat:
+            result = moonshot_chat(batch_messages, temperature=0.2, max_tokens=2000)
+            if result and result.strip():
+                usage_counts["moonshot"] += 1
+                return result.strip(), "moonshot"
+        # Fallback to single-alert processing if batch fails
+        logger.warning("[LLM Batch Router] Batch processing failed, falling back to single alerts")
+        return "Batch processing unavailable, use single alert processing", "none"
+    except Exception as e:
+        logger.error(f"[LLM Batch Router][{batch_provider} error] {e}")
+    
+    usage_counts["none"] += 1
+    return "Batch processing temporarily unavailable", "none"
