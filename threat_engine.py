@@ -82,14 +82,14 @@ from threat_scorer import (
     early_warning_indicators,
 )
 
-from llm_router import route_llm
+from llm_router import route_llm, route_llm_search
 
 # ---------- Setup ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("threat_engine")
 
 # New: simple per-run counters for model usage & a safe bucket state
-_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "none": 0}
+_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
 _bucket_daily_counts = {}  # prevents earlier NameError if referenced by external utils
 
 def json_default(obj):
@@ -551,7 +551,7 @@ def summarize_single_alert(alert: dict) -> dict:
     {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
     {"role": "user", "content": full_text},
     ]
-    g_summary, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts)
+    g_summary, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts, task_type="enrichment")
     alert["gpt_summary"] = g_summary or alert.get("gpt_summary") or ""
     alert["model_used"] = model_used  # <-- explicit auditability
 
@@ -759,10 +759,11 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
     try:
         total_proc = len(summarized)
         logger.info(
-            "[Model usage summary] deepseek=%s, openai=%s, grok=%s, none=%s | Total processed: %s",
+            "[Model usage summary] deepseek=%s, openai=%s, grok=%s, moonshot=%s, none=%s | Total processed: %s",
             _model_usage_counts["deepseek"],
             _model_usage_counts["openai"],
             _model_usage_counts["grok"],
+            _model_usage_counts["moonshot"],
             _model_usage_counts["none"],
             total_proc
         )

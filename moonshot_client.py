@@ -1,0 +1,111 @@
+"""
+Kimi Moonshot API client for Sentinel AI RSS system
+Moonshot AI (月之暗面) - cost-effective Chinese AI provider with strong capabilities
+"""
+
+import os
+import json
+import logging
+import httpx
+from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger("moonshot_client")
+
+# Moonshot API Configuration
+MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY")
+MOONSHOT_MODEL = os.getenv("MOONSHOT_MODEL", "moonshot-v1-8k")  # Default to 8k context model
+MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1"
+
+def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_tokens: int = 1000) -> Optional[str]:
+    """
+    Call Kimi Moonshot API for chat completions.
+    
+    Args:
+        messages: List of message dicts with 'role' and 'content'
+        temperature: Response randomness (0.0-1.0)
+        max_tokens: Maximum response length
+        
+    Returns:
+        Response text or None if failed
+    """
+    if not MOONSHOT_API_KEY:
+        logger.warning("[Moonshot] API key not configured")
+        return None
+        
+    if not messages:
+        logger.warning("[Moonshot] No messages provided")
+        return None
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {MOONSHOT_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": MOONSHOT_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        logger.debug(f"[Moonshot] Calling API with model {MOONSHOT_MODEL}")
+        
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                f"{MOONSHOT_BASE_URL}/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                if "choices" in result and len(result["choices"]) > 0:
+                    content = result["choices"][0]["message"]["content"]
+                    logger.debug(f"[Moonshot] Success: {len(content)} chars")
+                    return content.strip()
+                else:
+                    logger.error(f"[Moonshot] Unexpected response format: {result}")
+                    return None
+                    
+            elif response.status_code == 401:
+                logger.error(f"[Moonshot] Authentication failed - check API key. Response: {response.text}")
+                return None
+            elif response.status_code == 429:
+                logger.warning("[Moonshot] Rate limit exceeded")
+                return None
+            else:
+                logger.error(f"[Moonshot] API error {response.status_code}: {response.text}")
+                return None
+                
+    except httpx.TimeoutException:
+        logger.error("[Moonshot] Request timeout")
+        return None
+    except Exception as e:
+        logger.error(f"[Moonshot] Unexpected error: {e}")
+        return None
+
+def test_moonshot_connection() -> bool:
+    """Test if Moonshot API is working correctly."""
+    if not MOONSHOT_API_KEY:
+        print("❌ MOONSHOT_API_KEY not configured")
+        return False
+        
+    test_messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Say 'Hello from Moonshot!' if you can hear me."}
+    ]
+    
+    result = moonshot_chat(test_messages, temperature=0.1)
+    
+    if result:
+        print(f"✅ Moonshot API working: {result}")
+        return True
+    else:
+        print("❌ Moonshot API test failed")
+        return False
+
+if __name__ == "__main__":
+    # Test the connection when run directly
+    test_moonshot_connection()

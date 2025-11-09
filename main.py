@@ -13,6 +13,7 @@ import logging
 import traceback
 import base64
 from typing import Any, Dict, Optional
+from datetime import datetime
 
 from flask import Flask, request, jsonify, make_response
 
@@ -1426,6 +1427,44 @@ def feedback_alert():
             return _build_cors_response(make_response(jsonify({"error": "Feedback store failed"}), 500))
 
     return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
+# ---------- Real-time Threat Search (Moonshot primary) ----------
+@app.route("/search/threats", methods=["POST", "OPTIONS"])
+def search_threats():
+    """Real-time threat intelligence search using Kimi Moonshot"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+
+    try:
+        from llm_router import route_llm_search
+    except Exception:
+        return _build_cors_response(make_response(jsonify({"error": "Search service unavailable"}), 503))
+
+    payload = _json_request()
+    query = payload.get("query", "").strip()
+    context = payload.get("context", "")
+    
+    if not query:
+        return _build_cors_response(make_response(jsonify({"error": "Query required"}), 400))
+
+    if len(query) > 500:
+        return _build_cors_response(make_response(jsonify({"error": "Query too long (max 500 chars)"}), 400))
+
+    try:
+        # Use dedicated search routing with Moonshot primary
+        result, model_used = route_llm_search(query, context)
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "query": query,
+            "result": result,
+            "model": model_used,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }))
+        
+    except Exception as e:
+        logger.error("search_threats error: %s\n%s", e, traceback.format_exc())
+        return _build_cors_response(make_response(jsonify({"error": "Search failed"}), 500))
 
 # ---------- Entrypoint ----------
 if __name__ == "__main__":
