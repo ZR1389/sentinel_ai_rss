@@ -589,6 +589,11 @@ def summarize_single_alert(alert: dict) -> dict:
     # Baseline metrics
     alert.update(_baseline_metrics(alert))
 
+    # After baseline metrics calculation - skip zero-incident alerts
+    if alert.get("incident_count_30d", 0) == 0 and alert.get("recent_count_7d", 0) == 0:
+        logger.info(f"Skipping alert with zero incidents: {alert.get('title', '')[:80]}")
+        return None  # Don't enrich zero-incident alerts
+
     # Early warnings
     ewi = early_warning_indicators(historical_incidents) or []
     alert["early_warning_indicators"] = ewi

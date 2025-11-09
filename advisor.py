@@ -92,7 +92,7 @@ logging.basicConfig(level=logging.INFO)
 TEMPERATURE = float(os.getenv("ADVISOR_TEMPERATURE", 0.2))
 
 # ---------- Model usage tracking ----------
-_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0}
+_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0}
 
 # ---------- Domain priority ----------
 DOMAIN_PRIORITY = [
@@ -214,34 +214,52 @@ REQUIRED_HEADERS = [
 
 def ensure_sections(advisory: str) -> str:
     """
-    Fixed: Only add sections if they don't exist OR exist but have no meaningful content
+    Improved: More robust content detection that respects LLM-generated content
     """
     out = advisory.strip()
     
     for pat in REQUIRED_HEADERS:
         header_text = pat.strip("^$").replace(r"\ ", " ").replace(r" —", " —")
         
-        # Check if section exists with content
+        # Check if section exists with substantial content
         section_exists = False
         lines = out.split('\n')
         
         for i, line in enumerate(lines):
             if re.search(pat, line, flags=re.MULTILINE):
-                # Check if this section has content beyond the header
+                # Check if this section has meaningful content beyond the header
                 has_content = False
-                for j in range(i + 1, min(i + 5, len(lines))):
+                content_lines = 0
+                
+                for j in range(i + 1, min(i + 10, len(lines))):  # Look further ahead
+                    if j >= len(lines):
+                        break
                     next_line = lines[j].strip()
-                    if next_line and not re.search(r'^[A-Z][A-Z\s/]+ —', next_line):
-                        if next_line not in ['', '• [auto] Section added (no content)']:
-                            has_content = True
-                            break
+                    
+                    # Skip empty lines
+                    if not next_line:
+                        continue
+                    
+                    # Stop if we hit another section header
                     if re.search(r'^[A-Z][A-Z\s/]+ —', next_line):
                         break
+                    
+                    # Skip auto-added placeholders
+                    if '[auto] Section added' in next_line:
+                        continue
+                    
+                    # Count substantial content lines
+                    if len(next_line) > 10:  # More than just bullets or short phrases
+                        content_lines += 1
+                        if content_lines >= 1:  # At least one substantial line
+                            has_content = True
+                            break
                 
                 if has_content:
                     section_exists = True
                     break
         
+        # Only add placeholder if section truly doesn't exist or is empty
         if not section_exists:
             out += f"\n\n{header_text}\n• [auto] Section added (no content)"
     
@@ -458,6 +476,8 @@ def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
     bits = []
     if td: bits.append(f"trend_direction={td}")
     if isinstance(br, (int, float)): bits.append(f"baseline={round(float(br), 2)}x")
+    elif hasattr(br, 'to_eng_string'):  # Decimal case
+        bits.append(f"baseline={round(float(br), 2)}x")
     if isinstance(ic30, int): bits.append(f"incident_count_30d={ic30}")
     if isinstance(anom, bool) and anom: bits.append("anomaly_flag=true")
     if isinstance(p_future, (int, float)): bits.append(f"p_next48h={round(float(p_future), 2)}")
@@ -465,28 +485,57 @@ def _build_trend_citation_line(alert: Dict[str, Any]) -> Tuple[str, str]:
 
     domains = alert.get("domains") or []
     primary = _first_present(domains)
+    category = (alert.get("category") or "").lower()
+    title_text = (alert.get("title", "") + " " + alert.get("summary", "")).lower()
 
+    # Smart routing based on category, domains, and content
     action = "tighten posture now (route alternatives, safe havens, MFA/passkeys) and review in 12h"
-    if primary == "travel_mobility":
+    
+    # Prioritize specific mobility/infrastructure threats
+    if (primary == "travel_mobility" or 
+        any(word in title_text for word in ["airport", "railway", "transport", "border", "road closure", "bridge"])):
         action = "shift departures ±30 minutes, reroute via secondary arterials, and avoid choke points until checkpoint density <1/day or curfews lift"
-    elif primary == "cyber_it":
+    
+    # Cyber-specific actions
+    elif (primary == "cyber_it" or 
+          "cyber" in category or
+          any(word in title_text for word in ["hack", "breach", "ransomware", "malware", "cyber"])):
         action = "enforce passkeys/MFA, geo-fence admin logins, and disable legacy auth for 72h"
-    elif primary == "digital_privacy_surveillance":
+    
+    # Surveillance/privacy concerns  
+    elif (primary == "digital_privacy_surveillance" or
+          any(word in title_text for word in ["surveillance", "privacy", "monitoring", "tracking"])):
         action = "travel on a clean device, disable biometric unlock at ports, and avoid untrusted Wi-Fi"
-    elif primary == "physical_safety":
+    
+    # Physical safety threats
+    elif (primary == "physical_safety" or 
+          "crime" in category or
+          any(word in title_text for word in ["violence", "attack", "shooting", "assault", "murder"])):
         action = "avoid poorly lit choke points after 20:00, use well-lit arterials, and stage near 24/7 venues"
-    elif primary == "civil_unrest":
+    
+    # Civil unrest
+    elif (primary == "civil_unrest" or
+          "civil unrest" in category or  
+          any(word in title_text for word in ["protest", "riot", "demonstration", "unrest"])):
         action = "bypass protest nodes via perimeter streets and adjust movement to off-peak windows"
-    elif primary == "terrorism":
-        action = "minimize dwell in predictable queues, avoid glass-heavy facades/atriums, and keep distance from crowd cores"
-    elif primary == "kfr_extortion":
-        action = "vary routes/timings by ±20 minutes, verify ride-hail, and keep hands free for control"
-    elif primary == "infrastructure_utilities":
-        action = "maintain fuel ≥1/2 tank, carry water/cash, and pre-map alt power/charging"
-    elif primary == "environmental_hazards":
-        action = "avoid flood-prone underpasses, set AQI alerts, and carry N95 if AQI > 100"
-    elif primary == "public_health_epidemic":
-        action = "prefer bottled water, carry ORS, and avoid high-risk street food until case counts drop"
+    
+    # Terrorism threats
+    elif (primary == "terrorism" or
+          "terrorism" in category or
+          any(word in title_text for word in ["terrorism", "terrorist", "bomb", "explosion", "ied"])):
+        action = "avoid crowded public venues, use hardened transport, and maintain 360° situational awareness"
+    
+    # Infrastructure/utility disruptions
+    elif (primary == "infrastructure_utilities" or
+          "infrastructure" in category or
+          any(word in title_text for word in ["power", "electricity", "outage", "blackout", "grid"])):
+        action = "secure backup power/comms, pre-stage supplies, and plan offline contingencies for 24-48h"
+    
+    # Health/epidemic concerns
+    elif (any(word in title_text for word in ["epidemic", "outbreak", "virus", "contamination", "health"])):
+        action = "follow health protocols, secure clean water/supplies, and monitor official health advisories"
+    
+    # OT/ICS specific
     elif primary == "ot_ics":
         action = "isolate OT segments, block external remote access, and restrict to break-glass accounts"
 
@@ -549,7 +598,8 @@ def _aggregate_alerts(alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     # aggregates - FIXED: Ensure proper type conversion
     try:
-        base["score"] = float(top[0].get("score", base.get("score"))) if top[0].get("score") is not None else base.get("score")
+        base["score"] = float(top[0].get("score", base.get("score"))) if top[0].get("score") is not None else base.get("score"
+        )
     except (TypeError, ValueError):
         base["score"] = base.get("score")
         
@@ -671,7 +721,54 @@ def _sources_reliability_lines(sources: List[Dict[str, str]]) -> List[str]:
             out.append(f"- {name} ({tag}){reason_str}")
     return out
 
-# ---------- Main entry ----------
+# ---------- Debugging utilities ----------
+def get_llm_routing_stats():
+    """
+    Get comprehensive LLM routing statistics for monitoring and debugging.
+    Useful for understanding failure patterns and provider reliability.
+    """
+    total_requests = sum(_model_usage_counts.values())
+    stats = {
+        "total_requests": total_requests,
+        "usage_counts": dict(_model_usage_counts),
+        "success_rate": round((total_requests - _model_usage_counts.get("fallback", 0) - _model_usage_counts.get("handle_query_fallback", 0)) / max(total_requests, 1) * 100, 2) if total_requests > 0 else 0,
+        "primary_provider_success": round(_model_usage_counts.get("deepseek", 0) / max(total_requests, 1) * 100, 2) if total_requests > 0 else 0,
+        "fallback_rate": round((_model_usage_counts.get("fallback", 0) + _model_usage_counts.get("handle_query_fallback", 0)) / max(total_requests, 1) * 100, 2) if total_requests > 0 else 0
+    }
+    return stats
+
+def reset_llm_routing_stats():
+    """Reset LLM routing statistics (useful for testing or periodic monitoring)"""
+    global _model_usage_counts
+    _model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0, "handle_query_fallback": 0}
+    logger.info("[Advisor] LLM routing statistics reset")
+
+def log_llm_routing_summary():
+    """
+    Log a comprehensive summary of LLM routing performance.
+    Call this periodically to understand provider reliability patterns.
+    """
+    stats = get_llm_routing_stats()
+    logger.info("="*60)
+    logger.info("[Advisor] LLM ROUTING PERFORMANCE SUMMARY")
+    logger.info("="*60)
+    logger.info(f"Total requests: {stats['total_requests']}")
+    logger.info(f"Overall success rate: {stats['success_rate']}%")
+    logger.info(f"Primary provider (DeepSeek) success: {stats['primary_provider_success']}%")
+    logger.info(f"Fallback rate: {stats['fallback_rate']}%")
+    logger.info("Provider breakdown:")
+    for provider, count in stats['usage_counts'].items():
+        percentage = round(count / max(stats['total_requests'], 1) * 100, 1)
+        logger.info(f"  {provider}: {count} requests ({percentage}%)")
+    
+    if stats['fallback_rate'] > 10:
+        logger.warning(f"⚠️  High fallback rate ({stats['fallback_rate']}%) - investigate provider issues!")
+    if stats['primary_provider_success'] < 50:
+        logger.warning(f"⚠️  Low primary provider success ({stats['primary_provider_success']}%) - check DeepSeek connectivity!")
+    
+    logger.info("="*60)
+
+# ---------- Public wrappers ----------
 def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Optional[Dict[str, Any]] = None, plan: str = "FREE") -> str:
     trend_line, action = _build_trend_citation_line(alert)
     input_data, roles, hits = _build_input_payload(alert, user_message, profile_data)
@@ -726,14 +823,26 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         {"role": "user", "content": user_content},
     ]
 
-    # Sequential routing: DeepSeek → OpenAI → Grok
+    # Sequential routing: DeepSeek → OpenAI → Grok with detailed failure logging
+    logger.info("[Advisor] Starting LLM routing for advisory generation...")
     text, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts)
 
     if not text:
-        logger.error("[Advisor] All providers failed; using deterministic fallback.")
+        # Enhanced logging for debugging LLM failures
+        logger.error("[Advisor] CRITICAL: All LLM providers failed to generate advisory")
+        logger.error(f"[Advisor] Final usage counts: {_model_usage_counts}")
+        logger.error(f"[Advisor] Alert context: category={alert.get('category')}, region={alert.get('region')}, score={alert.get('score')}")
+        logger.error(f"[Advisor] User message length: {len(user_message)} chars")
+        logger.error(f"[Advisor] System prompt length: {len(system_content)} chars")
+        logger.error("[Advisor] Falling back to deterministic template...")
+        
+        # Track fallback usage
+        _model_usage_counts["fallback"] = _model_usage_counts.get("fallback", 0) + 1
+        
         return _fallback_advisory(alert, trend_line, input_data)
 
-    logger.info(f"[Advisor] model_used={model_used} | usage_counts={_model_usage_counts}")
+    logger.info(f"[Advisor] Successfully generated advisory using {model_used}")
+    logger.info(f"[Advisor] Current usage counts: {_model_usage_counts}")
     advisory = text
 
     if trend_line not in advisory:
@@ -790,7 +899,12 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     lines = []
     lines.append(f"ALERT — {region} | {risk_level} | {threat_type}")
     lines.append("BULLETPOINT RISK SUMMARY —")
-    lines.append(f"- Trend: {alert.get('trend_direction','stable')} | 7d/baseline: {alert.get('baseline_ratio','1.0')}x | 30d: {alert.get('incident_count_30d','n/a')}")
+    # Safe decimal conversion for baseline_ratio
+    baseline_ratio = alert.get('baseline_ratio', 1.0)
+    if hasattr(baseline_ratio, 'to_eng_string'):  # Decimal case
+        baseline_ratio = float(baseline_ratio)
+    
+    lines.append(f"- Trend: {alert.get('trend_direction','stable')} | 7d/baseline: {baseline_ratio}x | 30d: {alert.get('incident_count_30d','n/a')}")
     if alert.get("anomaly_flag", alert.get("is_anomaly")): lines.append("- Anomaly: true (pattern deviation)")
     lines.append("TRIGGERS / KEYWORDS — (see sources)")
     lines.append(f"CATEGORIES / SUBCATEGORIES — {threat_type} / {alert.get('subcategory','Unspecified')}")
@@ -890,6 +1004,7 @@ def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
     query = (payload.get("query") or "").strip()
     profile = payload.get("profile_data") or {}
     alerts = (payload.get("input_data") or {}).get("alerts") or []
+    
     try:
         result = generate_advice(query, alerts, user_profile=profile, **kwargs)  # type: ignore
         if isinstance(result, str):
@@ -897,7 +1012,15 @@ def handle_user_query(payload: dict, email: str = "", **kwargs) -> dict:
         if isinstance(result, dict) and "reply" in result:
             return result
         return {"reply": json.dumps(result, ensure_ascii=False, default=_json_serialize), "alerts": alerts}
-    except Exception:
+    except Exception as e:
+        logger.error(f"[Advisor] handle_user_query failed: {e}")
+        logger.error(f"[Advisor] Query: {query[:100]}...")
+        logger.error(f"[Advisor] Alerts count: {len(alerts)}")
+        logger.error(f"[Advisor] Final fallback to render_advisory...")
+        
+        # Track this as an additional fallback
+        _model_usage_counts["handle_query_fallback"] = _model_usage_counts.get("handle_query_fallback", 0) + 1
+        
         alert = alerts[0] if alerts else {}
         advisory = render_advisory(alert, query, profile)
         return {"reply": advisory, "alerts": alerts}
