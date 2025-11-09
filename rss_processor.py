@@ -1238,6 +1238,7 @@ async def _build_alert_from_entry(
         # provenance
         "location_method": location_method,
         "location_confidence": location_confidence,
+        "location_sharing": True if (latitude is not None and longitude is not None) else False,
         "language": lang,
         "latitude": latitude,
         "longitude": longitude,
