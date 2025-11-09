@@ -59,7 +59,8 @@ def _today_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 def _ratio(a: float, b: float, default: float = 1.0) -> float:
-    if b <= 0:
+    """Safe ratio calculation with fallback."""
+    if b == 0:
         return default
     return a / b
 
@@ -71,6 +72,38 @@ def _label_from_score(score: float) -> str:
     if score >= 65: return "High"
     if score >= 35: return "Moderate"
     return "Low"
+
+def _bucket_daily_counts(incidents: List[Dict[str, Any]], days: int = 28) -> List[int]:
+    """
+    Bucket incidents into daily counts over the last N days.
+    Returns a list of length 'days' where index 0 is oldest day, index -1 is most recent.
+    """
+    if not incidents:
+        return [0] * days
+    
+    now = datetime.now(timezone.utc)
+    # Create buckets for each day
+    buckets = [0] * days
+    
+    for incident in incidents:
+        incident_dt = _parse_dt(incident.get("created_at") or incident.get("timestamp"))
+        if not incident_dt:
+            continue
+            
+        # Ensure timezone-aware comparison
+        if incident_dt.tzinfo is None:
+            incident_dt = incident_dt.replace(tzinfo=timezone.utc)
+        
+        # Calculate days ago (0 = today, 1 = yesterday, etc.)
+        delta = now - incident_dt
+        days_ago = int(delta.total_seconds() / 86400)  # 86400 seconds in a day
+        
+        # Place in appropriate bucket (if within range)
+        if 0 <= days_ago < days:
+            bucket_idx = days - 1 - days_ago  # reverse index (oldest first)
+            buckets[bucket_idx] += 1
+    
+    return buckets
 
 # --------------------------- severity & context terms ---------------------------
 

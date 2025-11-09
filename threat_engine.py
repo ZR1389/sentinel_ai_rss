@@ -277,10 +277,7 @@ def _baseline_metrics(alert) -> dict:
 def is_relevant(alert: dict) -> bool:
     """
     Lightweight relevance gate to exclude non-security junk while keeping recall.
-    Relies on:
-      - risk_shared.relevance_flags (sports/bloggy signals)
-      - category_confidence floor
-      - domains non-empty (unless kw_rule indicates strong broad+impact hit)
+    More lenient for raw alerts that haven't been enriched yet.
     """
     text = (alert.get("title","") + " " + alert.get("summary","")).lower()
     flags = alert.get("relevance_flags") or relevance_flags(text)
@@ -290,7 +287,8 @@ def is_relevant(alert: dict) -> bool:
         return False
     if any(bad in text for bad in [
         "football","basketball","soccer","tennis","nba","nfl","fifa","cricket","olympics",
-        "concert","music festival","award show","box office","celebrity"
+        "concert","music festival","award show","box office","celebrity",
+        "bundesliga","hsv","bvb","rb leipzig","hoffenheim"
     ]):
         return False
 
@@ -304,19 +302,189 @@ def is_relevant(alert: dict) -> bool:
     ]):
         return False
 
-    # Require minimum classification confidence
-    if float(alert.get("category_confidence") or 0.0) < 0.35:
+    # For raw alerts that haven't been processed yet, be more lenient
+    category = alert.get("category")
+    domains = alert.get("domains") or []
+    category_confidence = float(alert.get("category_confidence") or 0.0)
+    
+    # If this is a raw alert (no category/domains), allow it through for enrichment
+    if not category and not domains:
+        return True
+    
+    # For enriched alerts, apply stricter filters
+    if category_confidence > 0 and category_confidence < 0.35:
         return False
 
-    # Domains must be present — unless kw_rule flagged a strong broad+impact match
+    # Domains must be present for enriched alerts — unless kw_rule flagged a strong broad+impact match
     kw_rule = (alert.get("kw_rule") or "").lower()
-    domains = alert.get("domains") or []
-    if not domains:
+    if category and not domains:
         strong_rule = ("broad+impact" in kw_rule)
         if not strong_rule:
             return False
 
     return True
+
+def is_relevant_for_category(alert: dict, target_category: str = None, target_region: str = None) -> bool:
+    """
+    Enhanced relevance check that considers category alignment and location relevance.
+    More lenient for raw alerts that haven't been enriched yet.
+    """
+    # For raw alerts without category/domains, apply basic text-based filtering
+    alert_category = alert.get("category", "").lower()
+    alert_domains = alert.get("domains", [])
+    alert_text = (alert.get("title", "") + " " + alert.get("summary", "")).lower()
+    
+    # Apply basic relevance filter (now more lenient for raw alerts)
+    if not is_relevant(alert):
+        return False
+    
+    # If no target category specified, use basic relevance
+    if not target_category:
+        return True
+    
+    target_cat_lower = target_category.lower()
+    
+    # Direct category match (if category is populated)
+    if alert_category and target_cat_lower in alert_category:
+        return True
+    
+    # Enhanced category matching with keyword detection for all alerts
+    if target_cat_lower == "cybersecurity" or target_cat_lower == "cyber":
+        # Check domains first (if present)
+        cyber_domains = ["cyber_it", "digital_privacy_surveillance"]
+        if alert_domains and any(domain in alert_domains for domain in cyber_domains):
+            return True
+        
+        # Fallback to keyword detection in text (works for raw alerts)
+        # Be more strict - require strong cybersecurity indicators
+        strong_cyber_keywords = [
+            "cyber", "hack", "breach", "malware", "ransomware", "phishing", 
+            "ddos", "vulnerability", "exploit", "data theft", "cybersecurity",
+            "intrusion", "backdoor", "trojan", "spyware", "botnet"
+        ]
+        weak_cyber_keywords = [
+            "security", "firewall", "antivirus", "encryption", "password", 
+            "authentication", "network"
+        ]
+        
+        # Require either strong keywords OR weak keywords with additional context
+        has_strong = any(keyword in alert_text for keyword in strong_cyber_keywords)
+        has_weak_with_context = (
+            any(keyword in alert_text for keyword in weak_cyber_keywords) and
+            any(context in alert_text for context in ["threat", "attack", "risk", "incident", "alert", "warning"])
+        )
+        
+        if has_strong or has_weak_with_context:
+            return True
+    
+    elif target_cat_lower == "infrastructure":
+        infra_domains = ["infrastructure_utilities", "travel_mobility"]
+        if alert_domains and any(domain in alert_domains for domain in infra_domains):
+            return True
+        
+        infra_keywords = [
+            "infrastructure", "power grid", "electricity", "water supply",
+            "transportation", "railway", "airport", "bridge", "tunnel",
+            "energy", "utility", "pipeline", "outage"
+        ]
+        if any(keyword in alert_text for keyword in infra_keywords):
+            return True
+    
+    elif target_cat_lower == "physical_safety":
+        safety_domains = ["physical_safety", "civil_unrest", "terrorism"]
+        if alert_domains and any(domain in alert_domains for domain in safety_domains):
+            return True
+        
+        safety_keywords = [
+            "violence", "attack", "threat", "terrorism", "protest", "riot",
+            "shooting", "bomb", "explosion", "crime", "assault", "murder",
+            "kidnapping", "hostage"
+        ]
+        if any(keyword in alert_text for keyword in safety_keywords):
+            return True
+    
+    elif target_cat_lower == "health" or target_cat_lower == "epidemic":
+        health_domains = ["public_health_epidemic", "environmental_hazards"]
+        if alert_domains and any(domain in alert_domains for domain in health_domains):
+            return True
+        
+        health_keywords = [
+            "disease", "outbreak", "epidemic", "virus", "bacteria", "infection",
+            "health", "medical", "hospital", "vaccine", "contamination",
+            "pandemic", "illness", "poisoning"
+        ]
+        if any(keyword in alert_text for keyword in health_keywords):
+            return True
+    
+    # For broad categories, be more inclusive
+    elif target_cat_lower in ["crime", "terrorism", "civil unrest"]:
+        crime_keywords = [
+            "crime", "criminal", "theft", "robbery", "fraud", "murder",
+            "terrorism", "terrorist", "bomb", "attack", "threat",
+            "protest", "riot", "demonstration", "violence", "unrest"
+        ]
+        if any(keyword in alert_text for keyword in crime_keywords):
+            return True
+    
+    # Location relevance check (more flexible)
+    if target_region:
+        alert_region = (alert.get("region") or "").lower()
+        alert_country = (alert.get("country") or "").lower()
+        alert_city = (alert.get("city") or "").lower()
+        target_region_lower = target_region.lower()
+        
+        location_match = (
+            target_region_lower in alert_region or
+            target_region_lower in alert_country or
+            target_region_lower in alert_city or
+            alert_region in target_region_lower or
+            alert_country in target_region_lower
+        )
+        
+        # For "Europe", also check for European country names
+        if target_region_lower == "europe":
+            european_countries = [
+                "germany", "france", "italy", "spain", "poland", "romania", 
+                "netherlands", "belgium", "greece", "portugal", "czech", 
+                "hungary", "sweden", "austria", "belarus", "switzerland",
+                "bulgaria", "serbia", "denmark", "finland", "slovakia",
+                "norway", "ireland", "croatia", "bosnia", "albania",
+                "lithuania", "slovenia", "latvia", "estonia", "macedonia",
+                "moldova", "luxembourg", "malta", "iceland", "montenegro",
+                "uk", "united kingdom", "britain", "england", "scotland",
+                "wales", "ukraine", "russia"
+            ]
+            if any(country in alert_text or country in alert_country or country in alert_region for country in european_countries):
+                location_match = True
+        
+        if not location_match:
+            return False
+    
+    return True
+
+def get_category_specific_alerts(region=None, country=None, city=None, category=None, limit=1000):
+    """
+    Fetch raw alerts with enhanced filtering for category and location relevance.
+    """
+    raw_alerts = fetch_raw_alerts_from_db(region=region, country=country, city=city, limit=limit)
+    
+    if not category:
+        return raw_alerts
+    
+    # Debug: log sample alert details
+    if raw_alerts:
+        sample_alert = raw_alerts[0]
+        logger.info(f"Sample alert - Category: {sample_alert.get('category')}, Domains: {sample_alert.get('domains')}, "
+                   f"Title: {sample_alert.get('title', '')[:100]}...")
+    
+    # Filter alerts for category relevance
+    relevant_alerts = []
+    for alert in raw_alerts:
+        if is_relevant_for_category(alert, target_category=category, target_region=region):
+            relevant_alerts.append(alert)
+    
+    logger.info(f"Filtered {len(raw_alerts)} raw alerts to {len(relevant_alerts)} category-relevant alerts for {category}")
+    return relevant_alerts
 
 # ---------- Enrichment Pipeline ----------
 def _structured_sources(alert: dict) -> list[dict]:
@@ -338,6 +506,9 @@ def summarize_single_alert(alert: dict) -> dict:
     full_text = f"{title}\n{summary}".strip()
     location = alert.get("city") or alert.get("region") or alert.get("country")
     triggers = alert.get("tags", [])
+
+    # Enhance with location confidence data
+    alert = enhance_location_confidence(alert)
 
     # Lightweight relevance flags for diagnostics (sports/info-ops)
     try:
@@ -600,13 +771,14 @@ def _normalize_for_db(a: dict) -> dict:
             pass
     return a
 
-def enrich_and_store_alerts(region=None, country=None, city=None, limit=1000, write_to_db: bool = ENGINE_WRITE_TO_DB):
-    raw_alerts = get_raw_alerts(region=region, country=country, city=city, limit=limit)
+def enrich_and_store_alerts(region=None, country=None, city=None, category=None, limit=1000, write_to_db: bool = ENGINE_WRITE_TO_DB):
+    # Use enhanced category filtering
+    raw_alerts = get_category_specific_alerts(region=region, country=country, city=city, category=category, limit=limit)
     if not raw_alerts:
         logger.info("No raw alerts to process.")
         return []
 
-    logger.info(f"Fetched {len(raw_alerts)} raw alerts. Starting enrichment and filtering...")
+    logger.info(f"Fetched {len(raw_alerts)} category-relevant raw alerts. Starting enrichment and filtering...")
     enriched_alerts = summarize_alerts(raw_alerts)
 
     if enriched_alerts and write_to_db:
@@ -627,6 +799,38 @@ def enrich_and_store_alerts(region=None, country=None, city=None, limit=1000, wr
         logger.info("No enriched alerts to store.")
 
     return enriched_alerts
+
+def enhance_location_confidence(alert: dict) -> dict:
+    """
+    Use the new location_method and location_confidence fields from RSS processor
+    to enhance threat analysis location accuracy.
+    """
+    location_method = alert.get("location_method", "none")
+    location_confidence = alert.get("location_confidence", "none")
+    
+    # Map location confidence to threat scoring weights
+    confidence_weights = {
+        "high": 1.0,      # NER, keywords
+        "medium": 0.8,    # LLM
+        "low": 0.6,       # feed_tag, fuzzy
+        "none": 0.3       # no location determined
+    }
+    
+    location_weight = confidence_weights.get(location_confidence, 0.3)
+    
+    # Enhance alert with location reliability score
+    alert["location_reliability"] = location_weight
+    alert["location_source"] = location_method
+    
+    # If we have high-confidence location data, boost regional relevance
+    if location_weight >= 0.8 and alert.get("latitude") and alert.get("longitude"):
+        alert["geo_precision"] = "high"
+    elif location_weight >= 0.6:
+        alert["geo_precision"] = "medium"
+    else:
+        alert["geo_precision"] = "low"
+    
+    return alert
 
 # ---------- CLI ----------
 
