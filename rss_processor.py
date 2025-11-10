@@ -791,6 +791,66 @@ def _first_sentence(text: str) -> str:
 def _normalize_summary(title: str, summary: str) -> str:
     return summary.strip() if summary and len(summary) >= 20 else (title or "").strip()
 
+def _clean_html_content(text: str) -> str:
+    """
+    Clean HTML tags, entities, and unwanted content from RSS text.
+    
+    Args:
+        text: Raw HTML/RSS content
+        
+    Returns:
+        Clean, readable text suitable for frontend display
+    """
+    if not text:
+        return ""
+    
+    import html
+    import re
+    
+    # Decode HTML entities first (&#8211; → –, &nbsp; → space, etc.)
+    text = html.unescape(text)
+    
+    # Remove HTML tags but preserve spacing
+    text = re.sub(r'<[^>]+>', ' ', text)
+    
+    # Remove common RSS footer patterns
+    patterns_to_remove = [
+        r'The post.*?appeared first on.*?\.',
+        r'\[&#?8230;?\]',  # [...] truncation markers
+        r'\[…\]',
+        r'\[\.\.\.\]',
+        r'<a\s+href[^>]*>.*?</a>',  # Any remaining link tags
+        r'Continue reading.*',
+        r'Read more.*',
+        r'Full article.*',
+    ]
+    
+    for pattern in patterns_to_remove:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
+    
+    # Clean up excessive whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove leading/trailing whitespace and common prefixes
+    text = text.strip()
+    
+    # Remove empty parentheses or brackets that might be left
+    text = re.sub(r'\(\s*\)', '', text)
+    text = re.sub(r'\[\s*\]', '', text)
+    
+    # Ensure the text ends properly (not with incomplete sentences)
+    if text and not text[-1] in '.!?':
+        # Try to find the last complete sentence
+        last_sentence_end = max(
+            text.rfind('.'),
+            text.rfind('!'), 
+            text.rfind('?')
+        )
+        if last_sentence_end > len(text) * 0.5:  # Only truncate if we keep most of the content
+            text = text[:last_sentence_end + 1]
+    
+    return text.strip()
+
 def _extract_source(url: str) -> str:
     try: return re.sub(r"^www\.", "", urlparse(url).netloc)
     except Exception: return "unknown"
@@ -940,9 +1000,13 @@ def _extract_entries(feed_text: str, feed_url: str) -> Tuple[List[Dict[str, Any]
     entries = []
     source_url = fp.feed.get("link") if fp and fp.feed else feed_url
     for e in fp.entries or []:
+        # Clean HTML content for frontend display
+        raw_title = (e.get("title") or "").strip()
+        raw_summary = (e.get("summary") or e.get("description") or "").strip()
+        
         entries.append({
-            "title": (e.get("title") or "").strip(),
-            "summary": (e.get("summary") or e.get("description") or "").strip(),
+            "title": _clean_html_content(raw_title),
+            "summary": _clean_html_content(raw_summary),
             "link": (e.get("link") or feed_url or "").strip(),
             "published": _parse_published(e),
         })
