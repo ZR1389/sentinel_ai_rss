@@ -14,15 +14,16 @@ from rss_processor import (
     _LOCATION_BATCH_BUFFER, 
     _LOCATION_BATCH_LOCK,
     _should_use_moonshot_for_location,
-    _process_location_batch_sync
+    _process_location_batch
 )
 
 def test_moonshot_batching():
     """Test the hybrid batching system"""
-    print("🧪 Testing Moonshot Hybrid Batching System\n")
-    
-    # Test entries that should trigger batching
-    test_entries = [
+    async def run_test():
+        print("🧪 Testing Moonshot Hybrid Batching System\n")
+        
+        # Test entries that should trigger batching
+        test_entries = [
         {
             'title': 'Multiple cyber incidents reported across European region',
             'summary': 'Various countries affected by coordinated attacks',

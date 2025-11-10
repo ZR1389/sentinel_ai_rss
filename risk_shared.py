@@ -458,14 +458,14 @@ class KeywordMatcher:
     Rules:
       1) If any strict keyword appears anywhere               -> HIT ("keyword")
       2) Else, if any sentence has >=1 broad AND >=1 impact  -> HIT ("broad+impact(sent)")
-      3) Else, if any broad within 'window' tokens of impact -> HIT ("broad+impact(window)")
+      3) Else, if any broad within 'window' tokens of impact -> HIT ("broad+impact(window)") [default: 15 tokens]
       4) Else -> no hit
     """
     def __init__(self,
                  keywords: Sequence[str],
                  broad_terms: Sequence[str] = BROAD_TERMS_DEFAULT,
                  impact_terms: Sequence[str] = IMPACT_TERMS_DEFAULT,
-                 window: int = 12):
+                 window: int = 15):
         self.keywords_list = list(dict.fromkeys([_normalize(x) for x in keywords if _normalize(x)]))
         self.broad_list    = list(dict.fromkeys([_normalize(x) for x in broad_terms if _normalize(x)]))
         self.impact_list   = list(dict.fromkeys([_normalize(x) for x in impact_terms if _normalize(x)]))
@@ -506,7 +506,7 @@ class KeywordMatcher:
         return MatchResult(False, None, {})
 
 # Convenience: build a module-level default matcher from our current catalog.
-def build_default_matcher(window: int = 12) -> KeywordMatcher:
+def build_default_matcher(window: int = 15) -> KeywordMatcher:
     return KeywordMatcher(
         keywords=list(KEYWORD_SET),  # your strict set from categories+domains; override as needed
         broad_terms=BROAD_TERMS_DEFAULT,
@@ -515,7 +515,7 @@ def build_default_matcher(window: int = 12) -> KeywordMatcher:
     )
 
 # Construct once; callers can import DEFAULT_MATCHER or build their own.
-DEFAULT_MATCHER: KeywordMatcher = build_default_matcher(window=12)
+DEFAULT_MATCHER: KeywordMatcher = build_default_matcher(window=15)
 
 def decide_with_default_keywords(text: str, title: str = "") -> MatchResult:
     """

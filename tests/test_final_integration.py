@@ -7,7 +7,7 @@ import httpx
 import json
 from rss_processor import (
     _build_alert_from_entry, _LOCATION_BATCH_BUFFER, _LOCATION_BATCH_LOCK,
-    _should_use_moonshot_for_location, _process_location_batch_sync
+    _should_use_moonshot_for_location, _process_location_batch
 )
 
 async def test_location_detection():
@@ -99,7 +99,9 @@ async def test_location_detection():
     if buffer_size > 0:
         print("🧠 Processing Moonshot batch...")
         try:
-            batch_results = _process_location_batch_sync()
+            import httpx
+            async with httpx.AsyncClient() as client:
+                batch_results = await _process_location_batch(client)
             print(f"   ✅ Batch processed: {len(batch_results)} results")
             for uuid, location in batch_results.items():
                 print(f"      {uuid[:8]}: {location.get('city', 'None')}, {location.get('country', 'None')}")

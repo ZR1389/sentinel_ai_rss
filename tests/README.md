@@ -14,6 +14,12 @@ This directory contains tests for the Moonshot location batching buffer cleanup 
   - Tests multiple consecutive ingestion calls
   - Tests empty buffer state handling
 
+### Race Condition & Thread Safety Tests
+- **`test_race_conditions.py`** - Tests for race condition fixes
+  - Tests thread-safe pending batch results storage
+  - Tests batch error recovery (buffer preservation on errors)
+  - Tests elimination of function attribute pollution
+
 ### How to Run Tests
 
 ```bash
@@ -22,6 +28,9 @@ python tests/test_buffer_cleanup.py
 
 # Run comprehensive buffer cleanup tests
 python tests/test_buffer_comprehensive.py
+
+# Run race condition and thread safety tests
+python tests/test_race_conditions.py
 ```
 
 ### Test Results Summary
@@ -31,6 +40,9 @@ All tests verify that:
 - ✅ Concurrent access to the buffer is handled safely
 - ✅ Multiple consecutive calls work correctly
 - ✅ Empty buffer state is handled gracefully
+- ✅ Thread-safe pending batch results storage
+- ✅ Batch error recovery preserves buffer items for fallback
+- ✅ No function attribute pollution (thread-safe design)
 
 ## Implementation Details
 
