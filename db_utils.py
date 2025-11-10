@@ -533,16 +533,14 @@ def fetch_alerts_from_db_strict_geo(
     params.extend(['%football%', '%soccer%', '%champion%', '%award%', '%hat-trick%', '%hatrrick%', '%UCL%', '%europa%'])
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    # Optimized query - select only essential fields for faster chat responses
     q = f"""
       SELECT uuid, title, summary, gpt_summary, link, source, published,
-             region, country, city, category, subcategory,
-             threat_level, threat_label, score, confidence, reasoning,
-             sentiment, forecast, legal_risk, cyber_ot_risk, environmental_epidemic_risk,
-             tags, trend_score, trend_score_msg, trend_direction, is_anomaly, anomaly_flag,
-             early_warning_indicators, series_id, incident_series, historical_context,
-             domains, incident_count_30d, recent_count_7d, baseline_avg_7d,
-             baseline_ratio, future_risk_probability, reports_analyzed, sources, cluster_id,
-             latitude, longitude, location_method, location_confidence, location_sharing
+             region, country, city, category, threat_level, threat_label, 
+             score, confidence, reasoning, sentiment, forecast, 
+             legal_risk, cyber_ot_risk, environmental_epidemic_risk,
+             incident_count_30d, trend_direction, 
+             latitude, longitude, location_confidence
       FROM alerts
       {where_sql}
       ORDER BY published DESC NULLS LAST

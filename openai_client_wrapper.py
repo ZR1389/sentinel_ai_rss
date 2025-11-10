@@ -8,7 +8,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DEFAULT_TEMP = float(os.getenv("OPENAI_TEMPERATURE", "0.4"))
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+client = OpenAI(api_key=OPENAI_API_KEY, timeout=60.0) if OPENAI_API_KEY else None
 
 def openai_chat(messages, temperature=DEFAULT_TEMP, model=DEFAULT_MODEL):
     if not client:

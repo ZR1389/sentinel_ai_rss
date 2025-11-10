@@ -219,29 +219,69 @@ def detect_location(text: str = "", title: str = "") -> LocationResult:
 
 def is_location_ambiguous(text: str = "", title: str = "") -> bool:
     """
-    Check if location extraction would benefit from LLM processing.
-    Returns True if text contains location hints but deterministic extraction failed.
+    Determine if a location string needs Moonshot LLM processing.
+    Returns True if ambiguous/complex, False if deterministic methods suffice.
     """
-    combined = f"{title} {text}".lower()
+    combined_text = f"{title} {text}".strip()
     
-    # Check for location indicators
-    location_indicators = [
-        r'\bin\s+[A-Z][a-z]+',  # "in SomePlace"
-        r'\bat\s+[A-Z][a-z]+',  # "at SomePlace"  
-        r'\bfrom\s+[A-Z][a-z]+', # "from SomePlace"
-        r'\bnear\s+[A-Z][a-z]+', # "near SomePlace"
-        r'[A-Z][a-z]+\s*,\s*[A-Z][a-z]+', # "Place, OtherPlace"
-        r'police|authorities|government|officials', # Authority mentions
-        r'local|regional|national', # Geographic scope
+    # Try deterministic extraction first
+    location = detect_location(combined_text)
+    
+    # If we got a confident result, not ambiguous
+    if location.city and location.country and location.location_confidence == "high":
+        return False
+    
+    # Check for complexity indicators that suggest LLM needed
+    ambiguous_patterns = [
+        r'\b(?:near|close to|around|vicinity of)\b',  # Proximity indicators
+        r'\b(?:several|multiple|various)\s+(?:locations|places|areas)\b',  # Multiple locations
+        r'\b(?:unconfirmed|reported|alleged)\s+location\b',  # Uncertainty
+        r'\b(?:somewhere in|area of|region of)\b',  # Vague location
+        r'[,;]\s*(?:and|or)\s*[A-Z]',  # Multiple places separated by conjunctions
     ]
     
-    has_indicators = any(re.search(pattern, combined, re.IGNORECASE) for pattern in location_indicators)
-    
-    if has_indicators:
-        # Check if deterministic extraction succeeded
-        result = detect_location(text, title)
-        if not result.country:
-            logger.debug(f"[LocationService] Ambiguous location detected: {title[:80]}")
+    for pattern in ambiguous_patterns:
+        if re.search(pattern, combined_text, re.IGNORECASE):
             return True
     
+    # If deterministic methods failed and no obvious complexity, still might need LLM
+    if not location.city and not location.country:
+        return True
+    
     return False
+
+
+def enhance_geographic_query(region: str) -> dict:
+    """
+    Enhanced geographic parameter handling using dynamic intelligence.
+    Returns a dict with country, city, and region parameters.
+    """
+    try:
+        # Use our deterministic location detection first
+        location_result = detect_location(region)
+        
+        geo_params = {
+            'country': location_result.country,
+            'city': location_result.city,
+            'region': region  # Always preserve original region
+        }
+        
+        # If we have high confidence results, use them
+        if location_result.location_confidence == "high":
+            return geo_params
+        
+        # For medium/low confidence or missing data, keep original region
+        # but include any detected components
+        if not geo_params['country'] and not geo_params['city']:
+            geo_params['region'] = region
+        
+        return geo_params
+        
+    except Exception as e:
+        logger.warning(f"Geographic enhancement failed for '{region}': {e}")
+        # Return minimal structure on error
+        return {
+            'country': None,
+            'city': None,
+            'region': region
+        }

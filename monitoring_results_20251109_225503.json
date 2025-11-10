@@ -1,0 +1,65 @@
+[
+  {
+    "type": "health_check",
+    "data": {
+      "timestamp": "2025-11-09T22:55:03.690401",
+      "total_tests": 2,
+      "successful": 1,
+      "failed": 1,
+      "success_rate": 50.0,
+      "avg_response_time": 0.01421809196472168,
+      "max_response_time": 0.01421809196472168,
+      "min_response_time": 0.01421809196472168,
+      "results": [
+        {
+          "endpoint": "/healthz",
+          "status_code": 200,
+          "response_time": 0.01421809196472168,
+          "success": true,
+          "error": null,
+          "timestamp": "2025-11-09T22:55:03.689067"
+        },
+        {
+          "endpoint": "/_options",
+          "status_code": 405,
+          "response_time": 0.001291036605834961,
+          "success": false,
+          "error": null,
+          "timestamp": "2025-11-09T22:55:03.690386"
+        }
+      ]
+    }
+  },
+  {
+    "type": "load_test",
+    "data": {
+      "timestamp": "2025-11-09T22:55:03.703870",
+      "concurrent_requests": 5,
+      "total_time": 0.01318502426147461,
+      "total_tests": 5,
+      "successful": 5,
+      "failed": 0,
+      "success_rate": 100.0,
+      "avg_response_time": 0.006760931015014649,
+      "max_response_time": 0.012996673583984375,
+      "min_response_time": 0.0024361610412597656,
+      "requests_per_second": 379.21811146070667
+    }
+  },
+  {
+    "type": "load_test",
+    "data": {
+      "timestamp": "2025-11-09T22:55:03.720555",
+      "concurrent_requests": 10,
+      "total_time": 0.016087770462036133,
+      "total_tests": 10,
+      "successful": 10,
+      "failed": 0,
+      "success_rate": 100.0,
+      "avg_response_time": 0.010317254066467284,
+      "max_response_time": 0.015845060348510742,
+      "min_response_time": 0.003732919692993164,
+      "requests_per_second": 621.5901714658328
+    }
+  }
+]

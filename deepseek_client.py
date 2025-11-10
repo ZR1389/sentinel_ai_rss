@@ -26,7 +26,7 @@ def deepseek_chat(messages, temperature=0.4, model="deepseek-chat"):
     }
 
     try:
-        r = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=30)
+        r = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=60)
         r.raise_for_status()
         data = r.json()
         return data["choices"][0]["message"]["content"]

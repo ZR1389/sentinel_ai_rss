@@ -58,7 +58,7 @@ def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_
         
         logger.debug(f"[Moonshot] Calling API with model {MOONSHOT_MODEL}")
         
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             response = client.post(
                 f"{MOONSHOT_BASE_URL}/chat/completions",
                 headers=headers,
@@ -138,7 +138,7 @@ class MoonshotClient:
             
             logger.debug(f"[Moonshot] Calling API with model {model or self.model}")
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers,

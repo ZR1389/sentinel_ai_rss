@@ -74,7 +74,7 @@ else:
 load_dotenv()
 
 # ---------------- In-memory cache ----------------
-CACHE_TTL = int(os.getenv("CHAT_CACHE_TTL", "3600"))
+CACHE_TTL = int(os.getenv("CHAT_CACHE_TTL", "1800"))  # Reduced from 3600 to 30 minutes for faster updates
 RESPONSE_CACHE: Dict[str, Any] = {}
 
 def set_cache(key: str, value: Any) -> None:
@@ -92,6 +92,16 @@ def get_cache(key: str) -> Optional[Any]:
             pass
         return None
     return value
+
+# Add a simple memory limit to prevent cache bloat
+def cleanup_cache() -> None:
+    """Clean up cache if it gets too large"""
+    if len(RESPONSE_CACHE) > 1000:
+        # Remove oldest 20% of entries
+        sorted_entries = sorted(RESPONSE_CACHE.items(), key=lambda x: x[1][1])
+        to_remove = int(len(sorted_entries) * 0.2)
+        for key, _ in sorted_entries[:to_remove]:
+            del RESPONSE_CACHE[key]
 
 # ---------------- Utils ----------------
 def json_default(obj):
@@ -511,6 +521,11 @@ def handle_user_query(
     # ---------------- Advisor call ----------------
     advisory_result: Dict[str, Any]
     try:
+        import signal
+        
+        def advisor_timeout_handler(signum, frame):
+            raise TimeoutError("Advisor call timed out")
+        
         advisor_kwargs = {
             "email": email,
             "region": region,
@@ -518,14 +533,36 @@ def handle_user_query(
             "user_profile": user_profile,
             "historical_alerts": historical_alerts,
         }
-        if db_alerts and (all_low or alerts_stale):
-            log.info("[Proactive Mode] All alerts low or stale → proactive advisory")
-            advisory_result = generate_advice(query, db_alerts, **advisor_kwargs) or {}
-            advisory_result["proactive_triggered"] = True
-            usage_info["proactive_triggered"] = True
-        else:
-            advisory_result = generate_advice(query, db_alerts, **advisor_kwargs) or {}
-            advisory_result["proactive_triggered"] = False
+        
+        # Set a 3-minute timeout for advisor calls
+        if hasattr(signal, 'SIGALRM'):
+            old_handler = signal.signal(signal.SIGALRM, advisor_timeout_handler)
+            signal.alarm(180)  # 3 minutes
+        
+        try:
+            if db_alerts and (all_low or alerts_stale):
+                log.info("[Proactive Mode] All alerts low or stale → proactive advisory")
+                advisory_result = generate_advice(query, db_alerts, **advisor_kwargs) or {}
+                advisory_result["proactive_triggered"] = True
+                usage_info["proactive_triggered"] = True
+            else:
+                advisory_result = generate_advice(query, db_alerts, **advisor_kwargs) or {}
+                advisory_result["proactive_triggered"] = False
+        finally:
+            # Reset alarm
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)
+                if old_handler:
+                    signal.signal(signal.SIGALRM, old_handler)
+                    
+    except TimeoutError:
+        log.error("Advisor call timed out after 180 seconds")
+        advisory_result = {
+            "reply": "Request timed out. Please try a shorter or simpler query.",
+            "timeout": True
+        }
+        usage_info["fallback_reason"] = "advisor_timeout"
+        log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details="180s timeout")
     except Exception as e:
         log.error("Advisor failed: %s", e)
         advisory_result = {"reply": f"System error generating advice: {e}"}
