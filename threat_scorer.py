@@ -7,7 +7,13 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 import math
 import re
-from unidecode import unidecode
+try:
+    from unidecode import unidecode
+except ImportError as e:
+    import logging
+    logging.getLogger("threat_scorer").warning(f"[UNIDECODE] unidecode library not available, text normalization will be degraded: {e}")
+    def unidecode(s: str) -> str:  # type: ignore
+        return s
 
 # Shared heuristics/taxonomy
 from risk_shared import (

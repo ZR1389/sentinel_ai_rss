@@ -533,18 +533,41 @@ def summarize_single_alert(alert: dict) -> dict:
         alert[k] = v
 
     # risk_shared analytics (best-effort)
-    try: alert["sentiment"] = run_sentiment_analysis(full_text)
-    except Exception: pass
-    try: alert["forecast"] = run_forecast(full_text, location=location)
-    except Exception: pass
-    try: alert["legal_risk"] = run_legal_risk(full_text)
-    except Exception: pass
-    try: alert["cyber_ot_risk"] = run_cyber_ot_risk(full_text)
-    except Exception: pass
-    try: alert["environmental_epidemic_risk"] = run_environmental_epidemic_risk(full_text)
-    except Exception: pass
-    try: alert["keyword_weight"] = compute_keyword_weight(full_text)
-    except Exception: pass
+    try: 
+        alert["sentiment"] = run_sentiment_analysis(full_text)
+    except Exception as e: 
+        logger.warning(f"[THREAT_ENGINE] Sentiment analysis failed: {e}")
+        alert["sentiment"] = None
+        
+    try: 
+        alert["forecast"] = run_forecast(full_text, location=location)
+    except Exception as e: 
+        logger.warning(f"[THREAT_ENGINE] Forecast analysis failed: {e}")
+        alert["forecast"] = None
+        
+    try: 
+        alert["legal_risk"] = run_legal_risk(full_text)
+    except Exception as e: 
+        logger.warning(f"[THREAT_ENGINE] Legal risk analysis failed: {e}")
+        alert["legal_risk"] = None
+        
+    try: 
+        alert["cyber_ot_risk"] = run_cyber_ot_risk(full_text)
+    except Exception as e: 
+        logger.warning(f"[THREAT_ENGINE] Cyber OT risk analysis failed: {e}")
+        alert["cyber_ot_risk"] = None
+        
+    try: 
+        alert["environmental_epidemic_risk"] = run_environmental_epidemic_risk(full_text)
+    except Exception as e: 
+        logger.warning(f"[THREAT_ENGINE] Environmental epidemic risk analysis failed: {e}")
+        alert["environmental_epidemic_risk"] = None
+        
+    try: 
+        alert["keyword_weight"] = compute_keyword_weight(full_text)
+    except Exception as e: 
+        logger.warning(f"[THREAT_ENGINE] Keyword weight analysis failed: {e}")
+        alert["keyword_weight"] = None
 
     # Quick LLM summary (now routed & tracked)
     messages = [

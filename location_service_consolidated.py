@@ -5,7 +5,13 @@ Used as first pass before Moonshot batch processing for ambiguous cases.
 import re
 import logging
 from typing import Optional, Tuple, NamedTuple
-from unidecode import unidecode
+
+try:
+    from unidecode import unidecode
+except ImportError as e:
+    logging.getLogger(__name__).warning(f"[UNIDECODE] unidecode library not available, text normalization will be degraded: {e}")
+    def unidecode(s: str) -> str:  # type: ignore
+        return s
 
 logger = logging.getLogger(__name__)
 

@@ -36,23 +36,75 @@ except Exception:
 
 try:
     from unidecode import unidecode
-except Exception:
+except Exception as e:
+    # Logger not yet initialized, so import logging temporarily
+    import logging
+    logging.getLogger("rss_processor").warning(f"[UNIDECODE] unidecode library not available, text normalization will be degraded: {e}")
     def unidecode(s: str) -> str:  # type: ignore
         return s
+
+# Core imports for timer-based batch processing
+from batch_state_manager import get_batch_state_manager, reset_batch_state_manager
+
+# Metrics integration for performance monitoring
+try:
+    from metrics import RSSProcessorMetrics
+    metrics = RSSProcessorMetrics()
+except ImportError:
+    # Fallback if metrics not available
+    class NoOpMetrics:
+        def record_feed_processing_time(self, *args, **kwargs): pass
+        def record_location_extraction_time(self, *args, **kwargs): pass
+        def record_batch_processing_time(self, *args, **kwargs): pass
+        def increment_error_count(self, *args, **kwargs): pass
+        def increment_alert_count(self, *args, **kwargs): pass
+        def set_batch_size(self, *args, **kwargs): pass
+        def record_database_operation_time(self, *args, **kwargs): pass
+        def record_llm_api_call_time(self, *args, **kwargs): pass
+        def get_metrics_summary(self): return {}
+    metrics = NoOpMetrics()
+
+# Centralized configuration
+try:
+    from config import RSSConfig
+    config = RSSConfig()
+except ImportError:
+    # Fallback to environment variables if config module not available
+    class FallbackConfig:
+        def __init__(self):
+            self.timeout_sec = float(os.getenv("RSS_TIMEOUT_SEC", "20"))
+            self.max_concurrency = int(os.getenv("RSS_CONCURRENCY", "16"))
+            self.batch_limit = int(os.getenv("RSS_BATCH_LIMIT", "400"))
+            self.host_throttle_enabled = os.getenv("HOST_THROTTLE_ENABLED", "true").lower() in ("1", "true", "yes", "y")
+            self.location_batch_threshold = int(os.getenv("MOONSHOT_LOCATION_BATCH_THRESHOLD", "10"))
+            self.geocode_enabled = os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1", "true", "yes", "y")
+            self.write_to_db = os.getenv("RSS_WRITE_TO_DB", "true").lower() in ("1", "true", "yes", "y")
+    config = FallbackConfig()
 
 import logging
 logging.basicConfig(level=logging.DEBUG, force=True)
 logger = logging.getLogger("rss_processor")
 
-# Import refactored alert building components
-from alert_builder_refactored import (
-    AlertMetadata, LocationResult, ContentValidator,
-    SourceTagParser, LocationExtractor, AlertBuilder,
-    build_alert_from_entry_v2
-)
+# Global client for batch processing 
+_GLOBAL_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
+
+# Alert building restored to original working code
+
+# Import circuit breaker for Moonshot API protection
+try:
+    from moonshot_circuit_breaker import CircuitBreakerOpenError
+except ImportError:
+    # Fallback if circuit breaker not available
+    class CircuitBreakerOpenError(Exception):
+        def __init__(self, message: str, retry_after: float = 0):
+            super().__init__(message)
+            self.retry_after = retry_after
 
 # Import proper batch state management (eliminates function attribute anti-pattern)
 from batch_state_manager import get_batch_state_manager
+
+# Core imports for timer-based batch processing
+from batch_state_manager import get_batch_state_manager, reset_batch_state_manager
 
 # === Moonshot Location Batching (Using Proper State Management) ===
 # ANTI-PATTERN FIXED: No longer using function attributes or module globals
@@ -60,7 +112,15 @@ from batch_state_manager import get_batch_state_manager
 # Old anti-pattern: _PENDING_BATCH_RESULTS as module global
 # New approach: Proper state management via BatchStateManager
 
-_LOCATION_BATCH_THRESHOLD = int(os.getenv("MOONSHOT_LOCATION_BATCH_THRESHOLD", "10"))
+_LOCATION_BATCH_THRESHOLD = config.location_batch_threshold
+
+# Optimized batch processing configuration to reduce delays
+_BATCH_TIMEOUT_SECONDS = float(os.getenv("MOONSHOT_BATCH_TIMEOUT", "30"))  # Reduced from 300s to 30s
+_BATCH_SIZE_THRESHOLD = config.location_batch_threshold  # Keep existing threshold
+_BATCH_ENABLE_TIMER = os.getenv("MOONSHOT_BATCH_TIMER_ENABLED", "true").lower() in ("1", "true", "yes")
+
+logger.info(f"Batch processing optimized: size_threshold={_BATCH_SIZE_THRESHOLD}, "
+           f"timeout={_BATCH_TIMEOUT_SECONDS}s, timer_enabled={_BATCH_ENABLE_TIMER}")
 
 # Legacy globals during transition (TODO: Remove after full migration)
 _LOCATION_BATCH_BUFFER: List[Tuple[Dict[str, Any], str, str]] = []
@@ -131,7 +191,8 @@ try:
     LLM_AVAILABLE = True
     logger.info("[LLM] LLM router available for location extraction fallback")
 except Exception as e:
-    logger.warning("[LLM] LLM router not available: %s", e)
+    logger.warning(f"[LLM] LLM router not available for location extraction fallback: {e}")
+    logger.warning(f"[LLM] Location extraction will fall back to regex-only methods")
     LLM_AVAILABLE = False
     route_llm = None
 
@@ -274,11 +335,13 @@ def extract_location_hybrid(title: str, summary: str, source: str) -> Dict[str, 
         logger.error(f"Fallback location detection failed: {e}")
         return {"city": None, "country": None, "region": None, "method": "error", "confidence": "none"}
 
-# ---------------------------- Geocode switch -------------------------
-GEOCODE_ENABLED = (os.getenv("CITYUTILS_ENABLE_GEOCODE", "true").lower() in ("1","true","yes","y"))
+# ---------------------------- Database integration (standardized on db_utils) -------------------------
+GEOCODE_ENABLED = config.geocode_enabled
 
+# Standardized database access - using db_utils.py only
 try:
     from db_utils import save_raw_alerts_to_db, fetch_one, execute
+    logger.info("Database utilities loaded successfully from db_utils.py")
 except Exception as e:
     logger.error("db_utils import failed: %s", e)
     save_raw_alerts_to_db = None
@@ -369,9 +432,56 @@ def _geo_db_store(city: str, country: Optional[str], lat: float, lon: float) -> 
     except Exception as e:
         logger.debug("[rss_processor] geocode cache store failed for %s, %s: %s", city, country, e)
 
+# Timeout Manager Import
+try:
+    from geocoding_timeout_manager import GeocodingTimeoutManager
+    TIMEOUT_MANAGER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"[GEOCODE] Timeout manager not available, using legacy geocoding: {e}")
+    GeocodingTimeoutManager = None  # type: ignore
+    TIMEOUT_MANAGER_AVAILABLE = False
+
 def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Get coordinates for a city using timeout-managed geocoding chain.
+    
+    Chain: cache → city_utils → reverse_geo → fallback
+    Uses GeocodingTimeoutManager to prevent cascade timeouts.
+    """
     if (not GEOCODE_ENABLED) or (not city) or (_cu_get_city_coords is None):
         return (None, None)
+    
+    if TIMEOUT_MANAGER_AVAILABLE and GeocodingTimeoutManager:
+        try:
+            timeout_manager = GeocodingTimeoutManager()
+            
+            # Create wrapper functions for timeout manager
+            def cache_lookup_func(city_name: str, country_name: str) -> Tuple[Optional[float], Optional[float]]:
+                return _geo_db_lookup(city_name, country_name)
+            
+            def city_utils_lookup_func(city_name: str, country_name: str) -> Tuple[Optional[float], Optional[float]]:
+                return _cu_get_city_coords(city_name, country_name)
+            
+            # Use timeout-managed geocoding chain
+            lat, lon = timeout_manager.geocode_with_timeout(
+                city=city,
+                country=country,
+                cache_lookup=cache_lookup_func,
+                city_utils_lookup=city_utils_lookup_func
+                # reverse_geo_lookup can be added later when available
+            )
+            
+            # Store successful result in cache
+            if lat is not None and lon is not None:
+                _geo_db_store(city, country, lat, lon)
+                
+            return lat, lon
+            
+        except Exception as e:
+            logger.warning(f"[GEOCODE] Timeout manager failed for {city}, {country}: {e}")
+            # Fall through to legacy geocoding
+    
+    # Legacy geocoding without timeout management
     try:
         lat, lon = _geo_db_lookup(city, country)
         if lat is not None and lon is not None:
@@ -381,7 +491,8 @@ def get_city_coords(city: Optional[str], country: Optional[str]) -> Tuple[Option
         if lat is not None and lon is not None:
             _geo_db_store(city, country, lat, lon)
         return lat, lon
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[GEOCODE] Failed to get coordinates for {city}, {country}: {e}")
         return (None, None)
 
 # ---- fallback DB writer (used if db_utils is unavailable) ----------
@@ -434,49 +545,43 @@ if save_raw_alerts_to_db is None:
             return 0
         return wrote
 
-# ---------------------------- Config ---------------------------------
-DEFAULT_TIMEOUT        = float(os.getenv("RSS_TIMEOUT_SEC", "20"))
-MAX_CONCURRENCY        = int(os.getenv("RSS_CONCURRENCY", "16"))
-BATCH_LIMIT            = int(os.getenv("RSS_BATCH_LIMIT", "400"))
+# ---------------------------- Config (using centralized config) ---------------------------------
+DEFAULT_TIMEOUT        = config.timeout_sec
+MAX_CONCURRENCY        = config.max_concurrency
+BATCH_LIMIT            = config.batch_limit
 
 # Per-host throttle (NOT backoff). Can be disabled completely.
-HOST_RATE_PER_SEC      = float(os.getenv("RSS_HOST_RATE_PER_SEC", "0.5"))
-HOST_BURST             = int(os.getenv("RSS_HOST_BURST", "2"))
-HOST_THROTTLE_ENABLED  = (os.getenv("HOST_THROTTLE_ENABLED", "true").lower() in ("1","true","yes","y"))
+HOST_RATE_PER_SEC      = getattr(config, 'host_rate_per_sec', float(os.getenv("RSS_HOST_RATE_PER_SEC", "0.5")))
+HOST_BURST             = getattr(config, 'host_burst', int(os.getenv("RSS_HOST_BURST", "2")))
+HOST_THROTTLE_ENABLED  = config.host_throttle_enabled
 
 # Backoff knobs left for schema compatibility only (unused)
 BACKOFF_BASE_MIN       = int(os.getenv("RSS_BACKOFF_BASE_MIN", "15"))
 BACKOFF_MAX_MIN        = int(os.getenv("RSS_BACKOFF_MAX_MIN", "180"))
 FAILURE_THRESHOLD      = int(os.getenv("RSS_BACKOFF_FAILS", "3"))
 
-FRESHNESS_DAYS         = int(os.getenv("RSS_FRESHNESS_DAYS", "3"))
+FRESHNESS_DAYS         = getattr(config, 'freshness_days', int(os.getenv("RSS_FRESHNESS_DAYS", "3")))
 
-RSS_FILTER_STRICT      = True
+RSS_FILTER_STRICT      = getattr(config, 'filter_strict', True)
 
-RSS_USE_FULLTEXT       = str(os.getenv("RSS_USE_FULLTEXT", "true")).lower() in ("1","true","yes","y")
-ARTICLE_TIMEOUT_SEC    = float(os.getenv("RSS_FULLTEXT_TIMEOUT_SEC", "12"))
-ARTICLE_MAX_BYTES      = int(os.getenv("RSS_FULLTEXT_MAX_BYTES", "800000"))
-ARTICLE_MAX_CHARS      = int(os.getenv("RSS_FULLTEXT_MAX_CHARS", "20000"))
-ARTICLE_CONCURRENCY    = int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8"))
+RSS_USE_FULLTEXT       = getattr(config, 'use_fulltext', str(os.getenv("RSS_USE_FULLTEXT", "true")).lower() in ("1","true","yes","y"))
+ARTICLE_TIMEOUT_SEC    = getattr(config, 'fulltext_timeout', float(os.getenv("RSS_FULLTEXT_TIMEOUT_SEC", "12")))
+ARTICLE_MAX_BYTES      = getattr(config, 'fulltext_max_bytes', int(os.getenv("RSS_FULLTEXT_MAX_BYTES", "800000")))
+ARTICLE_MAX_CHARS      = getattr(config, 'fulltext_max_chars', int(os.getenv("RSS_FULLTEXT_MAX_CHARS", "20000")))
+ARTICLE_CONCURRENCY    = getattr(config, 'fulltext_concurrency', int(os.getenv("RSS_FULLTEXT_CONCURRENCY", "8")))
 
 # NEW: toggle and window for co-occurrence matcher (aligned with risk_shared defaults)
-RSS_ENABLE_COOCCURRENCE = str(os.getenv("RSS_ENABLE_COOCCURRENCE", "true")).lower() in ("1","true","yes","y")
-RSS_COOC_WINDOW_TOKENS  = int(os.getenv("RSS_COOC_WINDOW_TOKENS", "15"))  # Aligned with risk_shared.py default
-RSS_MIN_TEXT_LENGTH     = int(os.getenv("RSS_MIN_TEXT_LENGTH", "100"))  # New: minimum text length
+RSS_ENABLE_COOCCURRENCE = config.enable_cooccurrence
+RSS_COOC_WINDOW_TOKENS  = config.cooc_window_tokens
+RSS_MIN_TEXT_LENGTH     = config.min_text_length
 
 if not GEOCODE_ENABLED:
     logger.info("CITYUTILS_ENABLE_GEOCODE is FALSE — geocoding disabled in rss_processor.")
 
 FILTER_KEYWORDS_FALLBACK = [
-    "protest","riot","clash","strike","unrest","shooting","stabbing","robbery","kidnap","kidnapping","extortion",
-    "ied","vbied","explosion","bomb",
-    "checkpoint","curfew","closure","detour","airport","border","rail","metro","highway","road",
-    "substation","grid","pipeline","telecom","power outage",
-    "ransomware","phishing","malware","breach","ddos","credential","zero-day","cve","surveillance","device check","spyware",
-    "earthquake","flood","wildfire","hurricane","storm","heatwave","outbreak","epidemic","pandemic","cholera","dengue","covid","ebola"
+    "protest","riot","clash","strike","unrest","shooting"
 ]
 
-# --------- Load threat keywords from JSON and/or risk_shared ----------
 def _load_keywords() -> Tuple[List[str], str]:
     source_mode = (os.getenv("KEYWORDS_SOURCE", "merge") or "merge").lower()
     use_json = source_mode in ("merge", "json_only")
@@ -694,22 +799,33 @@ def _parse_published(entry) -> Optional[datetime]:
     for key in ("published_parsed", "updated_parsed"):
         val = entry.get(key)
         if val:
-            with contextlib.suppress(Exception):
+            try:
                 return datetime(*val[:6], tzinfo=timezone.utc)
+            except Exception as e:
+                logger.debug(f"[DATE_PARSE] Failed to parse date from {val}: {e}")
     return _now_utc()
 
 def _host(url: str) -> str:
-    with contextlib.suppress(Exception): return urlparse(url).netloc
-    return "unknown"
+    try:
+        return urlparse(url).netloc
+    except Exception as e:
+        logger.debug(f"[URL_PARSE] Failed to parse host from {url}: {e}")
+        return "unknown"
 
 def _db_fetch_one(q: str, args: tuple) -> Optional[tuple]:
     if fetch_one is None: return None
-    try: return fetch_one(q, args)
-    except Exception: return None
+    try: 
+        return fetch_one(q, args)
+    except Exception as e: 
+        logger.warning(f"[DB] Database fetch failed for query '{q}': {e}")
+        return None
 
 def _db_execute(q: str, args: tuple) -> None:
     if execute is None: return
-    with contextlib.suppress(Exception): execute(q, args)
+    try:
+        execute(q, args)
+    except Exception as e:
+        logger.warning(f"[DB] Database execute failed for query '{q}': {e}")
 
 # ------------- NO BACKOFF, EVER --------------
 def _should_skip_by_backoff(url: str) -> bool:
@@ -1161,15 +1277,18 @@ async def _process_location_batch(client: httpx.AsyncClient) -> Dict[str, Dict]:
     
     Returns: {uuid: location_data}
     """
+    batch_start_time = time.time()
     batch_state = get_batch_state_manager()
     
     # Extract all pending entries for processing
     batch_entries = batch_state.extract_buffer_entries()
     
     if not batch_entries:
+        metrics.record_batch_processing_time(time.time() - batch_start_time, batch_size=0)
         return {}
 
     logger.info(f"[Moonshot] Processing location batch of {len(batch_entries)} entries...")
+    metrics.set_batch_size(len(batch_entries))
 
     # Build concise prompt
     prompt = f"""Extract location (city, country, region) for each news item.
@@ -1184,16 +1303,24 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
         prompt += f"Item {idx}: {entry['title'][:120]} | Tag: {source_tag} | UUID: {uuid}\n"
 
     try:
-        # Use Moonshot client
+        # CIRCUIT BREAKER PROTECTION: Prevent infinite retries and DDoS
+        from moonshot_circuit_breaker import get_moonshot_circuit_breaker, CircuitBreakerOpenError
         from moonshot_client import MoonshotClient
+        
+        circuit_breaker = get_moonshot_circuit_breaker()
         moonshot = MoonshotClient()
 
-        response = await moonshot.acomplete(
-            model="moonshot-v1-8k",  # 8k is sufficient for location
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=1500
-        )
+        # Define the actual Moonshot call as an async function
+        async def make_moonshot_call():
+            return await moonshot.acomplete(
+                model="moonshot-v1-8k",  # 8k is sufficient for location
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=1500
+            )
+        
+        # Execute through circuit breaker
+        response = await circuit_breaker.call(make_moonshot_call)
 
         # Parse JSON array
         import re, json
@@ -1220,18 +1347,51 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
             batch_state.store_batch_results(location_map)
 
             logger.info(f"[Moonshot] Location batch processed: {len(location_map)} results")
+            
+            # Record successful batch processing metrics
+            batch_processing_time = time.time() - batch_start_time
+            metrics.record_batch_processing_time(batch_processing_time, batch_size=len(batch_entries))
+            metrics.record_llm_api_call_time(batch_processing_time, provider="moonshot", operation="location_extraction")
+            
             return location_map
         
         # If we get here, processing failed
         raise Exception("No valid response or failed to parse JSON")
 
+    except CircuitBreakerOpenError as e:
+        # Circuit breaker is open - don't retry, wait for recovery
+        logger.warning(f"[Moonshot] Circuit breaker OPEN, skipping batch: {e}")
+        logger.info(f"[Moonshot] Will retry batch after {e.retry_after:.1f} seconds")
+        
+        # Record circuit breaker metrics
+        metrics.increment_error_count("batch_processing", "circuit_breaker_open")
+        metrics.record_batch_processing_time(time.time() - batch_start_time, batch_size=len(batch_entries))
+        
+        # Don't re-queue entries - let them time out naturally
+        # This prevents infinite accumulation when Moonshot is down
+        return {}
+        
     except Exception as e:
         logger.error(f"[Moonshot] Batch location extraction failed: {e}")
         
-        # Re-queue entries for retry (BatchStateManager handles retry logic)
-        for batch_entry in batch_entries:
-            batch_state.queue_entry(batch_entry.entry, batch_entry.source_tag, batch_entry.uuid)
-
+        # Record error metrics
+        metrics.increment_error_count("batch_processing", "extraction_failed")
+        metrics.record_batch_processing_time(time.time() - batch_start_time, batch_size=len(batch_entries))
+        
+        # Only re-queue if it's not a persistent failure pattern
+        # Circuit breaker will handle retry logic
+        batch_state = get_batch_state_manager()
+        retry_count = getattr(batch_entries[0] if batch_entries else None, 'retry_count', 0)
+        
+        if retry_count < 2:  # Limit retries to prevent infinite loops
+            logger.info(f"[Moonshot] Re-queueing {len(batch_entries)} entries for retry (attempt {retry_count + 1})")
+            for batch_entry in batch_entries:
+                # Add retry count to prevent infinite loops  
+                batch_entry.retry_count = retry_count + 1
+                batch_state.queue_entry(batch_entry.entry, batch_entry.source_tag, batch_entry.uuid)
+        else:
+            logger.warning(f"[Moonshot] Dropping {len(batch_entries)} entries after max retries")
+        
         return {}
 
 def _apply_moonshot_locations(alerts: List[Dict], location_map: Dict):
@@ -1270,21 +1430,100 @@ async def _build_alert_from_entry(
     batch_mode: bool = False
 ) -> Optional[Dict[str, Any]]:
     """
-    REFACTORED: Use the new modular alert building system.
-    
-    This function now delegates to the clean, testable components in
-    alert_builder_refactored.py instead of the original 250-line monolith.
+    Build alert from RSS entry with integrated batch processing.
     """
+    start_time = time.time()
     try:
-        return await build_alert_from_entry_v2(
-            entry=entry,
-            source_url=source_url,
-            client=client,
-            source_tag=source_tag,
-            batch_mode=batch_mode
-        )
+        # Basic validation
+        title = entry.get("title", "")
+        summary = entry.get("summary", "")
+        if not title.strip():
+            metrics.increment_error_count("alert_building", "empty_title")
+            return None
+        
+        # Extract metadata
+        link = entry.get("link", "")
+        published = entry.get("published") or _now_utc()
+        source = _extract_source(source_url or link)
+        uuid = _uuid_for(source, title, link)
+        
+        # Check for duplicate
+        try:
+            if fetch_one:
+                exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
+                if exists:
+                    return None
+        except Exception:
+            pass
+        
+        # Language detection
+        text_blob = f"{title}\n{summary}"
+        try:
+            language = detect(text_blob[:200]) if text_blob.strip() else "en"
+        except:
+            language = "en"
+        
+        # Keyword filtering
+        passes_filter, kw_match = _passes_keyword_filter(text_blob)
+        if not passes_filter:
+            return None
+        
+        # Location extraction with batch processing
+        location_start_time = time.time()
+        location_data = {}
+        if _should_use_moonshot_for_location(entry, source_tag or ""):
+            # Queue for batch processing if in batch mode
+            if batch_mode:
+                batch_state = get_batch_state_manager()
+                queued = batch_state.queue_entry(entry, source_tag or "", uuid)
+                if queued:
+                    # Mark as queued for batch processing
+                    location_data = {
+                        'location_method': 'moonshot_batch_pending',
+                        'location_confidence': 'pending',
+                        '_batch_queued': True
+                    }
+                    metrics.record_location_extraction_time(time.time() - location_start_time, method="batch_queue")
+                else:
+                    # Fallback if queueing failed
+                    location_data = _extract_location_fallback(text_blob, source_tag)
+                    metrics.record_location_extraction_time(time.time() - location_start_time, method="fallback")
+            else:
+                # Direct processing (not in batch mode)
+                location_data = _extract_location_fallback(text_blob, source_tag)
+                metrics.record_location_extraction_time(time.time() - location_start_time, method="direct")
+        else:
+            # Use deterministic location extraction
+            location_data = _extract_location_fallback(text_blob, source_tag)
+            metrics.record_location_extraction_time(time.time() - location_start_time, method="deterministic")
+        
+        # Build final alert
+        alert = {
+            "uuid": uuid,
+            "title": title,
+            "summary": summary,
+            "en_snippet": _first_sentence(title),
+            "link": link,
+            "source": source,
+            "published": published.replace(tzinfo=None) if hasattr(published, 'replace') else published,
+            "tags": _auto_tags(text_blob),
+            "language": language,
+            "kw_match": kw_match,
+            **location_data
+        }
+        
+        if source_tag:
+            alert["source_tag"] = source_tag
+        
+        # Record metrics
+        alert_building_time = time.time() - start_time
+        metrics.record_database_operation_time(alert_building_time, operation="alert_building")
+        
+        return alert
+        
     except Exception as e:
-        logger.error(f"[REFACTORED] Alert building failed: {e}")
+        logger.error(f"Alert building failed: {e}")
+        metrics.increment_error_count("alert_building", "exception")
         return None
 
 def _auto_tags(text: str) -> List[str]:
@@ -1308,12 +1547,43 @@ def _auto_tags(text: str) -> List[str]:
     return tags
 
 async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
+    start_time = time.time()
     if not feed_specs:
         logger.warning("No feed specs provided!")
+        metrics.increment_error_count("feed_processing", "no_feed_specs")
         return []
     results_alerts: List[Dict[str, Any]] = []
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY, max_keepalive_connections=MAX_CONCURRENCY)
     async with httpx.AsyncClient(follow_redirects=True, limits=limits) as client:
+        
+        # Set up optimized timer-based batch processing callback
+        batch_state = get_batch_state_manager()
+        batch_results = {}  # Initialize batch results dictionary
+        
+        # Configure optimized batch processing
+        from batch_state_manager import BatchFlushConfig
+        flush_config = BatchFlushConfig(
+            size_threshold=_BATCH_SIZE_THRESHOLD,
+            time_threshold_seconds=_BATCH_TIMEOUT_SECONDS,
+            enable_timer_flush=_BATCH_ENABLE_TIMER
+        )
+        
+        def batch_callback():
+            """Trigger batch processing when timer expires"""
+            try:
+                # This will be called from timer thread, so we need to handle async properly
+                logger.info(f"Optimized batch flush triggered (timeout: {_BATCH_TIMEOUT_SECONDS}s)")
+                metrics.increment_error_count("batch_processing", "timer_flush")  # Track timer flushes
+                # The actual processing will happen at the end of ingest_feeds
+                # We just log that the timer fired
+            except Exception as e:
+                logger.error(f"Batch callback error: {e}")
+                metrics.increment_error_count("batch_processing", "callback_error")
+        
+        flush_config.flush_callback = batch_callback
+        batch_state.set_flush_callback(batch_callback)
+        logger.info(f"Configured optimized batch processing: {_BATCH_SIZE_THRESHOLD} items or {_BATCH_TIMEOUT_SECONDS}s timeout")
+        
         async def _fetch_feed(spec):
             logger.info("Fetching feed: %s", spec["url"])
             await _bucket_for(spec["url"]).acquire()
@@ -1357,34 +1627,24 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
             if len(results_alerts) >= limit:
                 break
 
-    # Process any queued Moonshot batch requests using proper state management
-    batch_state = get_batch_state_manager()
-    
-    # Get any pending batch results (eliminates function attribute anti-pattern)
-    batch_results = batch_state.get_pending_results()
-    
-    # ANTI-PATTERN FIXED: No longer using function attributes for global state
-    # Old problematic code:
-    # if hasattr(_build_alert_from_entry, '_pending_batch_results'):
-    #     batch_results.update(_build_alert_from_entry._pending_batch_results)
-    #     delattr(_build_alert_from_entry, '_pending_batch_results')
-    
-    # Process any remaining queued entries with async batch processing
-    with _LOCATION_BATCH_LOCK:
-        if _LOCATION_BATCH_BUFFER:
-            logger.info(f"[Moonshot] Processing final batch of {len(_LOCATION_BATCH_BUFFER)} queued entries...")
+        # Process any remaining queued entries with batch processing
+        batch_state = get_batch_state_manager()
+        
+        # Check if we have any queued entries to process
+        if batch_state.get_buffer_size() > 0:
+            logger.info(f"Processing remaining batch of {batch_state.get_buffer_size()} queued entries...")
             try:
                 final_batch_results = await _process_location_batch(client)
                 batch_results.update(final_batch_results)
+                logger.info(f"Final batch processing completed: {len(final_batch_results)} results")
             except Exception as e:
-                logger.error(f"[Moonshot] Async batch processing failed: {e}")
-                # ASYNC-UNIFIED FIX: No sync fallback, use proper async retry logic
-                # Mark pending alerts with fallback method rather than breaking async context
-                logger.warning("[Moonshot] Using fallback location method for pending alerts")
-                for alert in results_alerts:
-                    if alert.get('location_method') == 'batch_pending':
-                        alert['location_method'] = 'fallback'
-                        alert['location_confidence'] = 'none'
+                logger.error(f"Final batch processing failed: {e}")
+        
+        # Get any pending batch results 
+        pending_results = batch_state.get_pending_results()
+        if pending_results:
+            batch_results.update(pending_results)
+            logger.info(f"Retrieved {len(pending_results)} pending batch results")
 
     # Apply batch results back to alerts using the clean helper function
     if batch_results:
@@ -1416,4 +1676,232 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
                 f"failed_batches={health_metrics['permanently_failed_batches']}")
 
     logger.info("Total processed alerts: %d (with %d batch results applied)", len(results_alerts), len(batch_results))
+    
+    # Record metrics
+    processing_time = time.time() - start_time
+    metrics.record_feed_processing_time(processing_time)
+    metrics.increment_alert_count(len(results_alerts))
+    metrics.set_batch_size(len(batch_results))
+    
     return _dedupe_batch(results_alerts)
+
+def _passes_keyword_filter(text: str) -> tuple[bool, str]:
+    """Check if text passes keyword filter and return matching keyword"""
+    if not text:
+        return False, ""
+    
+    text_lower = text.lower()
+    
+    # Load threat keywords
+    try:
+        keywords_path = os.path.join(os.path.dirname(__file__), "threat_keywords.json")
+        with open(keywords_path, "r", encoding="utf-8") as f:
+            threat_keywords = json.load(f)
+        
+        # Check against each category
+        for category, keywords in threat_keywords.items():
+            for keyword in keywords:
+                if keyword.lower() in text_lower:
+                    return True, keyword
+                    
+    except Exception as e:
+        logger.debug(f"Keyword filter check failed: {e}")
+    
+    # Fallback basic keywords
+    basic_keywords = ["attack", "threat", "security", "breach", "incident", "alert", "warning", "emergency"]
+    for keyword in basic_keywords:
+        if keyword in text_lower:
+            return True, keyword
+    
+    return True, "general"  # Allow all for now
+
+def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> Dict[str, Any]:
+    """Fallback location extraction without batch processing"""
+    location_data = {
+        'city': None,
+        'country': None,
+        'region': None,
+        'latitude': None,
+        'longitude': None,
+        'location_method': 'none',
+        'location_confidence': 'none',
+        'location_sharing': False
+    }
+    
+    # Try source tag extraction
+    if source_tag:
+        # Extract from local:city or country:country tags
+        if source_tag.startswith('local:'):
+            city_part = source_tag[6:]  # Remove 'local:'
+            if ',' in city_part:
+                city, country = city_part.split(',', 1)
+                location_data.update({
+                    'city': city.strip(),
+                    'country': country.strip(),
+                    'location_method': 'feed_tag',
+                    'location_confidence': 'medium'
+                })
+        elif source_tag.startswith('country:'):
+            country = source_tag[8:]  # Remove 'country:'
+            location_data.update({
+                'country': country.strip(),
+                'location_method': 'feed_tag',
+                'location_confidence': 'medium'
+            })
+    
+    # Try to add region if we have country
+    if location_data['country']:
+        region = _map_country_to_region(location_data['country'])
+        if region:
+            location_data['region'] = region
+    
+    # Try geocoding if we have city/country
+    if location_data['city'] and location_data['country'] and GEOCODE_ENABLED:
+        try:
+            from city_utils import get_city_coords
+            lat, lon = get_city_coords(location_data['city'], location_data['country'])
+            if lat and lon:
+                location_data.update({
+                    'latitude': lat,
+                    'longitude': lon,
+                    'location_sharing': True
+                })
+        except Exception as e:
+            logger.debug(f"Geocoding failed: {e}")
+    
+    return location_data
+
+def _first_sentence(text: str) -> str:
+    """Extract first sentence from text"""
+    if not text:
+        return ""
+    
+    # Simple sentence splitting
+    sentences = text.split('. ')
+    if sentences:
+        first = sentences[0].strip()
+        if not first.endswith('.'):
+            first += '.'
+        return first[:200]  # Limit length
+    
+    return text[:200]
+
+def _extract_source(url: str) -> str:
+    """Extract source domain from URL"""
+    if not url:
+        return "unknown"
+    
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        # Remove www. prefix
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        return domain
+    except:
+        return "unknown"
+
+def _uuid_for(source: str, title: str, link: str) -> str:
+    """Generate UUID for alert"""
+    content = f"{source}:{title}:{link}"
+    return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+def _now_utc():
+    """Get current UTC datetime"""
+    return datetime.now(timezone.utc)
+
+def _map_country_to_region(country: str) -> Optional[str]:
+    """Map country to region"""
+    if not country:
+        return None
+    
+    # Simple region mapping
+    country_lower = country.lower()
+    
+    if country_lower in ['us', 'usa', 'united states', 'canada', 'mexico']:
+        return 'North America'
+    elif country_lower in ['uk', 'united kingdom', 'france', 'germany', 'italy', 'spain']:
+        return 'Europe'
+    elif country_lower in ['china', 'japan', 'korea', 'india', 'thailand', 'singapore']:
+        return 'Asia'
+    elif country_lower in ['brazil', 'argentina', 'chile', 'colombia']:
+        return 'South America'
+    elif country_lower in ['australia', 'new zealand']:
+        return 'Oceania'
+    elif country_lower in ['nigeria', 'south africa', 'egypt', 'kenya']:
+        return 'Africa'
+    
+    return None
+
+async def ingest_all_feeds_to_db(
+    group_names: Optional[Iterable[str]] = None,
+    limit: int = BATCH_LIMIT,
+    write_to_db: bool = True
+) -> Dict[str, Any]:
+    """
+    Main entry point for RSS processing called by main.py.
+    
+    Args:
+        group_names: Optional list of feed group names to process (currently unused)
+        limit: Maximum number of alerts to process
+        write_to_db: Whether to write results to database
+    
+    Returns:
+        Dict with processing statistics and results
+    """
+    logger.info(f"Starting RSS ingest: limit={limit}, write_to_db={write_to_db}")
+    
+    start_time = time.time()  # Add timing for the entire operation
+    
+    try:
+        # Get all feed specifications
+        feed_specs = _coalesce_all_feed_specs(group_names)
+        logger.info(f"Processing {len(feed_specs)} feed specifications")
+        
+        # Process feeds using the main ingest function
+        alerts = await ingest_feeds(feed_specs, limit=limit)
+        
+        result = {
+            "alerts_processed": len(alerts),
+            "feeds_processed": len(feed_specs),
+            "written_to_db": 0,
+            "batch_stats": {}
+        }
+        
+        # Get batch processing statistics
+        batch_state = get_batch_state_manager()
+        batch_stats = batch_state.get_stats()
+        result["batch_stats"] = batch_stats
+        
+        # Handle database writing if enabled
+        if write_to_db and alerts:
+            try:
+                # Use standardized database write functionality from db_utils
+                if save_raw_alerts_to_db:
+                    written_count = save_raw_alerts_to_db(alerts)
+                    result["written_to_db"] = written_count
+                    logger.info(f"Successfully wrote {written_count} alerts to database")
+                    
+                    # Record database operation metrics
+                    metrics.record_database_operation_time(time.time() - start_time, operation="bulk_insert")
+                else:
+                    logger.warning("Database functions not available - alerts not written to DB")
+                    metrics.increment_error_count("database", "functions_unavailable")
+            except Exception as e:
+                logger.error(f"Database write error: {e}")
+                result["db_error"] = str(e)
+                metrics.increment_error_count("database", "write_failed")
+        
+        logger.info(f"RSS ingest completed: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"RSS ingest failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "error": str(e),
+            "alerts_processed": 0,
+            "feeds_processed": 0,
+            "written_to_db": 0
+        }

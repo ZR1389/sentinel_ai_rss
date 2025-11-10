@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import json
 import os
 import unicodedata
+import logging
 
 try:
     # Preferred helper that returns list[dict]
@@ -15,6 +16,9 @@ except Exception:
     fetch_all = None  # type: ignore
 
 map_api = Blueprint("map_api", __name__, static_folder="web")
+
+# Initialize logger
+logger = logging.getLogger("map_api")
 
 # Resolve absolute static dir
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -553,3 +557,49 @@ def _safe_parse_json(value):
         return json.loads(value) if isinstance(value, str) else []
     except (json.JSONDecodeError, TypeError):
         return []
+
+# ---------------- Standalone Reverse Geocoding ----------------
+def reverse_geocode_coords(city: str, country: Optional[str] = None) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Standalone reverse geocoding function for use with timeout manager.
+    
+    This is a fallback method that tries to geocode based on city/country names.
+    Note: This is a placeholder implementation - actual reverse geocoding would
+    integrate with external services like:
+    
+    Args:
+        city: City name to geocode
+        country: Optional country name for better accuracy
+        
+    Returns:
+        (lat, lon) tuple or (None, None) if geocoding fails
+    """
+    # TODO: Integrate with external geocoding services:
+    # - Google Geocoding API  
+    # - MapBox Geocoding
+    # - OpenStreetMap Nominatim
+    
+    logger.debug(f"[REVERSE_GEO] Attempting reverse geocoding for {city}, {country}")
+    
+    # For now, return None to indicate no reverse geocoding available
+    # This prevents timeout manager from waiting unnecessarily
+    return (None, None)
+
+def get_country_from_coords(lat: float, lon: float) -> Optional[str]:
+    """
+    Get country name from coordinates using reverse geocoding.
+    
+    This uses the loaded countries.geojson for fast local lookup.
+    """
+    try:
+        if not _load_countries():
+            logger.warning("[REVERSE_GEO] Countries data not available for reverse geocoding")
+            return None
+            
+        country = _lonlat_to_country_cached(lon, lat)
+        logger.debug(f"[REVERSE_GEO] Coords ({lat}, {lon}) -> country: {country}")
+        return country
+        
+    except Exception as e:
+        logger.error(f"[REVERSE_GEO] Error in reverse geocoding coordinates: {e}")
+        return None

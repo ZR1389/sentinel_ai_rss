@@ -9,7 +9,9 @@ from typing import Dict, List, Tuple, Optional, Sequence
 
 try:
     from unidecode import unidecode
-except Exception:
+except Exception as e:
+    import logging
+    logging.getLogger("risk_shared").warning(f"[UNIDECODE] unidecode library not available, text normalization will be degraded: {e}")
     def unidecode(s: str) -> str:  # no-op fallback
         return s
 
@@ -505,8 +507,12 @@ class KeywordMatcher:
                             return MatchResult(True, f"broad+impact({w})", {})
         return MatchResult(False, None, {})
 
+# Standardized default window - DO NOT CHANGE without updating config.py
+COOC_WINDOW_DEFAULT = 12
+
 # Convenience: build a module-level default matcher from our current catalog.
-def build_default_matcher(window: int = 15) -> KeywordMatcher:
+def build_default_matcher(window: int = COOC_WINDOW_DEFAULT) -> KeywordMatcher:
+    """Build matcher with canonical keywords."""
     return KeywordMatcher(
         keywords=list(KEYWORD_SET),  # your strict set from categories+domains; override as needed
         broad_terms=BROAD_TERMS_DEFAULT,
@@ -515,7 +521,7 @@ def build_default_matcher(window: int = 15) -> KeywordMatcher:
     )
 
 # Construct once; callers can import DEFAULT_MATCHER or build their own.
-DEFAULT_MATCHER: KeywordMatcher = build_default_matcher(window=15)
+DEFAULT_MATCHER: KeywordMatcher = build_default_matcher(window=COOC_WINDOW_DEFAULT)
 
 def decide_with_default_keywords(text: str, title: str = "") -> MatchResult:
     """
