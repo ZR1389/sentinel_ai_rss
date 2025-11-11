@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
-from llm_router_fast import route_llm
+from llm_router import route_llm
 
 # -------- LLM clients / prompts (soft imports so advisor always loads) --------
 # Specialized: Grok (x.ai)
