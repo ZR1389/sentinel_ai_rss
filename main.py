@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional, Callable
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, g
 
 # Rate limiting (optional)
 try:
@@ -753,12 +753,16 @@ def _profile_update_impl():
 # ---------- Chat (metered AFTER success; VERIFIED required) ----------
 # Frontend-expected route (alias for /chat)
 @app.route("/api/sentinel-chat", methods=["POST", "OPTIONS"])
+@login_required
+@conditional_limit(CHAT_RATE)  # limiter applied only if initialized
 def api_sentinel_chat():
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
     return _chat_impl()
 
 @app.route("/chat", methods=["POST", "OPTIONS"])
+@login_required
+@conditional_limit(CHAT_RATE)  # limiter applied only if initialized
 def chat_options():
     # keep preflight separate to preserve decorator behavior below
     if request.method == "OPTIONS":
@@ -767,13 +771,20 @@ def chat_options():
 
 
 # Single chat implementation using async-first approach for better reliability
-@app.route("/chat", methods=["POST"])
-@login_required
-@conditional_limit(CHAT_RATE)  # limiter applied only if initialized
 def _chat_impl():
-    logger.info("Chat endpoint called - starting async-first implementation")
+    logger.info("=== CHAT ENDPOINT START ===")
+    logger.info("Request method: %s", request.method)
+    logger.info("Request headers: %s", dict(request.headers))
+    logger.info("Request content type: %s", request.content_type)
     
     try:
+        logger.info("Starting async-first chat implementation")
+        
+        # Check if user is authenticated via g object
+        user_email = getattr(g, 'user_email', None)
+        user_plan = getattr(g, 'user_plan', None)
+        logger.info("Authenticated user: email=%s, plan=%s", user_email, user_plan)
+        
         payload = _json_request()
         logger.info("Payload received: %s", {k: str(v)[:100] for k, v in payload.items()})
     except Exception as e:
