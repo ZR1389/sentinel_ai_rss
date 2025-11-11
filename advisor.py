@@ -389,14 +389,14 @@ def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) 
     return out
 
 def clean_auto_sections(advisory: str) -> str:
-    """Remove BOTH placeholders AND empty sections, fix spacing issues"""
+    """Remove placeholders, empty sections, and fix spacing with surgical precision"""
     # Remove auto-added lines
     cleaned = re.sub(r"\n?• \[auto\] Section added \(no content\)", "", advisory)
     
     # Remove orphaned headers (header followed by nothing or another header)
-    # FIXED: Better pattern to catch various spacing issues
+    # Pattern: HEADER —\n\n(next is HEADER or end)
     cleaned = re.sub(
-        r'\n\n([A-Z][A-Za-z\s/]+?)\s*—\s*\n(?=\n|$|[A-Z][A-Za-z\s/]+?—)',
+        r'\n\n([A-Z][A-Za-z\s/]+?)\s*—\s*\n(?=\n|[A-Z][A-Za-z\s/]+?—|\Z)',
         '', 
         cleaned
     )
@@ -404,11 +404,34 @@ def clean_auto_sections(advisory: str) -> str:
     # Fix missing spaces after section headers
     cleaned = re.sub(r'([A-Z][A-Za-z\s/]+?—)([A-Z])', r'\1 \2', cleaned)
     
+    # Ensure exactly one space before dash
+    cleaned = re.sub(r'\s*—\s*', ' — ', cleaned)
+    
     return cleaned.strip()
 
 def strip_excessive_blank_lines(text: str) -> str:
-    # Replace 3+ consecutive newlines with 2 newlines, and strip trailing whitespace
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
+    # Replace 3+ consecutive newlines with exactly 2
+    # Also clean up trailing whitespace
+    lines = [line.rstrip() for line in text.split('\n')]
+    result = []
+    empty_streak = 0
+    
+    for line in lines:
+        if not line.strip():
+            empty_streak += 1
+            if empty_streak <= 2:  # Keep max 2 empty lines
+                result.append('')
+        else:
+            empty_streak = 0
+            result.append(line)
+    
+    # Remove leading/trailing empty lines
+    while result and not result[0].strip():
+        result.pop(0)
+    while result and not result[-1].strip():
+        result.pop()
+    
+    return '\n'.join(result)
 
 def trim_verbose_explanation(advisory: str) -> str:
     """
@@ -1210,7 +1233,19 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     confidence_val = alert.get("confidence", 0.7)
     if isinstance(confidence_val, decimal.Decimal):
         confidence_val = float(confidence_val)
-    confidence = int(round(100 * float(confidence_val)))
+    
+    # NEW: Apply confidence floor based on location/data quality
+    location_score = input_data.get("location_match_score", 0)
+    is_valid = input_data.get("data_statistically_valid", False)
+    
+    confidence_val = float(confidence_val)
+    
+    if location_score < 30:
+        confidence_val = min(confidence_val, 0.15)  # Cap at 15% for severe mismatch
+    if not is_valid:
+        confidence_val = min(confidence_val, 0.25)  # Cap at 25% for low data
+    
+    confidence = int(round(100 * confidence_val))
     
     sources = ", ".join([s.get("name","Source") for s in input_data.get("sources") or []]) or "Multiple"
     domains = input_data.get("domains") or []
@@ -1275,9 +1310,19 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     lines.append(f"• Direction: {alert.get('trend_direction','stable')} | Next review: {next_review} | Early warnings: {', '.join(ewi) if ewi else 'none'}")
 
     # Replace verbose EXPLANATION with concise version
+    explanation_lines = [
+        f"• {trend_line[:150]}...",  # Truncate to prevent rambling
+        "• Confidence adjusted for location precision and source reliability."
+    ]
+    
+    if location_score < 30:
+        explanation_lines.append(f"• ⚠️ Low location match score ({location_score}/100) due to geographic data mismatch.")
+    
+    if not is_valid:
+        explanation_lines.append(f"• ⚠️ Insufficient incident data (incident_count_30d < 5).")
+    
     lines.append("EXPLANATION —")
-    lines.append(f"• {trend_line[:150]}...")  # Truncate to prevent rambling
-    lines.append("• Confidence adjusted for location precision and source reliability.")
+    lines.extend(explanation_lines)
 
     lines.append("ANALYST CTA —")
     lines.append("• Reply 'monitor 12h' for an auto-check, or request a routed analyst review if risk increases.")
