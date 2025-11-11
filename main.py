@@ -748,6 +748,13 @@ def _profile_update_impl():
     return _build_cors_response(jsonify({"ok": True, "user": user}))
 
 # ---------- Chat (metered AFTER success; VERIFIED required) ----------
+# Frontend-expected route (alias for /chat)
+@app.route("/api/sentinel-chat", methods=["POST", "OPTIONS"])
+def api_sentinel_chat():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return _chat_impl()
+
 @app.route("/chat", methods=["POST", "OPTIONS"])
 def chat_options():
     # keep preflight separate to preserve decorator behavior below
