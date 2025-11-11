@@ -11,21 +11,9 @@ from config import CONFIG
 from metrics import METRICS
 
 # Import circuit breaker
-try:
-    from circuit_breaker import MOONSHOT_CB
-except ImportError:
-    from moonshot_circuit_breaker import get_moonshot_circuit_breaker
-    MOONSHOT_CB = get_moonshot_circuit_breaker()
+from moonshot_circuit_breaker import get_moonshot_circuit_breaker, CircuitBreakerOpenError
 
-# Import the circuit breaker exception
-try:
-    from circuit_breaker import CircuitBreakerOpen
-except ImportError:
-    # Fallback if exception not defined
-    class CircuitBreakerOpen(Exception):
-        def __init__(self, message: str, retry_after: float = 0):
-            super().__init__(message)
-            self.retry_after = retry_after
+MOONSHOT_CB = get_moonshot_circuit_breaker()
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +255,7 @@ class LocationExtractor:
         try:
             response = await MOONSHOT_CB.call(_moonshot_call)
             return self._parse_response(response, batch)
-        except CircuitBreakerOpen as e:
+        except CircuitBreakerOpenError as e:
             logger.error(f"[LocationExtractor] Moonshot circuit breaker open: {e}")
             METRICS.increment("moonshot_circuit_breaker_open")
             raise

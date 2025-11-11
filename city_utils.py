@@ -20,36 +20,37 @@ _CITY_TO_COUNTRY_MAP: Dict[str, str] = {}
 
 def _load_location_data():
     """Load city and country coordinate data from location_keywords.json"""
-    global _CITY_COORDS_CACHE, _COUNTRY_COORDS_CACHE, _CITY_TO_COUNTRY_MAP
+    global _CITY_COORDS_CACHE, _CITY_TO_COUNTRY_MAP, _COUNTRY_COORDS_CACHE
     
     try:
         location_file = os.path.join(os.path.dirname(__file__), "config", "location_keywords.json")
         if os.path.exists(location_file):
             with open(location_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
-            # Extract cities and countries
-            cities = data.get('cities', [])
-            countries = data.get('countries', [])
             
-            logger.info(f"Loaded {len(cities)} cities and {len(countries)} countries from location_keywords.json")
+            # Load countries with coordinates
+            countries = data.get('countries', {})
+            for key, country_data in countries.items():
+                if isinstance(country_data, dict) and 'lat' in country_data:
+                    # New format with coordinates
+                    _COUNTRY_COORDS_CACHE[key] = (country_data['lat'], country_data['lon'])
+                else:
+                    # Old format - approximate coordinates
+                    _COUNTRY_COORDS_CACHE[key] = (30.0, 0.0)
             
-            # Build simple coordinate approximations (for demo purposes)
-            # In production, you'd use a proper geocoding service or database
-            for city in cities:
-                city_lower = city.lower()
-                # Simple hash-based coordinate assignment for demo
-                lat = 40.0 + (hash(city_lower) % 100) * 0.5
-                lon = -100.0 + (hash(city_lower) % 200) * 0.5 
-                _CITY_COORDS_CACHE[city_lower] = (lat, lon)
-                
-            for country in countries:
-                country_lower = country.lower()
-                # Simple hash-based coordinate assignment for demo  
-                lat = 30.0 + (hash(country_lower) % 120) * 0.5
-                lon = -150.0 + (hash(country_lower) % 300) * 0.5
-                _COUNTRY_COORDS_CACHE[country_lower] = (lat, lon)
-                
+            # Load cities with coordinates
+            cities = data.get('cities', {})
+            for city_key, city_data in cities.items():
+                if isinstance(city_data, dict) and 'lat' in city_data:
+                    # New format with coordinates
+                    _CITY_COORDS_CACHE[city_key] = (city_data['lat'], city_data['lon'])
+                    _CITY_TO_COUNTRY_MAP[city_key] = city_data.get('country', '')
+                else:
+                    # Fallback for malformed entries
+                    logger.warning(f"Malformed city entry: {city_key}")
+                    
+            logger.info(f"Loaded {len(_CITY_COORDS_CACHE)} cities and {len(_COUNTRY_COORDS_CACHE)} countries")
+            
     except Exception as e:
         logger.warning(f"Could not load location data: {e}")
 

@@ -8,44 +8,109 @@ import uuid as _uuid
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+import atexit
 
 import psycopg2
 import psycopg2.extras
+from psycopg2 import pool
 from psycopg2.extras import execute_values, RealDictCursor, Json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("db_utils")
 
 # ---------------------------------------------------------------------
-# Connection helpers
+# Connection Pool Management
 # ---------------------------------------------------------------------
+
+_connection_pool = None
 
 def get_db_url() -> Optional[str]:
     return os.getenv("DATABASE_URL")
 
+def get_connection_pool():
+    """Get or create the global connection pool."""
+    global _connection_pool
+    if _connection_pool is None:
+        db_url = get_db_url()
+        if not db_url:
+            raise RuntimeError("DATABASE_URL not set")
+        try:
+            _connection_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=int(os.getenv("DB_POOL_MIN_SIZE", "1")),
+                maxconn=int(os.getenv("DB_POOL_MAX_SIZE", "20")),
+                dsn=db_url
+            )
+            # Register cleanup on exit
+            atexit.register(close_connection_pool)
+            logger.info("Connection pool initialized (min=%s, max=%s)", 
+                       os.getenv("DB_POOL_MIN_SIZE", "1"), 
+                       os.getenv("DB_POOL_MAX_SIZE", "20"))
+        except Exception as e:
+            logger.error("Failed to create connection pool: %s", e)
+            raise
+    return _connection_pool
+
+def close_connection_pool():
+    """Close all connections in the pool."""
+    global _connection_pool
+    if _connection_pool:
+        try:
+            _connection_pool.closeall()
+            logger.info("Connection pool closed")
+        except Exception as e:
+            logger.error("Error closing connection pool: %s", e)
+        finally:
+            _connection_pool = None
+
 def _conn():
-    db_url = get_db_url()
-    if not db_url:
-        raise RuntimeError("DATABASE_URL not set")
-    return psycopg2.connect(db_url)
+    """Get connection from pool."""
+    try:
+        return get_connection_pool().getconn()
+    except Exception as e:
+        logger.error("Failed to get connection from pool: %s", e)
+        raise
+
+def _release_conn(conn):
+    """Return connection to pool."""
+    if conn:
+        try:
+            get_connection_pool().putconn(conn)
+        except Exception as e:
+            logger.error("Failed to return connection to pool: %s", e)
 
 # Simple helpers used by RSS health/backoff and misc queries
 def execute(query: str, params: tuple = ()) -> None:
     """Execute a single statement (no return)."""
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(query, params)
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        _release_conn(conn)
 
 def fetch_one(query: str, params: tuple = ()):
     """Fetch a single row (tuple) or None."""
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(query, params)
-        return cur.fetchone()
+    conn = _conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone()
+    finally:
+        _release_conn(conn)
 
 def fetch_all(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
     """Fetch all rows as dicts."""
-    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query, params)
-        return cur.fetchall()
+    conn = _conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params)
+            return cur.fetchall()
+    finally:
+        _release_conn(conn)
 
 def log_security_event(event_type: str, details: str) -> None:
     try:
@@ -179,14 +244,19 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     VALUES %s
     ON CONFLICT (uuid) DO NOTHING
     """
+    conn = _conn()
     try:
-        with _conn() as conn, conn.cursor() as cur:
+        with conn.cursor() as cur:
             execute_values(cur, sql, rows)
+            conn.commit()
             logger.info("Insert to raw_alerts completed. Attempted: %d rows", len(rows))
         return len(rows)
     except Exception as e:
+        conn.rollback()
         logger.error("DB insert to raw_alerts failed: %s", e)
         return 0
+    finally:
+        _release_conn(conn)
 
 def fetch_raw_alerts_from_db(
     region: Optional[str] = None,
@@ -420,14 +490,19 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         location_confidence = EXCLUDED.location_confidence,
         location_sharing = EXCLUDED.location_sharing
     """
+    conn = _conn()
     try:
-        with _conn() as conn, conn.cursor() as cur:
+        with conn.cursor() as cur:
             execute_values(cur, sql, rows)
+            conn.commit()
             logger.info("Insert to alerts completed. Attempted: %d rows", len(rows))
         return len(rows)
     except Exception as e:
+        conn.rollback()
         logger.error("DB insert to alerts failed: %s", e)
         return 0
+    finally:
+        _release_conn(conn)
 
 # ---------- Alerts fetch for Advisor/Chat ----------
 def fetch_alerts_from_db(
@@ -477,22 +552,26 @@ def fetch_alerts_from_db(
       LIMIT %s
     """
     params.append(limit)
-    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(q, tuple(params))
-        rows = cur.fetchall()
-        # Supply safe defaults for missing keys
-        for r in rows:
-            if r.get("incident_count_30d") is None:
-                r["incident_count_30d"] = 0
-            if r.get("recent_count_7d") is None:
-                r["recent_count_7d"] = 0
-            if r.get("baseline_avg_7d") is None:
-                r["baseline_avg_7d"] = 0
-            if r.get("baseline_ratio") is None:
-                r["baseline_ratio"] = 1.0
-            if r.get("trend_direction") is None:
-                r["trend_direction"] = "stable"
-        return rows
+    conn = _conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(q, tuple(params))
+            rows = cur.fetchall()
+            # Supply safe defaults for missing keys
+            for r in rows:
+                if r.get("incident_count_30d") is None:
+                    r["incident_count_30d"] = 0
+                if r.get("recent_count_7d") is None:
+                    r["recent_count_7d"] = 0
+                if r.get("baseline_avg_7d") is None:
+                    r["baseline_avg_7d"] = 0
+                if r.get("baseline_ratio") is None:
+                    r["baseline_ratio"] = 1.0
+                if r.get("trend_direction") is None:
+                    r["trend_direction"] = "stable"
+            return rows
+    finally:
+        _release_conn(conn)
 
 def fetch_alerts_from_db_strict_geo(
     region: Optional[str] = None,
@@ -529,8 +608,11 @@ def fetch_alerts_from_db_strict_geo(
         params.append(category)
 
     # Add relevance filter to exclude obvious sports/entertainment
-    where.append("(title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s AND title NOT ILIKE %s)")
-    params.extend(['%football%', '%soccer%', '%champion%', '%award%', '%hat-trick%', '%hatrrick%', '%UCL%', '%europa%'])
+    # ✅ SAFE: Proper parameterized query construction
+    sports_terms = ['football', 'soccer', 'champion', 'award', 'hat-trick', 'hatrrick', 'UCL', 'europa']
+    for term in sports_terms:
+        where.append("title NOT ILIKE %s")
+        params.append(f"%{term}%")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     # Optimized query - select only essential fields for faster chat responses
@@ -548,68 +630,72 @@ def fetch_alerts_from_db_strict_geo(
     """
     params.append(limit)
     
-    with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(q, tuple(params))
-        rows = cur.fetchall()
-        
-        # Supply safe defaults for missing keys
-        for r in rows:
-            if r.get("incident_count_30d") is None:
-                r["incident_count_30d"] = 0
-            if r.get("recent_count_7d") is None:
-                r["recent_count_7d"] = 0
-            if r.get("baseline_avg_7d") is None:
-                r["baseline_avg_7d"] = 0
-            if r.get("baseline_ratio") is None:
-                r["baseline_ratio"] = 1.0
-            if r.get("trend_direction") is None:
-                r["trend_direction"] = "stable"
-                
-        # Enhanced post-query geographic relevance filtering
-        if (region or country or city) and rows:
-            filtered_rows = []
+    conn = _conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(q, tuple(params))
+            rows = cur.fetchall()
             
-            for row in rows:
-                row_country = (row.get("country") or "").lower()
-                row_city = (row.get("city") or "").lower()
-                row_region = (row.get("region") or "").lower()
-                row_source = (row.get("source") or "").lower()
-                
-                is_relevant = False
-                
-                # Exact country match has highest priority
-                if country and country.lower() in row_country:
-                    is_relevant = True
-                
-                # City match (if specified)
-                elif city and city.lower() in row_city:
-                    is_relevant = True
-                
-                # Region-based matching (fallback)
-                elif region:
-                    region_lower = region.lower()
-                    is_relevant = (
-                        region_lower in row_country or
-                        region_lower in row_city or
-                        region_lower in row_region or
-                        # Source geography check (e.g., Nigerian source for Nigeria query)
-                        (region_lower in row_source and row_country and region_lower in row_country)
-                    )
-                
-                # If no geographic filters specified, include all
-                elif not region and not country and not city:
-                    is_relevant = True
-                
-                if is_relevant:
-                    filtered_rows.append(row)
-            
-            # Log filtering results for debugging
-            if len(filtered_rows) != len(rows):
-                logger.info(f"Geographic filtering: {len(rows)} → {len(filtered_rows)} alerts (region={region}, country={country}, city={city})")
+            # Supply safe defaults for missing keys
+            for r in rows:
+                if r.get("incident_count_30d") is None:
+                    r["incident_count_30d"] = 0
+                if r.get("recent_count_7d") is None:
+                    r["recent_count_7d"] = 0
+                if r.get("baseline_avg_7d") is None:
+                    r["baseline_avg_7d"] = 0
+                if r.get("baseline_ratio") is None:
+                    r["baseline_ratio"] = 1.0
+                if r.get("trend_direction") is None:
+                    r["trend_direction"] = "stable"
                     
-            return filtered_rows
+            # Enhanced post-query geographic relevance filtering
+            if (region or country or city) and rows:
+                filtered_rows = []
                 
-        return rows
+                for row in rows:
+                    row_country = (row.get("country") or "").lower()
+                    row_city = (row.get("city") or "").lower()
+                    row_region = (row.get("region") or "").lower()
+                    row_source = (row.get("source") or "").lower()
+                    
+                    is_relevant = False
+                    
+                    # Exact country match has highest priority
+                    if country and country.lower() in row_country:
+                        is_relevant = True
+                    
+                    # City match (if specified)
+                    elif city and city.lower() in row_city:
+                        is_relevant = True
+                    
+                    # Region-based matching (fallback)
+                    elif region:
+                        region_lower = region.lower()
+                        is_relevant = (
+                            region_lower in row_country or
+                            region_lower in row_city or
+                            region_lower in row_region or
+                            # Source geography check (e.g., Nigerian source for Nigeria query)
+                            (region_lower in row_source and row_country and region_lower in row_country)
+                        )
+                    
+                    # If no geographic filters specified, include all
+                    elif not region and not country and not city:
+                        is_relevant = True
+                    
+                    if is_relevant:
+                        filtered_rows.append(row)
+                
+                # Log filtering results for debugging
+                if len(filtered_rows) != len(rows):
+                    logger.info(f"Geographic filtering: {len(rows)} → {len(filtered_rows)} alerts (region={region}, country={country}, city={city})")
+                        
+                return filtered_rows
+                    
+            return rows
+    finally:
+        _release_conn(conn)
 
 # ---------------------------------------------------------------------
 # User profile helpers (for chat/advisor and /profile endpoints)
