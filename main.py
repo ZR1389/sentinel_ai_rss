@@ -35,6 +35,18 @@ app = Flask(__name__)
 app.register_blueprint(map_api)
 app.register_blueprint(webpush_bp)
 
+# ---------- Global Error Handlers ----------
+@app.errorhandler(500)
+def handle_500_error(e):
+    logger.error("=== 500 ERROR CAUGHT ===")
+    logger.error("Request URL: %s", request.url)
+    logger.error("Request method: %s", request.method) 
+    logger.error("Request headers: %s", dict(request.headers))
+    logger.error("Error: %s", str(e))
+    import traceback
+    logger.error("Traceback: %s", traceback.format_exc())
+    return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
 # ---------- Logging ----------
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sentinel.main")
@@ -888,7 +900,7 @@ def _chat_impl():
         }
         
         logger.info("Returning 202 response for session: %s", session_id)
-        return _build_cors_response(jsonify(success_response), 202)
+        return _build_cors_response(make_response(jsonify(success_response), 202))
         
     except Exception as e:
         logger.error("Failed to start background job: %s", e)
