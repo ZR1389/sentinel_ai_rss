@@ -14,7 +14,7 @@ import traceback
 import base64
 import signal
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable
 from datetime import datetime
 from functools import wraps
 
@@ -233,26 +233,40 @@ SEARCH_RATE = os.getenv("SEARCH_RATE", "30 per minute;500 per hour")
 BATCH_ENRICH_RATE = os.getenv("BATCH_ENRICH_RATE", "5 per minute;100 per hour")
 CHAT_QUERY_MAX_CHARS = int(os.getenv("CHAT_QUERY_MAX_CHARS", "5000"))
 
-# ---------- Helper functions for chat optimization ----------
-def conditional_limit(rate):
-    """Conditional rate limiter decorator - only applies if limiter is initialized"""
-    def decorator(f):
+# ---------- Conditional limiter decorator ----------
+def conditional_limit(rate: str):
+    """
+    Decorator factory: applies limiter.limit(rate) if limiter is available.
+    Ensures we don't duplicate route implementations when limiter is absent.
+    """
+    def deco(f: Callable):
         if limiter:
             return limiter.limit(rate)(f)
-        return f
-    return decorator
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            return f(*args, **kwargs)
+        return wrapper
+    return deco
 
-def validate_query(query_val):
-    """Centralized query validation for chat endpoints"""
+# ---------- Centralized validation helper ----------
+def validate_query(query_val: Any, max_len: int = CHAT_QUERY_MAX_CHARS) -> str:
+    """
+    Validate and normalize query string. Raises ValueError on invalid input.
+    Allows common whitespace characters (\n, \r, \t) for multi-line prompts.
+    """
     if not isinstance(query_val, str):
-        raise ValueError("Missing or invalid 'query'")
+        raise ValueError("Query must be a string")
     query = query_val.strip()
     if not query:
-        raise ValueError("Missing 'query'")
-    if len(query) > CHAT_QUERY_MAX_CHARS:
-        raise ValueError(f"Query too long (max {CHAT_QUERY_MAX_CHARS} chars)")
-    if not query.isprintable():
-        raise ValueError("Query contains invalid characters")
+        raise ValueError("Query cannot be empty")
+    if len(query) > int(max_len):
+        raise ValueError(f"Query too long (max {max_len} chars)")
+    # Allow common whitespace but reject other non-printable characters
+    for ch in query:
+        if ch in ("\n", "\r", "\t"):
+            continue
+        if not ch.isprintable():
+            raise ValueError("Query contains invalid characters")
     return query
 
 # ---------- Optional psycopg2 fallback for Telegram linking ----------
