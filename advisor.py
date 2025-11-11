@@ -843,6 +843,57 @@ def _sources_reliability_lines(sources: List[Dict[str, str]]) -> List[str]:
             out.append(f"- {name} ({tag}){reason_str}")
     return out
 
+def _add_data_provenance_section(advisory: str, input_data: Dict[str, Any]) -> str:
+    """
+    Adds a DATA PROVENANCE section showing location match and data quality warnings
+    This exposes the Budapest->Cairo mismatch to the user
+    """
+    warning = input_data.get("location_validation_warning", "")
+    precision = input_data.get("location_precision", "unknown")
+    match_score = input_data.get("location_match_score", 0)
+    is_valid = input_data.get("data_statistically_valid", False)
+    
+    if not warning and match_score >= 80 and is_valid:
+        # Everything looks good, no need for extra section
+        return advisory
+    
+    provenance_lines = ["\n\nDATA PROVENANCE —"]
+    
+    if warning:
+        provenance_lines.append(f"⚠️ {warning}")
+    
+    provenance_lines.append(f"- Location Precision: {precision} (coordinates: {'yes' if precision == 'high' else 'no'})")
+    provenance_lines.append(f"- Location Match Score: {match_score}/100")
+    
+    if not is_valid:
+        incident_count = input_data.get("incident_count_30d", 0)
+        provenance_lines.append(f"- Data Volume: INSUFFICIENT (incident_count_30d={incident_count} < 5)")
+        provenance_lines.append("- Recommendations are generic pattern-based only")
+    
+    # Add sources with clear reliability
+    sources = input_data.get("sources") or []
+    if sources:
+        provenance_lines.append("- Sources Used:")
+        for s in sources:
+            name = s.get("name", "Unknown")
+            link = s.get("link", "")
+            provenance_lines.append(f"  • {name} {link}")
+    
+    # Insert before EXPLANATION section or at end if not found
+    lines = advisory.split('\n')
+    explanation_idx = -1
+    for i, line in enumerate(lines):
+        if re.match(r'^EXPLANATION\s*—', line):
+            explanation_idx = i
+            break
+    
+    if explanation_idx != -1:
+        lines.insert(explanation_idx, "\n".join(provenance_lines))
+    else:
+        lines.append("\n".join(provenance_lines))
+    
+    return "\n".join(lines)
+
 # ---------- Debugging utilities ----------
 def get_llm_routing_stats():
     """
@@ -1023,10 +1074,13 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     if geographic_warning and "GEOGRAPHIC VALIDATION —" not in advisory:
         advisory += f"\n\nGEOGRAPHIC VALIDATION —\n⚠️ {geographic_warning}"
 
+    # Add data provenance section showing location/quality warnings
+    advisory = _add_data_provenance_section(advisory, input_data)
+    
     advisory = ensure_sections(advisory)
     advisory = ensure_has_playbook_or_alts(advisory, hits, alts)
     advisory = clean_auto_sections(advisory)
-    advisory = trim_verbose_explanation(advisory)  # NEW: Trim verbose explanations
+    advisory = trim_verbose_explanation(advisory)
     advisory = strip_excessive_blank_lines(advisory)
     return advisory
 
