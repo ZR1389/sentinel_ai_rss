@@ -10,25 +10,25 @@ logger = logging.getLogger("llm_router")
 def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general"):
     usage_counts = usage_counts or {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
 
-    # New specialized routing based on task type
+    # New specialized routing based on task type - OPTIMIZED FOR PAID PROVIDERS
     if task_type == "enrichment" or task_type == "search":
-        # Moonshot primary for enrichment and search
-        PROVIDER_PRIMARY = os.getenv("LLM_PRIMARY_ENRICHMENT", "moonshot").lower()
-        PROVIDER_SECONDARY = os.getenv("LLM_SECONDARY_VERIFICATION", "grok").lower() 
-        PROVIDER_TERTIARY = os.getenv("LLM_TERTIARY_FALLBACK", "deepseek").lower()
-        PROVIDER_QUATERNARY = os.getenv("LLM_CRITICAL_VALIDATION", "openai").lower()
+        # Paid providers first: Grok → OpenAI → Moonshot → DeepSeek (free fallback)
+        PROVIDER_PRIMARY = os.getenv("LLM_PRIMARY_ENRICHMENT", "grok").lower()
+        PROVIDER_SECONDARY = os.getenv("LLM_SECONDARY_VERIFICATION", "openai").lower() 
+        PROVIDER_TERTIARY = os.getenv("LLM_TERTIARY_FALLBACK", "moonshot").lower()
+        PROVIDER_QUATERNARY = os.getenv("LLM_CRITICAL_VALIDATION", "deepseek").lower()
     else:
-        # Fallback to legacy configuration  
-        PROVIDER_PRIMARY = os.getenv("ADVISOR_PROVIDER_PRIMARY", "moonshot").lower()
-        PROVIDER_SECONDARY = os.getenv("ADVISOR_PROVIDER_SECONDARY", "grok").lower()
-        PROVIDER_TERTIARY = os.getenv("ADVISOR_PROVIDER_TERTIARY", "deepseek").lower()
-        PROVIDER_QUATERNARY = os.getenv("ADVISOR_PROVIDER_QUATERNARY", "openai").lower()
+        # Advisor routing: prioritize paid providers - Grok → OpenAI → Moonshot → DeepSeek
+        PROVIDER_PRIMARY = os.getenv("ADVISOR_PROVIDER_PRIMARY", "grok").lower()
+        PROVIDER_SECONDARY = os.getenv("ADVISOR_PROVIDER_SECONDARY", "openai").lower()
+        PROVIDER_TERTIARY = os.getenv("ADVISOR_PROVIDER_TERTIARY", "moonshot").lower()
+        PROVIDER_QUATERNARY = os.getenv("ADVISOR_PROVIDER_QUATERNARY", "deepseek").lower()
     
-    # Provider-specific timeouts (in seconds) - aggressive for fast-failover
-    TIMEOUT_DEEPSEEK = int(os.getenv("DEEPSEEK_TIMEOUT", "15"))
-    TIMEOUT_OPENAI = int(os.getenv("OPENAI_TIMEOUT", "20"))
-    TIMEOUT_GROK = int(os.getenv("GROK_TIMEOUT", "15"))
-    TIMEOUT_MOONSHOT = int(os.getenv("MOONSHOT_TIMEOUT", "20"))
+    # Provider-specific timeouts (in seconds) - optimized for speed and reliability
+    TIMEOUT_DEEPSEEK = int(os.getenv("DEEPSEEK_TIMEOUT", "10"))      # Fast, reliable
+    TIMEOUT_OPENAI = int(os.getenv("OPENAI_TIMEOUT", "15"))         # Generally fast
+    TIMEOUT_GROK = int(os.getenv("GROK_TIMEOUT", "12"))             # Medium speed
+    TIMEOUT_MOONSHOT = int(os.getenv("MOONSHOT_TIMEOUT", "8"))      # Often slow, fail fast
     
     provider_order = [PROVIDER_PRIMARY, PROVIDER_SECONDARY, PROVIDER_TERTIARY, PROVIDER_QUATERNARY]
 
@@ -71,11 +71,13 @@ def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general")
 def route_llm_search(query, context="", usage_counts=None):
     """
     Specialized routing for real-time search and information retrieval.
-    Uses Moonshot exclusively for search tasks as configured.
+    Uses paid providers first for better response quality: Grok → OpenAI → Moonshot → DeepSeek.
     """
     usage_counts = usage_counts or {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
     
-    search_provider = os.getenv("LLM_REAL_TIME_SEARCH", "moonshot").lower()
+    # Prioritize paid providers for search
+    search_provider = os.getenv("LLM_REAL_TIME_SEARCH", "grok").lower()
+    fallback_provider = "openai"
     
     search_messages = [
         {
@@ -90,29 +92,56 @@ def route_llm_search(query, context="", usage_counts=None):
     
     logger.info(f"[LLM Search Router] Using {search_provider} for real-time search")
     
+    # Try primary provider first
     try:
-        if search_provider == "moonshot" and moonshot_chat:
-            result = moonshot_chat(search_messages, temperature=0.3, max_tokens=800)
+        if search_provider == "grok" and grok_chat:
+            result = grok_chat(search_messages, temperature=0.3, timeout=12)
+            if result and result.strip():
+                usage_counts["grok"] += 1
+                return result.strip(), "grok"
+        elif search_provider == "openai" and openai_chat:
+            result = openai_chat(search_messages, temperature=0.3, timeout=15)
+            if result and result.strip():
+                usage_counts["openai"] += 1
+                return result.strip(), "openai"
+        elif search_provider == "moonshot" and moonshot_chat:
+            result = moonshot_chat(search_messages, temperature=0.3, max_tokens=800, timeout=8)
             if result and result.strip():
                 usage_counts["moonshot"] += 1
                 return result.strip(), "moonshot"
         elif search_provider == "deepseek" and deepseek_chat:
-            result = deepseek_chat(search_messages, temperature=0.3)
+            result = deepseek_chat(search_messages, temperature=0.3, timeout=10)
             if result and result.strip():
                 usage_counts["deepseek"] += 1
                 return result.strip(), "deepseek"
-        elif search_provider == "openai" and openai_chat:
-            result = openai_chat(search_messages, temperature=0.3)
+    except Exception as e:
+        logger.warning(f"[LLM Search Router] Primary provider {search_provider} failed: {e}")
+    
+    # Try fallback provider
+    logger.info(f"[LLM Search Router] Falling back to {fallback_provider}")
+    try:
+        if fallback_provider == "openai" and openai_chat:
+            result = openai_chat(search_messages, temperature=0.3, timeout=15)
             if result and result.strip():
                 usage_counts["openai"] += 1
                 return result.strip(), "openai"
-        elif search_provider == "grok" and grok_chat:
-            result = grok_chat(search_messages, temperature=0.3)
+        elif fallback_provider == "grok" and grok_chat:
+            result = grok_chat(search_messages, temperature=0.3, timeout=12)
             if result and result.strip():
                 usage_counts["grok"] += 1
                 return result.strip(), "grok"
+        elif fallback_provider == "deepseek" and deepseek_chat:
+            result = deepseek_chat(search_messages, temperature=0.3, timeout=10)
+            if result and result.strip():
+                usage_counts["deepseek"] += 1
+                return result.strip(), "deepseek"
+        elif fallback_provider == "moonshot" and moonshot_chat:
+            result = moonshot_chat(search_messages, temperature=0.3, max_tokens=800, timeout=8)
+            if result and result.strip():
+                usage_counts["moonshot"] += 1
+                return result.strip(), "moonshot"
     except Exception as e:
-        logger.error(f"[LLM Search Router][{search_provider} error] {e}")
+        logger.error(f"[LLM Search Router][{fallback_provider} error] {e}")
     
     usage_counts["none"] += 1
     return "Search temporarily unavailable", "none"
@@ -120,11 +149,11 @@ def route_llm_search(query, context="", usage_counts=None):
 def route_llm_batch(alerts_batch, usage_counts=None):
     """
     Specialized routing for batch processing multiple alerts in 128k context.
-    Uses Moonshot's large context window for cost-effective batch enrichment.
+    Uses paid providers first: Moonshot → OpenAI → Grok → DeepSeek.
     """
     usage_counts = usage_counts or {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
     
-    batch_provider = os.getenv("LLM_PRIMARY_ENRICHMENT", "moonshot").lower()
+    batch_provider = os.getenv("LLM_PRIMARY_ENRICHMENT", "grok").lower()
     
     # Create a batch processing prompt that takes advantage of 128k context
     batch_content = ""
@@ -150,11 +179,27 @@ def route_llm_batch(alerts_batch, usage_counts=None):
     logger.info(f"[LLM Batch Router] Processing {len(alerts_batch)} alerts with {batch_provider}")
     
     try:
-        if batch_provider == "moonshot" and moonshot_chat:
-            result = moonshot_chat(batch_messages, temperature=0.2, max_tokens=2000)
+        if batch_provider == "grok" and grok_chat:
+            result = grok_chat(batch_messages, temperature=0.2, timeout=12)
+            if result and result.strip():
+                usage_counts["grok"] += 1
+                return result.strip(), "grok"
+        elif batch_provider == "openai" and openai_chat:
+            result = openai_chat(batch_messages, temperature=0.2, timeout=15)
+            if result and result.strip():
+                usage_counts["openai"] += 1
+                return result.strip(), "openai"
+        elif batch_provider == "moonshot" and moonshot_chat:
+            result = moonshot_chat(batch_messages, temperature=0.2, max_tokens=2000, timeout=8)
             if result and result.strip():
                 usage_counts["moonshot"] += 1
                 return result.strip(), "moonshot"
+        elif batch_provider == "deepseek" and deepseek_chat:
+            result = deepseek_chat(batch_messages, temperature=0.2, timeout=10)
+            if result and result.strip():
+                usage_counts["deepseek"] += 1
+                return result.strip(), "deepseek"
+        
         # Fallback to single-alert processing if batch fails
         logger.warning("[LLM Batch Router] Batch processing failed, falling back to single alerts")
         return "Batch processing unavailable, use single alert processing", "none"
