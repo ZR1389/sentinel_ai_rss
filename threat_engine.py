@@ -84,6 +84,198 @@ from threat_scorer import (
 
 from llm_router import route_llm, route_llm_search
 
+# -------- Centralized Confidence Scoring --------
+
+def compute_confidence(
+    alert: dict,
+    confidence_type: str = "overall",
+    **kwargs
+) -> float:
+    """
+    Centralized confidence scoring function for all threat engine components.
+    
+    Args:
+        alert: Alert dictionary with relevant fields
+        confidence_type: Type of confidence to compute
+            - "overall": Combined confidence score (default)
+            - "category": Category classification confidence
+            - "location": Location determination confidence
+            - "threat": Threat assessment confidence
+            - "custom": Custom confidence with additional parameters
+        **kwargs: Additional parameters for specific confidence types
+    
+    Returns:
+        float: Confidence score between 0.0 and 1.0
+    """
+    
+    def _clamp(val: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
+        """Helper to clamp values within bounds"""
+        return max(min_val, min(max_val, val))
+    
+    if confidence_type == "category":
+        # Category classification confidence
+        category = alert.get("category", "")
+        category_confidence = float(alert.get("category_confidence", 0.0))
+        
+        # If already calculated, return it
+        if category_confidence > 0:
+            return _clamp(category_confidence)
+        
+        # Calculate based on available signals
+        conf = 0.5  # base confidence
+        
+        # Keyword match strength
+        kw_match = alert.get("kw_match", {})
+        if isinstance(kw_match, dict):
+            rule = (kw_match.get("rule") or "").lower()
+            if "broad+impact" in rule and "sentence" in rule:
+                conf += 0.2
+            elif "broad+impact" in rule:
+                conf += 0.15
+            elif "specific" in rule:
+                conf += 0.1
+        
+        # Text quality indicators
+        text_content = alert.get("summary", "") or alert.get("title", "")
+        if len(text_content) > 100:  # Sufficient content
+            conf += 0.1
+        
+        # Domain alignment
+        domains = alert.get("domains", [])
+        if domains and category:
+            # Check if domains align with category
+            security_domains = ["security", "military", "cyber", "terror", "crime"]
+            if category.lower() in ["security", "terrorism", "cyber"] and any(d in security_domains for d in domains):
+                conf += 0.1
+        
+        return _clamp(conf, 0.2, 0.95)
+    
+    elif confidence_type == "location":
+        # Location determination confidence
+        location_method = alert.get("location_method", "none")
+        location_confidence = alert.get("location_confidence", "none")
+        
+        # Standardized location confidence mapping
+        confidence_weights = {
+            "high": 0.9,      # NER, keywords, coordinates
+            "medium": 0.7,    # LLM extraction
+            "low": 0.5,       # feed_tag, fuzzy matching
+            "none": 0.2       # no location determined
+        }
+        
+        base_conf = confidence_weights.get(location_confidence, 0.2)
+        
+        # Boost confidence if we have coordinates
+        if alert.get("latitude") and alert.get("longitude"):
+            base_conf = min(base_conf + 0.1, 1.0)
+        
+        # Boost confidence if location is mentioned multiple times
+        text_content = (alert.get("summary", "") + " " + alert.get("title", "")).lower()
+        location_mentions = 0
+        for field in ["country", "city", "region"]:
+            if alert.get(field) and alert[field].lower() in text_content:
+                location_mentions += 1
+        
+        if location_mentions >= 2:
+            base_conf = min(base_conf + 0.05 * location_mentions, 1.0)
+        
+        return _clamp(base_conf, 0.1, 0.95)
+    
+    elif confidence_type == "threat":
+        # Threat assessment confidence (from threat_scorer logic)
+        score = alert.get("threat_score", 0) or 0
+        if score is None:
+            score = 0
+        
+        # Base confidence
+        conf = 0.6
+        
+        # Distance from neutral (50) increases confidence, but penalize very low scores
+        score_distance = abs(float(score) - 50.0) / 50.0
+        if score < 30:
+            # Very low scores get confidence penalty
+            conf += 0.1 * score_distance - 0.2
+        else:
+            conf += 0.2 * score_distance
+        
+        # Keyword weight bonus
+        kw_weight = alert.get("keyword_weight", 0) or 0
+        if kw_weight is None:
+            kw_weight = 0
+        if float(kw_weight) > 0.6:
+            conf += 0.1
+        
+        # Trigger bonus
+        triggers = alert.get("triggers", []) or []
+        if triggers is None:
+            triggers = []
+        trig_norm = min(len(triggers), 6) / 6.0
+        if trig_norm > 0.5:
+            conf += 0.05
+        
+        # kw_rule bonus
+        kw_match = alert.get("kw_match", {})
+        if isinstance(kw_match, dict):
+            rule = (kw_match.get("rule") or "").lower()
+            if "broad+impact" in rule and ("sentence" in rule or "sent" in rule):
+                conf += 0.05
+            elif "broad+impact" in rule and "window" in rule:
+                conf += 0.03
+        
+        # High score confidence floor
+        if score >= 85.0:
+            conf = max(conf, 0.75)
+        
+        return _clamp(conf, 0.4, 0.95)
+    
+    elif confidence_type == "overall":
+        # Combined overall confidence
+        category_conf = compute_confidence(alert, "category")
+        location_conf = compute_confidence(alert, "location")
+        threat_conf = compute_confidence(alert, "threat")
+        
+        # Weighted average with emphasis on threat assessment
+        weights = {
+            "threat": 0.5,
+            "category": 0.3,
+            "location": 0.2
+        }
+        
+        overall_conf = (
+            threat_conf * weights["threat"] +
+            category_conf * weights["category"] +
+            location_conf * weights["location"]
+        )
+        
+        # Boost for data completeness
+        completeness_score = 0
+        required_fields = ["category", "threat_score", "summary"]
+        for field in required_fields:
+            if alert.get(field):
+                completeness_score += 1
+        
+        completeness_bonus = (completeness_score / len(required_fields)) * 0.1
+        overall_conf = min(overall_conf + completeness_bonus, 1.0)
+        
+        return _clamp(overall_conf, 0.3, 0.95)
+    
+    elif confidence_type == "custom":
+        # Custom confidence calculation with provided parameters
+        base_confidence = kwargs.get("base", 0.5)
+        
+        # Apply custom modifiers
+        for modifier, value in kwargs.items():
+            if modifier.startswith("boost_") and isinstance(value, (int, float)):
+                base_confidence += value
+            elif modifier.startswith("penalty_") and isinstance(value, (int, float)):
+                base_confidence -= value
+        
+        return _clamp(base_confidence)
+    
+    else:
+        logger.warning(f"Unknown confidence type: {confidence_type}")
+        return 0.5  # default fallback
+
 # ---------- Setup ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("threat_engine")
@@ -307,11 +499,15 @@ def is_relevant(alert: dict) -> bool:
     domains = alert.get("domains") or []
     category_confidence = float(alert.get("category_confidence") or 0.0)
     
+    # If no explicit category confidence, calculate it using centralized function
+    if category_confidence == 0.0 and category:
+        category_confidence = compute_confidence(alert, "category")
+    
     # If this is a raw alert (no category/domains), allow it through for enrichment
     if not category and not domains:
         return True
     
-    # For enriched alerts, apply stricter filters
+    # For enriched alerts, apply stricter confidence-based filters
     if category_confidence > 0 and category_confidence < 0.35:
         return False
 
@@ -532,6 +728,17 @@ def summarize_single_alert(alert: dict) -> dict:
     for k, v in threat_score_data.items():
         alert[k] = v
 
+    # Calculate overall confidence using centralized function
+    try:
+        alert["overall_confidence"] = compute_confidence(alert, "overall")
+        logger.debug(f"[ThreatEngine][Confidence] Alert {alert.get('uuid', 'N/A')}: "
+                    f"overall={alert['overall_confidence']:.2f}, "
+                    f"category={alert.get('category_confidence', 0):.2f}, "
+                    f"location={alert.get('location_reliability', 0):.2f}")
+    except Exception as e:
+        logger.warning(f"[ThreatEngine][ConfidenceError] {e}")
+        alert["overall_confidence"] = 0.5
+
     # risk_shared analytics (best-effort)
     try: 
         alert["sentiment"] = run_sentiment_analysis(full_text)
@@ -587,7 +794,8 @@ def summarize_single_alert(alert: dict) -> dict:
         except Exception as e:
             logger.error(f"[ThreatEngine][CategoryFallbackError] {e}")
             alert["category"] = alert.get("category", "Other")
-            alert["category_confidence"] = alert.get("category_confidence", 0.5)
+            # Use centralized confidence scoring for fallback
+            alert["category_confidence"] = compute_confidence(alert, "category")
 
     # ENHANCED: Sports/Entertainment Filter - reject non-security content
     category = alert.get("category", "")
@@ -858,29 +1066,19 @@ def enrich_and_store_alerts(region=None, country=None, city=None, category=None,
 def enhance_location_confidence(alert: dict) -> dict:
     """
     Use the new location_method and location_confidence fields from RSS processor
-    to enhance threat analysis location accuracy.
+    to enhance threat analysis location accuracy. Now uses centralized confidence scoring.
     """
-    location_method = alert.get("location_method", "none")
-    location_confidence = alert.get("location_confidence", "none")
-    
-    # Map location confidence to threat scoring weights
-    confidence_weights = {
-        "high": 1.0,      # NER, keywords
-        "medium": 0.8,    # LLM
-        "low": 0.6,       # feed_tag, fuzzy
-        "none": 0.3       # no location determined
-    }
-    
-    location_weight = confidence_weights.get(location_confidence, 0.3)
+    # Calculate location confidence using centralized function
+    location_reliability = compute_confidence(alert, "location")
     
     # Enhance alert with location reliability score
-    alert["location_reliability"] = location_weight
-    alert["location_source"] = location_method
+    alert["location_reliability"] = location_reliability
+    alert["location_source"] = alert.get("location_method", "none")
     
-    # If we have high-confidence location data, boost regional relevance
-    if location_weight >= 0.8 and alert.get("latitude") and alert.get("longitude"):
+    # Map confidence to precision categories
+    if location_reliability >= 0.8 and alert.get("latitude") and alert.get("longitude"):
         alert["geo_precision"] = "high"
-    elif location_weight >= 0.6:
+    elif location_reliability >= 0.6:
         alert["geo_precision"] = "medium"
     else:
         alert["geo_precision"] = "low"

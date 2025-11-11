@@ -278,6 +278,62 @@ def strip_excessive_blank_lines(text: str) -> str:
     # Replace 3+ consecutive newlines with 2 newlines, and strip trailing whitespace
     return re.sub(r'\n{3,}', '\n\n', text).strip()
 
+def trim_verbose_explanation(advisory: str) -> str:
+    """
+    Post-process advisory to trim verbose EXPLANATION sections.
+    Keeps first 150 chars of trend line and adds confidence note.
+    """
+    lines = advisory.split('\n')
+    explanation_start = -1
+    
+    # Find EXPLANATION section
+    for i, line in enumerate(lines):
+        if re.match(r'^EXPLANATION\s*—', line):
+            explanation_start = i
+            break
+    
+    if explanation_start == -1:
+        return advisory
+    
+    # Find next section or end
+    next_section = len(lines)
+    for i in range(explanation_start + 1, len(lines)):
+        if re.match(r'^[A-Z][A-Z\s/]+ —', lines[i]):
+            next_section = i
+            break
+    
+    # Extract explanation content
+    explanation_lines = lines[explanation_start + 1:next_section]
+    
+    # If explanation is verbose (>3 lines or >200 chars total), trim it
+    total_chars = sum(len(line) for line in explanation_lines)
+    if len(explanation_lines) > 3 or total_chars > 200:
+        # Keep the trend line (usually first bullet) but truncate
+        trend_bullet = explanation_lines[0] if explanation_lines else "• Analysis based on current patterns."
+        if trend_bullet.startswith("• "):
+            trend_content = trend_bullet[2:]  # Remove bullet
+            if len(trend_content) > 150:
+                trend_content = trend_content[:150] + "..."
+            new_explanation = [
+                f"• {trend_content}",
+                "• Confidence adjusted for location precision and source reliability."
+            ]
+        else:
+            new_explanation = [
+                "• Analysis based on current threat patterns and geographic factors.",
+                "• Confidence adjusted for location precision and source reliability."
+            ]
+        
+        # Rebuild lines
+        new_lines = (
+            lines[:explanation_start + 1] +  # Everything up to and including "EXPLANATION —"
+            new_explanation +               # Trimmed explanation
+            lines[next_section:]            # Everything after explanation
+        )
+        return '\n'.join(new_lines)
+    
+    return advisory
+
 # ---------- JSON serialization helper for Decimal ----------
 def _json_serialize(obj):
     """JSON serializer for objects not serializable by default json code"""
@@ -835,14 +891,24 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     if alts and "ALTERNATIVES —" not in advisory:
         advisory += "\n\nALTERNATIVES —\n" + "\n".join(f"• {a}" for a in alts)
 
-    # Role blocks
+    # Role blocks - Only add if section is missing AND no role-specific content exists
     role_blocks = input_data.get("role_actions") or {}
     if role_blocks and "ROLE-SPECIFIC ACTIONS —" not in advisory:
-        advisory += "\n\nROLE-SPECIFIC ACTIONS —"
-        for role, items in role_blocks.items():
-            title = role.replace("_"," ").title()
-            for it in items:
-                advisory += f"\n• [{title}] {it}"
+        # Check if role-specific content already exists inline (to prevent duplication)
+        has_inline_roles = False
+        role_patterns = [r.replace("_", " ").title() for r in role_blocks.keys()]
+        for pattern in role_patterns:
+            if f"[{pattern}]" in advisory:
+                has_inline_roles = True
+                break
+        
+        # Only add role section if no inline role content exists
+        if not has_inline_roles:
+            advisory += "\n\nROLE-SPECIFIC ACTIONS —"
+            for role, items in role_blocks.items():
+                title = role.replace("_"," ").title()
+                for it in items:
+                    advisory += f"\n• [{title}] {it}"
 
     # Source reliability section (proactive skepticism)
     src_lines = _sources_reliability_lines(input_data.get("sources") or [])
@@ -856,6 +922,7 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     advisory = ensure_sections(advisory)
     advisory = ensure_has_playbook_or_alts(advisory, hits, alts)
     advisory = clean_auto_sections(advisory)
+    advisory = trim_verbose_explanation(advisory)  # NEW: Trim verbose explanations
     advisory = strip_excessive_blank_lines(advisory)
     return advisory
 
@@ -932,8 +999,10 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     lines.append("FORECAST —")
     lines.append(f"• Direction: {alert.get('trend_direction','stable')} | Next review: {next_review} | Early warnings: {', '.join(ewi) if ewi else 'none'}")
 
+    # Replace verbose EXPLANATION with concise version
     lines.append("EXPLANATION —")
-    lines.append(f"• {trend_line}")
+    lines.append(f"• {trend_line[:150]}...")  # Truncate to prevent rambling
+    lines.append("• Confidence adjusted for location precision and source reliability.")
 
     lines.append("ANALYST CTA —")
     lines.append("• Reply 'monitor 12h' for an auto-check, or request a routed analyst review if risk increases.")
