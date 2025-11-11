@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 import atexit
+from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
@@ -78,39 +79,40 @@ def _release_conn(conn):
         except Exception as e:
             logger.error("Failed to return connection to pool: %s", e)
 
-# Simple helpers used by RSS health/backoff and misc queries
-def execute(query: str, params: tuple = ()) -> None:
-    """Execute a single statement (no return)."""
+@contextmanager
+def _get_db_connection():
+    """Context manager that guarantees connection return and proper transaction handling"""
     conn = _conn()
     try:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            conn.commit()
+        yield conn
+        # Only commit if no exceptions occurred
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         _release_conn(conn)
 
+# Database operation helpers with guaranteed connection return
+def execute(query: str, params: tuple = ()) -> None:
+    """Execute a single statement with guaranteed connection return"""
+    with _get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+
 def fetch_one(query: str, params: tuple = ()):
-    """Fetch a single row (tuple) or None."""
-    conn = _conn()
-    try:
+    """Fetch a single row with guaranteed connection return"""
+    with _get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
             return cur.fetchone()
-    finally:
-        _release_conn(conn)
 
 def fetch_all(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
-    """Fetch all rows as dicts."""
-    conn = _conn()
-    try:
+    """Fetch all rows as dicts with guaranteed connection return"""
+    with _get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params)
             return cur.fetchall()
-    finally:
-        _release_conn(conn)
 
 def log_security_event(event_type: str, details: str) -> None:
     try:
@@ -244,19 +246,15 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     VALUES %s
     ON CONFLICT (uuid) DO NOTHING
     """
-    conn = _conn()
     try:
-        with conn.cursor() as cur:
-            execute_values(cur, sql, rows)
-            conn.commit()
-            logger.info("Insert to raw_alerts completed. Attempted: %d rows", len(rows))
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, rows)
+                logger.info("Insert to raw_alerts completed. Attempted: %d rows", len(rows))
         return len(rows)
     except Exception as e:
-        conn.rollback()
         logger.error("DB insert to raw_alerts failed: %s", e)
         return 0
-    finally:
-        _release_conn(conn)
 
 def fetch_raw_alerts_from_db(
     region: Optional[str] = None,
@@ -490,19 +488,15 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         location_confidence = EXCLUDED.location_confidence,
         location_sharing = EXCLUDED.location_sharing
     """
-    conn = _conn()
     try:
-        with conn.cursor() as cur:
-            execute_values(cur, sql, rows)
-            conn.commit()
-            logger.info("Insert to alerts completed. Attempted: %d rows", len(rows))
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, rows)
+                logger.info("Insert to alerts completed. Attempted: %d rows", len(rows))
         return len(rows)
     except Exception as e:
-        conn.rollback()
         logger.error("DB insert to alerts failed: %s", e)
         return 0
-    finally:
-        _release_conn(conn)
 
 # ---------- Alerts fetch for Advisor/Chat ----------
 def fetch_alerts_from_db(
@@ -552,8 +546,7 @@ def fetch_alerts_from_db(
       LIMIT %s
     """
     params.append(limit)
-    conn = _conn()
-    try:
+    with _get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(q, tuple(params))
             rows = cur.fetchall()
@@ -570,8 +563,6 @@ def fetch_alerts_from_db(
                 if r.get("trend_direction") is None:
                     r["trend_direction"] = "stable"
             return rows
-    finally:
-        _release_conn(conn)
 
 def fetch_alerts_from_db_strict_geo(
     region: Optional[str] = None,
@@ -630,8 +621,7 @@ def fetch_alerts_from_db_strict_geo(
     """
     params.append(limit)
     
-    conn = _conn()
-    try:
+    with _get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(q, tuple(params))
             rows = cur.fetchall()
@@ -694,8 +684,6 @@ def fetch_alerts_from_db_strict_geo(
                 return filtered_rows
                     
             return rows
-    finally:
-        _release_conn(conn)
 
 # ---------------------------------------------------------------------
 # User profile helpers (for chat/advisor and /profile endpoints)
