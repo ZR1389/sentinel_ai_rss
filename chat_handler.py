@@ -1,18 +1,19 @@
 # chat_handler.py — unmetered advisory orchestrator (client-facing helper) • v2025-08-13
-# Notes:
-# - Do NOT meter or plan-gate here. /chat route in main.py handles quota after success.
-# - This module now includes a *soft* verification guard (defense-in-depth):
-#   if user email isn't verified, we return a structured message with next steps.
+# Revamped: safer DB timeouts, advisor call timeouts using futures (portable), robust datetime handling,
+#           configurable env vars CHAT_DB_TIMEOUT, ADVISOR_TIMEOUT; improved logging and error paths.
+# New: background async processing (202-style accept + polling) and per-step timing logs to aid debugging.
 
 from __future__ import annotations
 import json
 import os
 import time
+import threading
 import logging
 import uuid
 from datetime import datetime, timezone
 from hashlib import sha1
 from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from dotenv import load_dotenv
 
@@ -73,35 +74,43 @@ else:
 
 load_dotenv()
 
-# ---------------- In-memory cache ----------------
-CACHE_TTL = int(os.getenv("CHAT_CACHE_TTL", "1800"))  # Reduced from 3600 to 30 minutes for faster updates
+# ---------------- In-memory cache & background jobs ----------------
+CACHE_TTL = int(os.getenv("CHAT_CACHE_TTL", "1800"))  # seconds
 RESPONSE_CACHE: Dict[str, Any] = {}
+RESPONSE_CACHE_LOCK = threading.Lock()
+
+# Background job store: job_id -> metadata
+BACKGROUND_JOBS: Dict[str, Dict[str, Any]] = {}
+BACKGROUND_JOBS_LOCK = threading.Lock()
 
 def set_cache(key: str, value: Any) -> None:
-    RESPONSE_CACHE[key] = (value, time.time())
+    with RESPONSE_CACHE_LOCK:
+        RESPONSE_CACHE[key] = (value, time.time())
 
 def get_cache(key: str) -> Optional[Any]:
-    entry = RESPONSE_CACHE.get(key)
-    if not entry:
-        return None
-    value, ts = entry
-    if time.time() - ts > CACHE_TTL:
-        try:
-            del RESPONSE_CACHE[key]
-        except Exception:
-            pass
-        return None
-    return value
+    with RESPONSE_CACHE_LOCK:
+        entry = RESPONSE_CACHE.get(key)
+        if not entry:
+            return None
+        value, ts = entry
+        if time.time() - ts > CACHE_TTL:
+            try:
+                del RESPONSE_CACHE[key]
+            except Exception:
+                pass
+            return None
+        return value
 
 # Add a simple memory limit to prevent cache bloat
 def cleanup_cache() -> None:
     """Clean up cache if it gets too large"""
-    if len(RESPONSE_CACHE) > 1000:
-        # Remove oldest 20% of entries
-        sorted_entries = sorted(RESPONSE_CACHE.items(), key=lambda x: x[1][1])
-        to_remove = int(len(sorted_entries) * 0.2)
-        for key, _ in sorted_entries[:to_remove]:
-            del RESPONSE_CACHE[key]
+    with RESPONSE_CACHE_LOCK:
+        if len(RESPONSE_CACHE) > 1000:
+            # Remove oldest 20% of entries
+            sorted_entries = sorted(RESPONSE_CACHE.items(), key=lambda x: x[1][1])
+            to_remove = int(len(sorted_entries) * 0.2)
+            for key, _ in sorted_entries[:to_remove]:
+                del RESPONSE_CACHE[key]
 
 # ---------------- Utils ----------------
 def json_default(obj):
@@ -158,6 +167,7 @@ def _iso_date(val) -> str:
         s = val.strip()
         if not s:
             return ""
+        # Accept "Z" or offset
         try:
             if s.endswith("Z"):
                 s = s[:-1] + "+00:00"
@@ -223,7 +233,6 @@ def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
     """
     Helper to build quota object for frontend.
     Returns: {"used": int, "limit": int, "plan": str}
-    FIXED: Now properly determines limit based on plan instead of relying on get_usage
     """
     quota_obj = {
         "used": 0,
@@ -258,6 +267,61 @@ def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
     
     return quota_obj
 
+# ---------------- Background Job Helpers ----------------
+def _bg_cache_key(session_id: str) -> str:
+    return f"bg:{session_id}"
+
+def start_background_job(session_id: str, target_fn, *args, **kwargs) -> None:
+    """
+    Starts a daemon thread to run target_fn(*args, **kwargs).
+    Stores job state in BACKGROUND_JOBS and stores result in cache under bg:<session_id>.
+    """
+    with BACKGROUND_JOBS_LOCK:
+        if session_id in BACKGROUND_JOBS and BACKGROUND_JOBS[session_id].get("status") in ("running", "pending"):
+            log.info("Background job for session %s already running", session_id)
+            return
+        BACKGROUND_JOBS[session_id] = {
+            "status": "pending",
+            "started_at": datetime.utcnow().isoformat() + "Z",
+            "result": None,
+            "error": None,
+        }
+
+    def _worker():
+        log.info("Background worker started for session %s", session_id)
+        with BACKGROUND_JOBS_LOCK:
+            BACKGROUND_JOBS[session_id]["status"] = "running"
+            BACKGROUND_JOBS[session_id]["started_at"] = datetime.utcnow().isoformat() + "Z"
+        try:
+            res = target_fn(*args, **kwargs)
+            # Normalize result (expected to be dict)
+            out = res if isinstance(res, dict) else {"reply": str(res)}
+            # Persist into cache for quick retrieval; include sentinel metadata
+            payload = out
+            payload["_background"] = True
+            payload["_completed_at"] = datetime.utcnow().isoformat() + "Z"
+            set_cache(_bg_cache_key(session_id), payload)
+            with BACKGROUND_JOBS_LOCK:
+                BACKGROUND_JOBS[session_id]["status"] = "done"
+                BACKGROUND_JOBS[session_id]["result"] = payload
+        except Exception as e:
+            log.exception("Background worker for session %s failed: %s", session_id, e)
+            with BACKGROUND_JOBS_LOCK:
+                BACKGROUND_JOBS[session_id]["status"] = "failed"
+                BACKGROUND_JOBS[session_id]["error"] = str(e)
+            log_security_event(event_type="background_job_failed", details=f"session={session_id} error={e}")
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+def get_background_status(session_id: str) -> Dict[str, Any]:
+    """
+    Returns job metadata and result if available.
+    """
+    with BACKGROUND_JOBS_LOCK:
+        meta = BACKGROUND_JOBS.get(session_id, {}).copy()
+    result = get_cache(_bg_cache_key(session_id))
+    return {"job": meta or {"status": "unknown"}, "result": result}
+
 # ---------------- Core ----------------
 def handle_user_query(
     message: str | Dict[str, Any],
@@ -269,14 +333,11 @@ def handle_user_query(
 ) -> Dict[str, Any]:
     """
     Entry: assemble context, fetch alerts, call advisor, and return a structured response.
-    - NO metering/gating here — /chat endpoint meters AFTER success.
-    - Soft verification guard here (defense-in-depth). If not verified, we return an instruction payload.
-    - `threat_type` maps to `alerts.category` (Option A schema).
-    
-    Compatible with main.py calling patterns:
-    1. handle_user_query({"query": "...", "profile_data": {...}, "input_data": {...}}, email="user@example.com")
-    2. handle_user_query("query string", email="user@example.com")
+    This version uses timeouts for DB and advisor steps to avoid blocking HTTP gateways.
+    Also supports background processing fallback: if ADVISOR_TIMEOUT triggers and ASYNC_FALLBACK is true,
+    it will accept the request and process the advisory in background; results are available via get_background_status(session_id).
     """
+    overall_start = time.perf_counter()
     log.info("handle_user_query: ENTERED | email=%s", email)
 
     if not email:
@@ -363,11 +424,14 @@ def handle_user_query(
     if cached is not None:
         log.info("handle_user_query: cache HIT")
         log_security_event(event_type="cache_hit", email=email, plan=plan_name, details=f"cache_key={cache_key}")
-        # FIXED: Update quota in cached response
-        cached["quota"] = _build_quota_obj(email, plan_name)
+        # Update quota in cached response
+        if isinstance(cached, dict):
+            cached["quota"] = _build_quota_obj(email, plan_name)
         return cached
 
-    # ---------------- Fetch alerts ----------------
+    # ---------------- Fetch alerts (with timeout) ----------------
+    db_alerts: List[Dict[str, Any]] = []
+    db_start = time.perf_counter()
     try:
         log.info("DB: fetch_alerts_from_db_strict_geo(...)")
         
@@ -385,23 +449,43 @@ def handle_user_query(
             country_param = None
             city_param = None
             region_param = region
-        
-        db_alerts: List[Dict[str, Any]] = fetch_alerts_from_db_strict_geo(
-            region=region_param,
-            country=country_param,
-            city=city_param,
-            category=threat_type,  # align with Option A schema
-            limit=int(os.getenv("CHAT_ALERTS_LIMIT", "20")),
-        )
+
+        # Run DB fetch in a worker with a hard timeout to avoid blocking the request forever
+        if fetch_alerts_from_db_strict_geo:
+            db_timeout = int(os.getenv("CHAT_DB_TIMEOUT", "30"))  # seconds
+            try:
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    future = ex.submit(
+                        fetch_alerts_from_db_strict_geo,
+                        region_param,
+                        country_param,
+                        city_param,
+                        threat_type,
+                        int(os.getenv("CHAT_ALERTSLimit", os.getenv("CHAT_ALERTS_LIMIT", "20"))),
+                    )
+                    db_alerts = future.result(timeout=db_timeout) or []
+            except FuturesTimeout:
+                log.error("DB fetch timed out after %ss", db_timeout)
+                log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=f"db timeout {db_timeout}s")
+                db_alerts = []
+            except Exception as e:
+                log.error("DB fetch failed: %s", e)
+                log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=str(e))
+                db_alerts = []
+        else:
+            db_alerts = []
+
         count = len(db_alerts or [])
-        log.info("DB: fetched %d alerts", count)
+        db_elapsed = time.perf_counter() - db_start
+        log.info("DB: fetched %d alerts (%.3fs)", count, db_elapsed)
         log_security_event(event_type="db_alerts_fetched", email=email, plan=plan_name, details=f"{count} alerts")
     except Exception as e:
-        log.error("DB fetch failed: %s", e)
+        db_elapsed = time.perf_counter() - db_start
+        log.error("DB fetch failed unexpectedly after %.3fs: %s", db_elapsed, e)
         usage_info["fallback_reason"] = "alert_fetch_error"
         log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=str(e))
         
-        # FIXED: Build quota object for error response
+        # Build quota object for error response
         quota_obj = _build_quota_obj(email, plan_name)
         
         return {
@@ -439,7 +523,6 @@ def handle_user_query(
         log.warning("[PROFILE] fetch_user_profile failed: %s", e)
 
     # ---------------- Proactive trigger heuristic ----------------
-    # FIXED: Ensure ALL numerical comparisons use converted floats
     all_low = False
     alerts_stale = False
     
@@ -462,19 +545,28 @@ def handle_user_query(
             log.warning("Error calculating all_low heuristic: %s", e)
             all_low = False
 
-        # Check if alerts are stale - FIXED: Ensure proper datetime comparison
+        # Check if alerts are stale - use robust datetime parsing
         try:
-            latest_iso = max((_iso_date(a) for a in db_alerts), default="")
-            if latest_iso:
-                # Ensure proper datetime parsing and comparison
-                if latest_iso.endswith('Z'):
-                    latest_iso = latest_iso[:-1] + '+00:00'
-                dt = datetime.fromisoformat(latest_iso)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+            valid_dates: List[datetime] = []
+            for a in db_alerts:
+                iso = _iso_date(a)
+                if not iso:
+                    continue
+                try:
+                    if iso.endswith("Z"):
+                        iso = iso[:-1] + "+00:00"
+                    dt = datetime.fromisoformat(iso)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    valid_dates.append(dt.astimezone(timezone.utc))
+                except Exception:
+                    continue
+            if valid_dates:
+                latest_dt = max(valid_dates)
                 current_time = datetime.now(timezone.utc)
-                time_diff = current_time - dt
-                alerts_stale = time_diff.days >= 7
+                alerts_stale = (current_time - latest_dt).days >= 7
+            else:
+                alerts_stale = False
         except Exception as e:
             log.warning("Error calculating alerts_stale heuristic: %s", e)
             alerts_stale = False
@@ -482,17 +574,48 @@ def handle_user_query(
     # ----------- SMARTER NO-DATA / NO ALERTS GUARD -----------
     if not db_alerts:
         log.info("No alerts found for query='%s', region='%s', threat_type='%s'", query, region, threat_type)
-        # PATCH: Always call advisor (LLM) for best-effort situational summary even if no alerts in DB
+        # Always call advisor (LLM) for best-effort situational summary even if no alerts in DB,
+        # but protect with a timeout using a future. If the advisor times out and ASYNC_FALLBACK is enabled,
+        # accept and queue a background job to finish processing and persist the result.
+        advisor_kwargs = {
+            "email": email,
+            "region": region,
+            "threat_type": threat_type,
+            "user_profile": user_profile,
+            "historical_alerts": historical_alerts,
+        }
+        ADVISOR_TIMEOUT = int(os.getenv("ADVISOR_TIMEOUT", "45"))
+        ASYNC_FALLBACK = os.getenv("ASYNC_FALLBACK", "true").lower() in ("1", "true", "yes", "y")
         try:
-            advisor_kwargs = {
-                "email": email,
-                "region": region,
-                "threat_type": threat_type,
-                "user_profile": user_profile,
-                "historical_alerts": historical_alerts,
-            }
-            advisory_result = generate_advice(query, [], **advisor_kwargs) or {}
-            advisory_result["no_alerts_found"] = True
+            # run generate_advice(query, [], user_profile, **others) in a thread with timeout
+            advisor_extra = dict(advisor_kwargs)
+            user_prof = advisor_extra.pop("user_profile", None)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(generate_advice, query, [], user_prof, **advisor_extra)
+                try:
+                    advisory_result = future.result(timeout=ADVISOR_TIMEOUT) or {}
+                    advisory_result["no_alerts_found"] = True
+                except FuturesTimeout:
+                    log.error("Advisor (no-data fallback) timed out after %ss", ADVISOR_TIMEOUT)
+                    usage_info["fallback_reason"] = "advisor_timeout"
+                    log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    if ASYNC_FALLBACK:
+                        # spawn background job to finish processing and persist result
+                        bg_session = session_id
+                        start_background_job(bg_session, generate_advice, query, [], user_prof, **advisor_extra)
+                        reply_text = "Accepted for background processing. Poll for results with session_id."
+                        payload = {
+                            "accepted": True,
+                            "session_id": bg_session,
+                            "message": reply_text,
+                            "plan": plan_name,
+                            "quota": _build_quota_obj(email, plan_name),
+                        }
+                        set_cache(cache_key, payload)
+                        log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        return payload
+                    else:
+                        advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
         except Exception as e:
             log.error("Advisor failed in no-alerts fallback: %s", e)
             advisory_result = {"reply": f"System error generating advice: {e}"}
@@ -501,7 +624,6 @@ def handle_user_query(
 
         reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
         
-        # FIXED: Build quota object for no-alerts response
         quota_obj = _build_quota_obj(email, plan_name)
         
         payload = {
@@ -518,61 +640,92 @@ def handle_user_query(
         log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
         return payload
 
-    # ---------------- Advisor call ----------------
-    advisory_result: Dict[str, Any]
+    # ---------------- Advisor call (with timeout via futures) ----------------
+    advisory_result: Dict[str, Any] = {}
+    ADVISOR_TIMEOUT = int(os.getenv("ADVISOR_TIMEOUT", "45"))
+    ASYNC_FALLBACK = os.getenv("ASYNC_FALLBACK", "true").lower() in ("1", "true", "yes", "y")
+    advisor_kwargs = {
+        "email": email,
+        "region": region,
+        "threat_type": threat_type,
+        "user_profile": user_profile,
+        "historical_alerts": historical_alerts,
+    }
+
+    advisor_start = time.perf_counter()
     try:
-        import signal
-        
-        def advisor_timeout_handler(signum, frame):
-            raise TimeoutError("Advisor call timed out")
-        
-        advisor_kwargs = {
-            "email": email,
-            "region": region,
-            "threat_type": threat_type,
-            "user_profile": user_profile,
-            "historical_alerts": historical_alerts,
-        }
-        
-        # Set a 3-minute timeout for advisor calls
-        if hasattr(signal, 'SIGALRM'):
-            old_handler = signal.signal(signal.SIGALRM, advisor_timeout_handler)
-            signal.alarm(180)  # 3 minutes
-        
-        try:
+        advisor_extra = dict(advisor_kwargs)
+        user_prof = advisor_extra.pop("user_profile", None)
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
             if db_alerts and (all_low or alerts_stale):
                 log.info("[Proactive Mode] All alerts low or stale → proactive advisory")
-                advisory_result = generate_advice(query, db_alerts, **advisor_kwargs) or {}
-                advisory_result["proactive_triggered"] = True
-                usage_info["proactive_triggered"] = True
+                future = ex.submit(generate_advice, query, db_alerts, user_prof, **advisor_extra)
+                try:
+                    advisory_result = future.result(timeout=ADVISOR_TIMEOUT) or {}
+                    advisory_result["proactive_triggered"] = True
+                    usage_info["proactive_triggered"] = True
+                except FuturesTimeout:
+                    adv_elapsed = time.perf_counter() - advisor_start
+                    log.error("Advisor timed out after %ss (proactive mode) [%.3fs elapsed]", ADVISOR_TIMEOUT, adv_elapsed)
+                    usage_info["fallback_reason"] = "advisor_timeout"
+                    log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    if ASYNC_FALLBACK:
+                        bg_session = session_id
+                        start_background_job(bg_session, generate_advice, query, db_alerts, user_prof, **advisor_extra)
+                        reply_text = "Accepted for background processing (proactive). Poll for results with session_id."
+                        payload = {
+                            "accepted": True,
+                            "session_id": bg_session,
+                            "message": reply_text,
+                            "plan": plan_name,
+                            "quota": _build_quota_obj(email, plan_name),
+                        }
+                        set_cache(cache_key, payload)
+                        log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        return payload
+                    else:
+                        advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
             else:
-                advisory_result = generate_advice(query, db_alerts, **advisor_kwargs) or {}
-                advisory_result["proactive_triggered"] = False
-        finally:
-            # Reset alarm
-            if hasattr(signal, 'SIGALRM'):
-                signal.alarm(0)
-                if old_handler:
-                    signal.signal(signal.SIGALRM, old_handler)
-                    
-    except TimeoutError:
-        log.error("Advisor call timed out after 180 seconds")
-        advisory_result = {
-            "reply": "Request timed out. Please try a shorter or simpler query.",
-            "timeout": True
-        }
-        usage_info["fallback_reason"] = "advisor_timeout"
-        log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details="180s timeout")
+                future = ex.submit(generate_advice, query, db_alerts, user_prof, **advisor_extra)
+                try:
+                    advisory_result = future.result(timeout=ADVISOR_TIMEOUT) or {}
+                    advisory_result["proactive_triggered"] = False
+                except FuturesTimeout:
+                    adv_elapsed = time.perf_counter() - advisor_start
+                    log.error("Advisor timed out after %ss [%.3fs elapsed]", ADVISOR_TIMEOUT, adv_elapsed)
+                    usage_info["fallback_reason"] = "advisor_timeout"
+                    log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    if ASYNC_FALLBACK:
+                        bg_session = session_id
+                        start_background_job(bg_session, generate_advice, query, db_alerts, user_prof, **advisor_extra)
+                        reply_text = "Accepted for background processing. Poll for results with session_id."
+                        payload = {
+                            "accepted": True,
+                            "session_id": bg_session,
+                            "message": reply_text,
+                            "plan": plan_name,
+                            "quota": _build_quota_obj(email, plan_name),
+                        }
+                        set_cache(cache_key, payload)
+                        log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        return payload
+                    else:
+                        advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
     except Exception as e:
-        log.error("Advisor failed: %s", e)
+        adv_elapsed = time.perf_counter() - advisor_start
+        log.error("Advisor failed after %.3fs: %s", adv_elapsed, e)
         advisory_result = {"reply": f"System error generating advice: {e}"}
         usage_info["fallback_reason"] = "advisor_error"
         log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
 
+    advisor_elapsed = time.perf_counter() - advisor_start
+    log.info("Advisor finished (%.3fs)", advisor_elapsed)
+
     # ---------------- Build alert payloads ----------------
     results: List[Dict[str, Any]] = []
     for alert in db_alerts or []:
-        # FIXED: Ensure ALL numerical fields are properly converted to floats
+        # Ensure ALL numerical fields are properly converted to floats
         raw_score = alert.get("score")
         try:
             score_float = float(raw_score) if raw_score is not None else 0.0
@@ -585,7 +738,6 @@ def handle_user_query(
         except (TypeError, ValueError):
             confidence_float = 0.0
 
-        # FIXED: Convert other numerical fields that might cause comparison issues
         raw_trend_score = alert.get("trend_score")
         try:
             trend_score_float = float(raw_trend_score) if raw_trend_score is not None else 0.0
@@ -608,8 +760,8 @@ def handle_user_query(
             "subcategory": _ensure_str(alert.get("subcategory", "")),
             "threat_level": _ensure_label(alert.get("threat_level", "")),
             "threat_label": _ensure_label(alert.get("threat_label") or alert.get("label") or ""),
-            "score": score_float,  # Now guaranteed to be float
-            "confidence": confidence_float,  # Now guaranteed to be float
+            "score": score_float,
+            "confidence": confidence_float,
             "published": _iso_date(alert),
             "city": _ensure_str(alert.get("city", "")),
             "country": _ensure_str(alert.get("country", "")),
@@ -621,12 +773,11 @@ def handle_user_query(
             "legal_risk": _ensure_str(alert.get("legal_risk", "")),
             "cyber_ot_risk": _ensure_str(alert.get("cyber_ot_risk", "")),
             "environmental_epidemic_risk": _ensure_str(alert.get("environmental_epidemic_risk", "")),
-            # New schema fields - FIXED: All numerical fields converted
             "domains": _ensure_list(alert.get("domains")),
             "trend_direction": _ensure_str(alert.get("trend_direction", "")),
-            "trend_score": trend_score_float,  # Now guaranteed to be float
+            "trend_score": trend_score_float,
             "trend_score_msg": _ensure_str(alert.get("trend_score_msg", "")),
-            "future_risk_probability": future_risk_float,  # Now guaranteed to be float
+            "future_risk_probability": future_risk_float,
             "anomaly_flag": bool(alert.get("anomaly_flag") or alert.get("is_anomaly") or False),
             "early_warning_indicators": _ensure_list(alert.get("early_warning_indicators")),
             "reports_analyzed": int(alert.get("reports_analyzed") or 0),
@@ -648,10 +799,8 @@ def handle_user_query(
         pass
 
     # ---------------- Return & cache ----------------
-    # Extract reply string from advisory_result (which is a dict)
     reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
     
-    # FIXED: Build quota object for successful response
     quota_obj = _build_quota_obj(email, plan_name)
     
     payload = {
@@ -664,5 +813,7 @@ def handle_user_query(
         "metadata": advisory_result if isinstance(advisory_result, dict) else {}
     }
     set_cache(cache_key, payload)
-    log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
+    overall_elapsed = time.perf_counter() - overall_start
+    log.info("handle_user_query completed in %.3fs", overall_elapsed)
+    log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]} elapsed={overall_elapsed:.3f}s")
     return payload

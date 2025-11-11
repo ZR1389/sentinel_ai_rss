@@ -23,7 +23,7 @@ MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY")
 MOONSHOT_MODEL = os.getenv("MOONSHOT_MODEL", "moonshot-v1-128k")  # Default to 128k context model
 MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 
-def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_tokens: int = 1000) -> Optional[str]:
+def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_tokens: int = 1000, timeout: float = 20.0) -> Optional[str]:
     """
     Call Kimi Moonshot API for chat completions.
     
@@ -31,6 +31,7 @@ def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_
         messages: List of message dicts with 'role' and 'content'
         temperature: Response randomness (0.0-1.0)
         max_tokens: Maximum response length
+        timeout: Request timeout in seconds (default: 20s for fast-failover)
         
     Returns:
         Response text or None if failed
@@ -58,7 +59,7 @@ def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_
         
         logger.debug(f"[Moonshot] Calling API with model {MOONSHOT_MODEL}")
         
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=timeout) as client:
             response = client.post(
                 f"{MOONSHOT_BASE_URL}/chat/completions",
                 headers=headers,

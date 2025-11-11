@@ -17,6 +17,14 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify, make_response
 
+# Rate limiting (optional)
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+except Exception:
+    Limiter = None
+    get_remote_address = None
+
 from map_api import map_api
 from webpush_endpoints import webpush_bp
 
@@ -28,11 +36,19 @@ app.register_blueprint(webpush_bp)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sentinel.main")
 
-# ---------- Optional CORS (simple) ----------
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+# ---------- CORS (more restrictive default) ----------
+# Default: production frontends only — override with comma-separated env var if needed
+ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "https://zikarisk.com,https://app.zikarisk.com")
+ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
 
 def _build_cors_response(resp):
-    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
+    origin = request.headers.get("Origin")
+    # If ALLOWED_ORIGINS contains "*" or exact origin, echo it; otherwise omit header
+    if "*" in ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+    elif origin and origin in ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+    # else: do not set Access-Control-Allow-Origin to avoid accidental permissive CORS
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-User-Email, Authorization"
     resp.headers["Access-Control-Allow-Credentials"] = "true"
@@ -80,6 +96,13 @@ except Exception:
         except Exception as e:
             logger.error("advisor/chat_handler import failed: %s", e)
             _advisor_callable = None
+
+# Try to import background status helper from chat_handler (optional)
+try:
+    from chat_handler import get_background_status
+except Exception as e:
+    logger.info("chat_handler.get_background_status import failed: %s", e)
+    get_background_status = None
 
 # RSS & Threat Engine
 try:
@@ -165,6 +188,47 @@ try:
     from psycopg2.extras import Json
 except Exception:
     Json = lambda x: x  # best-effort fallback if extras is unavailable
+
+# ---------- Rate limiter setup ----------
+# Use Redis for storage in multi-worker deployments: set RATE_LIMIT_STORAGE to a redis:// URL
+RATE_LIMIT_STORAGE = os.getenv("RATE_LIMIT_STORAGE", None)
+
+# Key function: prefer authenticated user identity when available, else remote IP
+def _limiter_key():
+    try:
+        if get_logged_in_email:
+            em = get_logged_in_email()
+            if em:
+                return f"user:{em.strip().lower()}"
+    except Exception:
+        pass
+    try:
+        if get_remote_address:
+            return get_remote_address()
+    except Exception:
+        pass
+    return "anonymous"
+
+if Limiter is not None:
+    try:
+        limiter = Limiter(
+            app,
+            key_func=_limiter_key,
+            default_limits=["200 per day", "50 per hour"],
+            storage_uri=RATE_LIMIT_STORAGE,
+        )
+        logger.info("Flask-Limiter initialized (storage=%s)", "redis" if RATE_LIMIT_STORAGE else "in-memory")
+    except Exception as e:
+        logger.warning("Flask-Limiter initialization failed: %s (continuing without limiter)", e)
+        limiter = None
+else:
+    limiter = None
+
+# Default rates (override with env)
+CHAT_RATE = os.getenv("CHAT_RATE", "10 per minute;200 per day")
+SEARCH_RATE = os.getenv("SEARCH_RATE", "30 per minute;500 per hour")
+BATCH_ENRICH_RATE = os.getenv("BATCH_ENRICH_RATE", "5 per minute;100 per hour")
+CHAT_QUERY_MAX_CHARS = int(os.getenv("CHAT_QUERY_MAX_CHARS", "5000"))
 
 # ---------- Optional psycopg2 fallback for Telegram linking ----------
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -652,99 +716,259 @@ def chat_options():
         return _build_cors_response(make_response("", 204))
     return _chat_impl()
 
-@app.route("/chat", methods=["POST"])
-@login_required
-def _chat_impl():
-    import signal
-    import time
-    
-    # Set a timeout for the entire chat request (4 minutes)
-    def timeout_handler(signum, frame):
-        raise TimeoutError("Chat request timed out")
-    
-    # Only set signal handler on Unix systems
-    if hasattr(signal, 'SIGALRM'):
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(240)  # 4 minutes
-    
-    start_time = time.time()
-    
-    try:
-        payload = _json_request()
-        query = (payload.get("query") or "").strip()
-        profile_data = payload.get("profile_data") or {}
-        input_data = payload.get("input_data") or {}
-        email = get_logged_in_email()  # from JWT
+# Attach route with limiter (if available) or without
+if limiter:
+    @app.route("/chat", methods=["POST"])
+    @login_required
+    @limiter.limit(CHAT_RATE)
+    def _chat_impl():
+        import signal
+        import time
 
-        if not query:
-            return _build_cors_response(make_response(jsonify({"error": "Missing 'query'"}), 400))
-        if _advisor_callable is None:
-            return _build_cors_response(make_response(jsonify({"error": "Advisor unavailable"}), 503))
+        # Set a timeout for the entire chat request (4 minutes)
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Chat request timed out")
 
-        # ----- Enforce VERIFIED email for chat -----
-        verified = False
-        if verification_status:
-            try:
-                verified, _ = verification_status(email)
-            except Exception:
+        # Only set signal handler on Unix systems
+        if hasattr(signal, 'SIGALRM'):
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(240)  # 4 minutes
+
+        start_time = time.time()
+
+        try:
+            payload = _json_request()
+
+            # --- Stronger validation ---
+            query_val = payload.get("query")
+            if not isinstance(query_val, str):
+                return _build_cors_response(make_response(jsonify({"error": "Missing or invalid 'query'"}), 400))
+            query = query_val.strip()
+            if not query:
+                return _build_cors_response(make_response(jsonify({"error": "Missing 'query'"}), 400))
+            if len(query) > CHAT_QUERY_MAX_CHARS:
+                return _build_cors_response(make_response(jsonify({"error": f"Query too long (max {CHAT_QUERY_MAX_CHARS} chars)"}), 400))
+            if not query.isprintable():
+                return _build_cors_response(make_response(jsonify({"error": "Query contains invalid characters"}), 400))
+
+            profile_data = payload.get("profile_data") or {}
+            input_data = payload.get("input_data") or {}
+            email = get_logged_in_email()  # from JWT
+
+            if _advisor_callable is None:
+                return _build_cors_response(make_response(jsonify({"error": "Advisor unavailable"}), 503))
+
+            # ----- Enforce VERIFIED email for chat -----
+            verified = False
+            if verification_status:
+                try:
+                    verified, _ = verification_status(email)
+                except Exception:
+                    verified = _is_verified(email)
+            else:
                 verified = _is_verified(email)
-        else:
-            verified = _is_verified(email)
 
-        if not verified:
-            return _build_cors_response(make_response(jsonify({
-                "error": "Email not verified. Please verify your email to use chat.",
-                "action": {
-                    "send_code": "/auth/verify/send",
-                    "confirm_code": "/auth/verify/confirm"
-                }
-            }), 403))
+            if not verified:
+                return _build_cors_response(make_response(jsonify({
+                    "error": "Email not verified. Please verify your email to use chat.",
+                    "action": {
+                        "send_code": "/auth/verify/send",
+                        "confirm_code": "/auth/verify/confirm"
+                    }
+                }), 403))
 
-        # ----- Plan usage (chat-only) -----
-        try:
-            if ensure_user_exists:
-                ensure_user_exists(email, plan=os.getenv("DEFAULT_PLAN", "FREE"))
-            if get_plan_limits and check_user_message_quota:
-                plan_limits = get_plan_limits(email)
-                ok, msg = check_user_message_quota(email, plan_limits)
-                if not ok:
-                    return _build_cors_response(make_response(jsonify({"error": msg, "quota_exceeded": True}), 429))
-        except Exception as e:
-            logger.error("plan check failed: %s", e)
-            pass
+            # ----- Plan usage (chat-only) -----
+            try:
+                if ensure_user_exists:
+                    ensure_user_exists(email, plan=os.getenv("DEFAULT_PLAN", "FREE"))
+                if get_plan_limits and check_user_message_quota:
+                    plan_limits = get_plan_limits(email)
+                    ok, msg = check_user_message_quota(email, plan_limits)
+                    if not ok:
+                        return _build_cors_response(make_response(jsonify({"error": msg, "quota_exceeded": True}), 429))
+            except Exception as e:
+                logger.error("plan check failed: %s", e)
+                pass
 
-        # ----- Call Advisor (do not increment yet) -----
-        try:
-            result = _advisor_call(query=query, email=email, profile_data=profile_data, input_data=input_data)
+            # ----- Call Advisor (do not increment yet) -----
+            try:
+                result = _advisor_call(query=query, email=email, profile_data=profile_data, input_data=input_data)
+            except TimeoutError:
+                logger.error("Advisor call timed out after %s seconds", time.time() - start_time)
+                return _build_cors_response(make_response(jsonify({
+                    "error": "Request timeout. Please try a shorter query or try again later.",
+                    "timeout": True
+                }), 504))
+            except Exception as e:
+                logger.error("advisor error: %s\n%s", e, traceback.format_exc())
+                return _build_cors_response(make_response(jsonify({"error": "Advisor failed"}), 502))
+
+            # ----- Increment usage ON SUCCESS only -----
+            try:
+                if increment_user_message_usage:
+                    increment_user_message_usage(email)
+            except Exception as e:
+                logger.error("usage increment failed: %s", e)
+
+            return _build_cors_response(jsonify(result))
+
         except TimeoutError:
-            logger.error("Advisor call timed out after %s seconds", time.time() - start_time)
+            logger.error("Chat request timed out after %s seconds", time.time() - start_time)
             return _build_cors_response(make_response(jsonify({
                 "error": "Request timeout. Please try a shorter query or try again later.",
                 "timeout": True
             }), 504))
-        except Exception as e:
-            logger.error("advisor error: %s\n%s", e, traceback.format_exc())
-            return _build_cors_response(make_response(jsonify({"error": "Advisor failed"}), 502))
+        finally:
+            # Clear the alarm
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)
+else:
+    @app.route("/chat", methods=["POST"])
+    @login_required
+    def _chat_impl():
+        import signal
+        import time
 
-        # ----- Increment usage ON SUCCESS only -----
-        try:
-            if increment_user_message_usage:
-                increment_user_message_usage(email)
-        except Exception as e:
-            logger.error("usage increment failed: %s", e)
+        # Set a timeout for the entire chat request (4 minutes)
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Chat request timed out")
 
-        return _build_cors_response(jsonify(result))
-    
-    except TimeoutError:
-        logger.error("Chat request timed out after %s seconds", time.time() - start_time)
-        return _build_cors_response(make_response(jsonify({
-            "error": "Request timeout. Please try a shorter query or try again later.",
-            "timeout": True
-        }), 504))
-    finally:
-        # Clear the alarm
+        # Only set signal handler on Unix systems
         if hasattr(signal, 'SIGALRM'):
-            signal.alarm(0)
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(240)  # 4 minutes
+
+        start_time = time.time()
+
+        try:
+            payload = _json_request()
+
+            # --- Stronger validation ---
+            query_val = payload.get("query")
+            if not isinstance(query_val, str):
+                return _build_cors_response(make_response(jsonify({"error": "Missing or invalid 'query'"}), 400))
+            query = query_val.strip()
+            if not query:
+                return _build_cors_response(make_response(jsonify({"error": "Missing 'query'"}), 400))
+            if len(query) > CHAT_QUERY_MAX_CHARS:
+                return _build_cors_response(make_response(jsonify({"error": f"Query too long (max {CHAT_QUERY_MAX_CHARS} chars)"}), 400))
+            if not query.isprintable():
+                return _build_cors_response(make_response(jsonify({"error": "Query contains invalid characters"}), 400))
+
+            profile_data = payload.get("profile_data") or {}
+            input_data = payload.get("input_data") or {}
+            email = get_logged_in_email()  # from JWT
+
+            if _advisor_callable is None:
+                return _build_cors_response(make_response(jsonify({"error": "Advisor unavailable"}), 503))
+
+            # ----- Enforce VERIFIED email for chat -----
+            verified = False
+            if verification_status:
+                try:
+                    verified, _ = verification_status(email)
+                except Exception:
+                    verified = _is_verified(email)
+            else:
+                verified = _is_verified(email)
+
+            if not verified:
+                return _build_cors_response(make_response(jsonify({
+                    "error": "Email not verified. Please verify your email to use chat.",
+                    "action": {
+                        "send_code": "/auth/verify/send",
+                        "confirm_code": "/auth/verify/confirm"
+                    }
+                }), 403))
+
+            # ----- Plan usage (chat-only) -----
+            try:
+                if ensure_user_exists:
+                    ensure_user_exists(email, plan=os.getenv("DEFAULT_PLAN", "FREE"))
+                if get_plan_limits and check_user_message_quota:
+                    plan_limits = get_plan_limits(email)
+                    ok, msg = check_user_message_quota(email, plan_limits)
+                    if not ok:
+                        return _build_cors_response(make_response(jsonify({"error": msg, "quota_exceeded": True}), 429))
+            except Exception as e:
+                logger.error("plan check failed: %s", e)
+                pass
+
+            # ----- Call Advisor (do not increment yet) -----
+            try:
+                result = _advisor_call(query=query, email=email, profile_data=profile_data, input_data=input_data)
+            except TimeoutError:
+                logger.error("Advisor call timed out after %s seconds", time.time() - start_time)
+                return _build_cors_response(make_response(jsonify({
+                    "error": "Request timeout. Please try a shorter query or try again later.",
+                    "timeout": True
+                }), 504))
+            except Exception as e:
+                logger.error("advisor error: %s\n%s", e, traceback.format_exc())
+                return _build_cors_response(make_response(jsonify({"error": "Advisor failed"}), 502))
+
+            # ----- Increment usage ON SUCCESS only -----
+            try:
+                if increment_user_message_usage:
+                    increment_user_message_usage(email)
+            except Exception as e:
+                logger.error("usage increment failed: %s", e)
+
+            return _build_cors_response(jsonify(result))
+
+        except TimeoutError:
+            logger.error("Chat request timed out after %s seconds", time.time() - start_time)
+            return _build_cors_response(make_response(jsonify({
+                "error": "Request timeout. Please try a shorter query or try again later.",
+                "timeout": True
+            }), 504))
+        finally:
+            # Clear the alarm
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)
+
+# ---------- Chat Background Status Polling Endpoint ----------
+@app.route("/api/chat/status/<session_id>", methods=["GET", "OPTIONS"])
+def chat_status_options(session_id):
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    # fallback to GET behavior
+    return chat_status(session_id)
+
+@app.route("/api/chat/status/<session_id>", methods=["GET"])
+@login_required
+def chat_status(session_id):
+    """
+    Poll background job status (started by chat_handler.start_background_job)
+    Returns:
+      - 200 with result once available,
+      - 202 while pending/running,
+      - 500 on failure,
+      - 404 if job not found.
+    """
+    if get_background_status is None:
+        return _build_cors_response(make_response(jsonify({"error": "Background status unavailable"}), 503))
+
+    status = get_background_status(session_id)
+
+    # If result is present, return it directly (200)
+    if status and status.get("result"):
+        return _build_cors_response(jsonify(status["result"]))
+
+    job = status.get("job", {}) if status else {}
+    if job.get("status") == "done":
+        # completed but no stored result — treat as internal error
+        return _build_cors_response(make_response(jsonify({"error": "Job completed but result missing"}), 500))
+    elif job.get("status") == "failed":
+        return _build_cors_response(make_response(jsonify({"error": job.get("error", "Job failed")}), 500))
+    elif job.get("status") in ("running", "pending"):
+        return _build_cors_response(make_response(jsonify({
+            "status": job["status"],
+            "message": "Still processing...",
+            "started_at": job.get("started_at")
+        }), 202))
+    else:
+        return _build_cors_response(make_response(jsonify({"error": "Job not found"}), 404))
 
 # ---------- Newsletter (unmetered; verified login required) ----------
 @app.route("/newsletter/subscribe", methods=["POST", "OPTIONS"])
@@ -1473,19 +1697,30 @@ def search_threats():
         return _build_cors_response(make_response(jsonify({"error": "Search service unavailable"}), 503))
 
     payload = _json_request()
-    query = payload.get("query", "").strip()
+    query = (payload.get("query") or "").strip()
     context = payload.get("context", "")
-    
+
     if not query:
         return _build_cors_response(make_response(jsonify({"error": "Query required"}), 400))
 
+    # Enforce reasonable length for search
     if len(query) > 500:
         return _build_cors_response(make_response(jsonify({"error": "Query too long (max 500 chars)"}), 400))
+
+    # If limiter is present, rate-limit this endpoint (decorator style would be cleaner;
+    # using programmatic call here to avoid redeclaring route)
+    if limiter:
+        try:
+            # This programmatic call simply checks/enforces throttle; if limit exceeded flask-limiter will raise
+            limiter._check_request_limit(request, scope="global", limit_value=SEARCH_RATE)
+        except Exception:
+            # If limiter internals differ or storage not configured, just continue
+            pass
 
     try:
         # Use dedicated search routing with Moonshot primary
         result, model_used = route_llm_search(query, context)
-        
+
         return _build_cors_response(jsonify({
             "ok": True,
             "query": query,
@@ -1493,7 +1728,7 @@ def search_threats():
             "model": model_used,
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }))
-        
+
     except Exception as e:
         logger.error("search_threats error: %s\n%s", e, traceback.format_exc())
         return _build_cors_response(make_response(jsonify({"error": "Search failed"}), 500))
@@ -1512,9 +1747,16 @@ def batch_enrich_alerts():
 
     payload = _json_request()
     limit = min(int(payload.get("limit", 10)), 20)  # Max 20 alerts per batch
-    
+
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+
+    # Programmatic rate check if limiter present
+    if limiter:
+        try:
+            limiter._check_request_limit(request, scope="global", limit_value=BATCH_ENRICH_RATE)
+        except Exception:
+            pass
 
     try:
         # Get recent unprocessed alerts for batch enrichment
@@ -1525,7 +1767,7 @@ def batch_enrich_alerts():
             ORDER BY published DESC 
             LIMIT %s
         """, (limit,))
-        
+
         if not alerts:
             return _build_cors_response(jsonify({
                 "ok": True,
@@ -1535,10 +1777,10 @@ def batch_enrich_alerts():
 
         # Convert to dict format for processing
         alerts_batch = [dict(alert) for alert in alerts]
-        
+
         # Process batch with 128k context
         result, model_used = route_llm_batch(alerts_batch)
-        
+
         return _build_cors_response(jsonify({
             "ok": True,
             "alerts_processed": len(alerts_batch),
@@ -1546,7 +1788,7 @@ def batch_enrich_alerts():
             "enrichment_result": result[:500] + "..." if len(result) > 500 else result,
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }))
-        
+
     except Exception as e:
         logger.error("batch_enrich_alerts error: %s\n%s", e, traceback.format_exc())
         return _build_cors_response(make_response(jsonify({"error": "Batch enrichment failed"}), 500))

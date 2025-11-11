@@ -24,6 +24,12 @@ def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general")
         PROVIDER_TERTIARY = os.getenv("ADVISOR_PROVIDER_TERTIARY", "deepseek").lower()
         PROVIDER_QUATERNARY = os.getenv("ADVISOR_PROVIDER_QUATERNARY", "openai").lower()
     
+    # Provider-specific timeouts (in seconds) - aggressive for fast-failover
+    TIMEOUT_DEEPSEEK = int(os.getenv("DEEPSEEK_TIMEOUT", "15"))
+    TIMEOUT_OPENAI = int(os.getenv("OPENAI_TIMEOUT", "20"))
+    TIMEOUT_GROK = int(os.getenv("GROK_TIMEOUT", "15"))
+    TIMEOUT_MOONSHOT = int(os.getenv("MOONSHOT_TIMEOUT", "20"))
+    
     provider_order = [PROVIDER_PRIMARY, PROVIDER_SECONDARY, PROVIDER_TERTIARY, PROVIDER_QUATERNARY]
 
     logger.info(f"[LLM Router] Using provider order: {provider_order}")
@@ -31,22 +37,22 @@ def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general")
     def try_provider(name):
         try:
             if name == "deepseek" and deepseek_chat:
-                s = deepseek_chat(messages, temperature=temperature)
+                s = deepseek_chat(messages, temperature=temperature, timeout=TIMEOUT_DEEPSEEK)
                 if s and s.strip():
                     usage_counts["deepseek"] += 1
                     return s.strip(), "deepseek"
             elif name == "openai" and openai_chat:
-                s = openai_chat(messages, temperature=temperature)
+                s = openai_chat(messages, temperature=temperature, timeout=TIMEOUT_OPENAI)
                 if s and s.strip():
                     usage_counts["openai"] += 1
                     return s.strip(), "openai"
             elif name == "grok" and grok_chat:
-                s = grok_chat(messages, temperature=temperature)
+                s = grok_chat(messages, temperature=temperature, timeout=TIMEOUT_GROK)
                 if s and s.strip():
                     usage_counts["grok"] += 1
                     return s.strip(), "grok"
             elif name == "moonshot" and moonshot_chat:
-                s = moonshot_chat(messages, temperature=temperature)
+                s = moonshot_chat(messages, temperature=temperature, timeout=TIMEOUT_MOONSHOT)
                 if s and s.strip():
                     usage_counts["moonshot"] += 1
                     return s.strip(), "moonshot"

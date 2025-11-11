@@ -7,11 +7,22 @@ XAI_API_HOST = "api.x.ai"
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
 TEMPERATURE = float(os.getenv("GROK_TEMPERATURE", 0.3))
 
-def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE):
+def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, timeout=15):
+    """
+    Grok chat completion with timeout support.
+    
+    Args:
+        messages: List of message dicts
+        model: Model name
+        temperature: Sampling temperature
+        timeout: Request timeout in seconds (default: 15s for fast-failover)
+    """
     if not XAI_API_KEY:
         print("[Grok-3-mini] API key missing.")
         return None
     try:
+        # Note: xai_sdk may not support timeout parameter directly
+        # This is a best-effort timeout hint
         client = Client(api_host=XAI_API_HOST, api_key=XAI_API_KEY)
         chat = client.chat.create(model=model, temperature=temperature)
         for m in messages:

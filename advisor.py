@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
-from llm_router import route_llm
+from llm_router_fast import route_llm
 
 # -------- LLM clients / prompts (soft imports so advisor always loads) --------
 # Specialized: Grok (x.ai)
@@ -28,19 +28,25 @@ except Exception:
     def grok_chat(messages, temperature=0.2):
         return None  # graceful no-op
 
-# Primary: DeepSeek (you created deepseek_client.py)
+# Primary: DeepSeek (with timeout support)
 try:
-    from deepseek_client import deepseek_chat  # type: ignore
+    from deepseek_client_timeout import deepseek_chat  # type: ignore
 except Exception:
-    def deepseek_chat(messages, temperature=0.2):
-        return None
+    try:
+        from deepseek_client import deepseek_chat  # type: ignore
+    except Exception:
+        def deepseek_chat(messages, temperature=0.2, timeout=None):
+            return None
 
-# Fallback: OpenAI (you created openai_client_wrapper.py)
+# Fallback: OpenAI (with timeout support)
 try:
-    from openai_client_wrapper import openai_chat  # type: ignore
+    from openai_client_wrapper_timeout import openai_chat  # type: ignore
 except Exception:
-    def openai_chat(messages, temperature=0.2):
-        return None
+    try:
+        from openai_client_wrapper import openai_chat  # type: ignore
+    except Exception:
+        def openai_chat(messages, temperature=0.2, timeout=None):
+            return None
 
 # (Optional) direct OpenAI import left intact for other modules that may import advisor
 try:
