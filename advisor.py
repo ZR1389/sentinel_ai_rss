@@ -63,6 +63,7 @@ try:
         ROLE_MATRIX_PROMPT,
         DOMAIN_PLAYBOOKS_PROMPT,
         TREND_CITATION_PROTOCOL,
+        LOCATION_DATA_QUALITY_PROMPT,
     )
 except Exception:
     # Minimal safe fallbacks; keep keys used in .format()
@@ -73,6 +74,7 @@ except Exception:
     ROLE_MATRIX_PROMPT = ""
     DOMAIN_PLAYBOOKS_PROMPT = ""
     TREND_CITATION_PROTOCOL = ""
+    LOCATION_DATA_QUALITY_PROMPT = ""
 
 # Shared heuristics & guards
 try:
