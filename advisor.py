@@ -181,6 +181,42 @@ DOMAIN_PLAYBOOKS: Dict[str, List[str]] = {
     ],
 }
 
+# ---------- Geographic validation ----------
+def _validate_location_match(query_location: str, alert_location_data: Dict[str, Any]) -> Tuple[float, str, str]:
+    """
+    Returns: (match_score_0_100, matched_location_name, validation_warning)
+    Penalizes heavily when query location doesn't match alert data location
+    """
+    query_loc = query_location.lower().strip()
+    alert_city = (alert_location_data.get("city") or "").lower().strip()
+    alert_country = (alert_location_data.get("country") or "").lower().strip()
+    alert_region = (alert_location_data.get("region") or "").lower().strip()
+    
+    # Extract location from query (basic - can be enhanced with city_utils.py)
+    # This is a simple implementation - you may want to use NLP parsing from city_utils
+    query_city = query_loc.split()[0] if query_loc else ""
+    
+    # Check for match
+    match_score = 0.0
+    matched_name = alert_city or alert_region or alert_country or "Unknown"
+    
+    if query_city and (query_city in alert_city or alert_city in query_city):
+        match_score = 100.0
+    elif query_city and (query_city in alert_region or alert_region in query_city):
+        match_score = 80.0
+    elif query_city and (query_city in alert_country or alert_country in query_city):
+        match_score = 60.0
+    else:
+        # No match found - this is the Budapest->Cairo case
+        match_score = 10.0  # Minimum score to indicate severe mismatch
+    
+    warning = ""
+    if match_score < 30:
+        warning = f"WARNING: Input data location '{matched_name}' does not match query location '{query_location}'. Recommendations are generic only."
+        logger.warning(f"[Advisor] Geographic mismatch: query='{query_location}' vs data='{matched_name}'")
+    
+    return match_score, matched_name, warning
+
 # ---------- Role inference data ----------
 ROLE_KEYWORDS: Dict[str, List[str]] = {
     "traveler": ["traveler","tourist","visitor","student","backpacker","vacation","holiday"],
@@ -814,6 +850,22 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     input_data["action"] = action
     input_data["specific_action"] = action  # For prompts using {specific action}
 
+    # Geographic validation - check if query location matches alert location
+    geographic_warning = ""
+    if profile_data and profile_data.get("location"):
+        query_location = profile_data.get("location")
+        alert_location_data = {
+            "city": alert.get("city"),
+            "country": alert.get("country"), 
+            "region": alert.get("region")
+        }
+        match_score, matched_name, warning = _validate_location_match(query_location, alert_location_data)
+        if warning:
+            geographic_warning = warning
+            input_data["geographic_warning"] = warning
+            input_data["geographic_match_score"] = match_score
+            logger.info(f"[Advisor] Geographic validation: score={match_score}, warning={bool(warning)}")
+
     # Predictive tone nudges from future_risk_probability
     p_future = input_data.get("future_risk_probability")
     if isinstance(p_future, (int, float)):
@@ -877,7 +929,7 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         # Track fallback usage
         _model_usage_counts["fallback"] = _model_usage_counts.get("fallback", 0) + 1
         
-        return _fallback_advisory(alert, trend_line, input_data)
+        return _fallback_advisory(alert, trend_line, input_data, geographic_warning)
 
     logger.info(f"[Advisor] Successfully generated advisory using {model_used}")
     logger.info(f"[Advisor] Current usage counts: {_model_usage_counts}")
@@ -919,6 +971,10 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     if input_data.get("info_ops_flags") and "SOURCES —" in advisory and "INFO-OPS / SIGNALS —" not in advisory:
         advisory += "\n\nINFO-OPS / SIGNALS —\n" + "\n".join(f"- {f}" for f in input_data["info_ops_flags"])
 
+    # Geographic validation warning - add prominent warning for location mismatches
+    if geographic_warning and "GEOGRAPHIC VALIDATION —" not in advisory:
+        advisory += f"\n\nGEOGRAPHIC VALIDATION —\n⚠️ {geographic_warning}"
+
     advisory = ensure_sections(advisory)
     advisory = ensure_has_playbook_or_alts(advisory, hits, alts)
     advisory = clean_auto_sections(advisory)
@@ -926,7 +982,7 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
     advisory = strip_excessive_blank_lines(advisory)
     return advisory
 
-def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[str, Any]) -> str:
+def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[str, Any], geographic_warning: str = "") -> str:
     region = input_data.get("region") or "Unknown location"
     risk_level = alert.get("label") or "Unknown"
     threat_type = input_data.get("category") or "Other"
@@ -1006,6 +1062,11 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
 
     lines.append("ANALYST CTA —")
     lines.append("• Reply 'monitor 12h' for an auto-check, or request a routed analyst review if risk increases.")
+
+    # Add geographic validation warning if present
+    if geographic_warning:
+        lines.append("GEOGRAPHIC VALIDATION —")
+        lines.append(f"⚠️ {geographic_warning}")
 
     out = "\n".join(lines)
     out = ensure_sections(out)
