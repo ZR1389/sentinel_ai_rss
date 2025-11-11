@@ -219,55 +219,24 @@ REQUIRED_HEADERS = [
 ]
 
 def ensure_sections(advisory: str) -> str:
-    """
-    Improved: More robust content detection that respects LLM-generated content
-    """
+    """Simplified: only add section if completely missing"""
     out = advisory.strip()
+    lines = out.split('\n')
     
     for pat in REQUIRED_HEADERS:
         header_text = pat.strip("^$").replace(r"\ ", " ").replace(r" —", " —")
         
-        # Check if section exists with substantial content
-        section_exists = False
-        lines = out.split('\n')
-        
+        # Check if section header exists
+        section_idx = -1
         for i, line in enumerate(lines):
-            if re.search(pat, line, flags=re.MULTILINE):
-                # Check if this section has meaningful content beyond the header
-                has_content = False
-                content_lines = 0
-                
-                for j in range(i + 1, min(i + 10, len(lines))):  # Look further ahead
-                    if j >= len(lines):
-                        break
-                    next_line = lines[j].strip()
-                    
-                    # Skip empty lines
-                    if not next_line:
-                        continue
-                    
-                    # Stop if we hit another section header
-                    if re.search(r'^[A-Z][A-Z\s/]+ —', next_line):
-                        break
-                    
-                    # Skip auto-added placeholders
-                    if '[auto] Section added' in next_line:
-                        continue
-                    
-                    # Count substantial content lines
-                    if len(next_line) > 10:  # More than just bullets or short phrases
-                        content_lines += 1
-                        if content_lines >= 1:  # At least one substantial line
-                            has_content = True
-                            break
-                
-                if has_content:
-                    section_exists = True
-                    break
+            if re.search(pat, line):
+                section_idx = i
+                break
         
-        # Only add placeholder if section truly doesn't exist or is empty
-        if not section_exists:
+        if section_idx == -1:
+            # Section completely missing - add it
             out += f"\n\n{header_text}\n• [auto] Section added (no content)"
+            lines = out.split('\n')  # Rebuild lines for next iteration
     
     return out
 
@@ -292,11 +261,18 @@ def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) 
     return out
 
 def clean_auto_sections(advisory: str) -> str:
-    # Remove lines like '• [auto] Section added (no content)' for cleaner UI
+    """Remove BOTH placeholders AND empty sections"""
+    # Remove auto-added lines
     cleaned = re.sub(r"\n?• \[auto\] Section added \(no content\)", "", advisory)
-    # Also remove any completely empty sections that might result
-    cleaned = re.sub(r'\n\n[A-Z][A-Z\s/]+ —\s*\n(\s*\n)+', '\n\n', cleaned)
-    return cleaned
+    
+    # Remove orphaned headers (header followed by nothing or another header)
+    cleaned = re.sub(
+        r'\n\n([A-Z][A-Z\s/]+ —)\s*\n(?=\n|$|[A-Z][A-Z\s/]+ —)',
+        '', 
+        cleaned
+    )
+    
+    return cleaned.strip()
 
 def strip_excessive_blank_lines(text: str) -> str:
     # Replace 3+ consecutive newlines with 2 newlines, and strip trailing whitespace

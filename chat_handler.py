@@ -74,6 +74,128 @@ else:
 
 load_dotenv()
 
+# ---------------- Optional instrumentation & pooling imports ----------------
+try:
+    import prometheus_client
+    from prometheus_client import Histogram, start_http_server
+except Exception:
+    prometheus_client = None
+    Histogram = None
+    start_http_server = None
+
+try:
+    import redis
+except Exception:
+    redis = None
+
+try:
+    from psycopg2.pool import ThreadedConnectionPool
+except Exception:
+    ThreadedConnectionPool = None
+
+# ---------------- Metrics (histograms for percentiles) ----------------
+METRICS_ENABLED = bool(os.getenv("CHAT_METRICS_ENABLED", "true").lower() in ("1", "true", "yes", "y"))
+_METRICS_PORT = int(os.getenv("CHAT_METRICS_PORT", "8000"))
+DB_FETCH_SECONDS = ADVISOR_SECONDS = OVERALL_SECONDS = None
+if METRICS_ENABLED and Histogram is not None:
+    try:
+        DB_FETCH_SECONDS = Histogram(
+            "chat_db_fetch_seconds",
+            "DB fetch duration for chat alerts",
+            buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+        )
+        ADVISOR_SECONDS = Histogram(
+            "chat_advisor_seconds",
+            "Advisor (LLM) call duration",
+            buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 30.0),
+        )
+        OVERALL_SECONDS = Histogram(
+            "chat_overall_seconds",
+            "Overall handle_user_query duration",
+            buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0),
+        )
+        if start_http_server is not None:
+            try:
+                t = threading.Thread(target=lambda: start_http_server(_METRICS_PORT), daemon=True)
+                t.start()
+                log.info("Prometheus metrics server started on port %s", _METRICS_PORT)
+            except Exception as e:
+                log.warning("Failed to start Prometheus metrics server: %s", e)
+    except Exception as e:
+        log.warning("Failed to initialize metrics: %s", e)
+        DB_FETCH_SECONDS = ADVISOR_SECONDS = OVERALL_SECONDS = None
+
+# ---------------- Redis-backed (optional) rate limiter with in-process fallback ----------------
+_redis_client = None
+if redis is not None and os.getenv("CHAT_RATE_LIMIT_REDIS"):
+    try:
+        _redis_client = redis.from_url(os.getenv("CHAT_RATE_LIMIT_REDIS"))
+        log.info("Redis rate limiter initialized")
+    except Exception as e:
+        log.warning("Redis rate limiter init failed, using in-memory: %s", e)
+_inmem_rate = {}
+_inmem_rate_lock = threading.Lock()
+
+def check_rate_limit(user_email: str, per_min: int | None = None) -> bool:
+    """
+    Return True if allowed, False if rate limit exceeded.
+    Uses Redis if CHAT_RATE_LIMIT_REDIS is set; otherwise uses a per-process in-memory sliding window.
+    Default per_min is driven by CHAT_RATE_LIMIT_PER_MIN env (default 10).
+    """
+    try:
+        limit = int(os.getenv("CHAT_RATE_LIMIT_PER_MIN", "10")) if per_min is None else int(per_min)
+        window = 60
+        key = f"rl:{user_email}:{window}:{limit}"
+        if _redis_client:
+            cur = _redis_client.incr(key)
+            if cur == 1:
+                _redis_client.expire(key, window)
+            return cur <= limit
+        else:
+            now = time.time()
+            with _inmem_rate_lock:
+                arr = _inmem_rate.get(user_email, [])
+                arr = [ts for ts in arr if ts > now - window]
+                if len(arr) >= limit:
+                    _inmem_rate[user_email] = arr
+                    return False
+                arr.append(now)
+                _inmem_rate[user_email] = arr
+            return True
+    except Exception as e:
+        # Fail open to avoid denying traffic on errors
+        log.warning("Rate limiter error, failing open: %s", e)
+        return True
+
+# ---------------- Simple DB connection pool helpers ----------------
+DB_POOL = None
+if ThreadedConnectionPool and os.getenv("DATABASE_URL"):
+    try:
+        _minconn = int(os.getenv("DB_POOL_MIN", "1"))
+        _maxconn = int(os.getenv("DB_POOL_MAX", "10"))
+        DB_POOL = ThreadedConnectionPool(_minconn, _maxconn, os.getenv("DATABASE_URL"))
+        log.info("Initialized DB pool min=%s max=%s", _minconn, _maxconn)
+    except Exception as e:
+        DB_POOL = None
+        log.info("DB pool not initialized: %s", e)
+
+def get_pooled_conn():
+    """Return a pooled psycopg2 connection (or None). Caller should put_pooled_conn when done."""
+    if DB_POOL:
+        try:
+            return DB_POOL.getconn()
+        except Exception:
+            return None
+    return None
+
+def put_pooled_conn(conn):
+    """Return a connection to the pool."""
+    if DB_POOL and conn is not None:
+        try:
+            DB_POOL.putconn(conn)
+        except Exception:
+            pass
+
 # ---------------- In-memory cache & background jobs ----------------
 CACHE_TTL = int(os.getenv("CHAT_CACHE_TTL", "1800"))  # seconds
 RESPONSE_CACHE: Dict[str, Any] = {}
@@ -203,6 +325,15 @@ def _normalize_region(region: Optional[str], city_list: Optional[List[str]] = No
             return region
     return region
 
+def _validate_region(region: Optional[str]) -> bool:
+    """Reject broad/vague regions that will cause false matches"""
+    if not region:
+        return False
+    vague_terms = {"middle east", "europe", "asia", "africa", "world", "global", 
+                   "americas", "north america", "south america", "oceania", 
+                   "scandinavia", "balkans", "central asia", "southeast asia"}
+    return region.lower() not in vague_terms and len(region) > 3
+
 def _session_id(email: str, body: Optional[Dict[str, Any]]) -> str:
     if body and body.get("session_id"):
         return str(body["session_id"])
@@ -267,6 +398,15 @@ def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
     
     return quota_obj
 
+# Small helper to produce a short, non-PII identifier for logs
+def _short_id(s: Optional[str], length: int = 8) -> str:
+    if not s:
+        return "unknown"
+    try:
+        return sha1(s.encode()).hexdigest()[:length]
+    except Exception:
+        return "unknown"
+
 # ---------------- Background Job Helpers ----------------
 def _bg_cache_key(session_id: str) -> str:
     return f"bg:{session_id}"
@@ -309,7 +449,10 @@ def start_background_job(session_id: str, target_fn, *args, **kwargs) -> None:
             with BACKGROUND_JOBS_LOCK:
                 BACKGROUND_JOBS[session_id]["status"] = "failed"
                 BACKGROUND_JOBS[session_id]["error"] = str(e)
-            log_security_event(event_type="background_job_failed", details=f"session={session_id} error={e}")
+            try:
+                log_security_event(event_type="background_job_failed", details=f"session={session_id} error={e}")
+            except Exception:
+                pass
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
 
@@ -338,7 +481,7 @@ def handle_user_query(
     it will accept the request and process the advisory in background; results are available via get_background_status(session_id).
     """
     overall_start = time.perf_counter()
-    log.info("handle_user_query: ENTERED | email=%s", email)
+    log.info("handle_user_query: ENTERED | user=%s", _short_id(email))
 
     if not email:
         log_security_event(event_type="missing_email", details="handle_user_query called without email")
@@ -387,7 +530,7 @@ def handle_user_query(
     if not query:
         query = "Please provide a security threat assessment for my area."
 
-    log.info("Query content: %s", query)
+    log.info("Query content (truncated): %s", (query[:200] + "...") if len(query) > 200 else query)
 
     # Plan/usage are informational only
     plan_name = "FREE"
@@ -398,7 +541,7 @@ def handle_user_query(
         except Exception as e:
             log.warning("get_plan failed: %s", e)
 
-    usage_info: Dict[str, Any] = {"email": email}
+    usage_info: Dict[str, Any] = {"email_short": _short_id(email)}
     if get_usage:
         try:
             usage_info.update(get_usage(email) or {})
@@ -412,6 +555,18 @@ def handle_user_query(
         region = _normalize_region(region, city_list)
     log.debug("Filters | region=%r category(threat_type)=%r", region, threat_type)
 
+    # Add strict region validation BEFORE calling DB
+    if region and not _validate_region(region):
+        log.warning("Vague region '%s' rejected - asking for clarification", region)
+        return {
+            "reply": f"Please specify a city or country within '{region}' for precise alerts.",
+            "alerts": [],
+            "no_data": True,
+            "metadata": {"vague_region": True},
+            "session_id": _session_id(email, body),
+            "usage": usage_info
+        }
+
     # Session
     session_id = _session_id(email, body)
 
@@ -422,7 +577,7 @@ def handle_user_query(
     ).encode("utf-8")).hexdigest()
     cached = get_cache(cache_key)
     if cached is not None:
-        log.info("handle_user_query: cache HIT")
+        log.info("handle_user_query: cache HIT | user=%s session=%s", _short_id(email), session_id[:8] if session_id else "unk")
         log_security_event(event_type="cache_hit", email=email, plan=plan_name, details=f"cache_key={cache_key}")
         # Update quota in cached response
         if isinstance(cached, dict):
@@ -433,57 +588,170 @@ def handle_user_query(
     db_alerts: List[Dict[str, Any]] = []
     db_start = time.perf_counter()
     try:
-        log.info("DB: fetch_alerts_from_db_strict_geo(...)")
+        log.info("DB: fetch_alerts_from_db_strict_geo(...) | user=%s session=%s", _short_id(email), session_id[:8] if session_id else "unk")
         
         # Enhanced geographic parameter handling using dynamic intelligence
         try:
-            geo_params = enhance_geographic_query(region)
-            country_param = geo_params.get('country')
-            city_param = geo_params.get('city')
-            region_param = geo_params.get('region')
+            # Log input parameters for debugging (sanitized)
+            log.info("Geographic resolution starting", extra={"user": _short_id(email), "original_region": region, "threat_type": threat_type})
             
-            if country_param:
-                log.info(f"Geographic intelligence: '{region}' → country='{country_param}', city='{city_param}'")
+            # Apply geographic intelligence enhancement
+            geo_params = enhance_geographic_query(region)
+            country_param = geo_params.get("country")
+            city_param = geo_params.get("city")
+            region_param = geo_params.get("region")
+            
+            # Defensive validation of resolved parameters
+            if region_param and not isinstance(region_param, str):
+                log.warning("Invalid region_param type, falling back to original | user=%s", _short_id(email))
+                region_param = region
+            if country_param and not isinstance(country_param, str):
+                log.warning("Invalid country_param type, clearing | user=%s", _short_id(email))
+                country_param = None
+            if city_param and not isinstance(city_param, str):
+                log.warning("Invalid city_param type, clearing | user=%s", _short_id(email))
+                city_param = None
+            
+            # Enhanced logging with more detail (also include short user id)
+            log.info(
+                f"Geographic intelligence resolved: input='{region}' resolved_region='{region_param}' detected_country='{country_param}' detected_city='{city_param}' method={geo_params.get('location_method','unknown')} confidence={geo_params.get('location_confidence','unknown')} user={_short_id(email)}"
+            )
+            
+            # Backwards-compatible simple log line for ops dashboards
+            log.info(f"QUERY GEO SUCCESS: region='{region_param}' country='{country_param}' city='{city_param}' user={_short_id(email)}")
+            
         except Exception as e:
-            log.warning(f"Geographic intelligence failed, using original region: {e}")
+            log.warning("Geographic intelligence failed, applying defensive fallback: %s", e)
+            log.warning("Exception details: type=%s args=%s", type(e).__name__, getattr(e, "args", "N/A"))
+            
+            # Defensive fallback with safe defaults
             country_param = None
             city_param = None
-            region_param = region
+            region_param = region if region and isinstance(region, str) else None
+            
+            # Log fallback state clearly
+            log.info(f"QUERY GEO FALLBACK: region='{region_param}' country='{country_param}' city='{city_param}' user={_short_id(email)} error='{str(e)[:100]}'")
+            
+            # Security event for geographic intelligence failures (include full email)
+            try:
+                log_security_event(
+                    event_type="geographic_intelligence_failed", 
+                    email=email, 
+                    plan=plan_name, 
+                    details=f"region='{region}' error={str(e)[:200]}"
+                )
+            except Exception:
+                pass  # Don't let logging failures cascade
 
         # Run DB fetch in a worker with a hard timeout to avoid blocking the request forever
         if fetch_alerts_from_db_strict_geo:
             db_timeout = int(os.getenv("CHAT_DB_TIMEOUT", "30"))  # seconds
             try:
-                with ThreadPoolExecutor(max_workers=1) as ex:
-                    future = ex.submit(
-                        fetch_alerts_from_db_strict_geo,
-                        region_param,
-                        country_param,
-                        city_param,
-                        threat_type,
-                        int(os.getenv("CHAT_ALERTSLimit", os.getenv("CHAT_ALERTS_LIMIT", "20"))),
+                # Enhanced parameter logging with validation before DB call
+                log.info(
+                    f"Preparing database query | user={_short_id(email)} session={session_id[:8] if session_id else 'unk'} region_param={region_param} country_param={country_param} city_param={city_param} threat_type={threat_type} alerts_limit={int(os.getenv('CHAT_ALERTS_LIMIT','20'))} db_timeout={db_timeout}"
+                )
+                
+                # Validate parameters before query
+                params_valid = True
+                if region_param is not None and not isinstance(region_param, str):
+                    log.warning("Invalid region_param for DB query: %s", type(region_param))
+                    params_valid = False
+                if country_param is not None and not isinstance(country_param, str):
+                    log.warning("Invalid country_param for DB query: %s", type(country_param))
+                    params_valid = False
+                if city_param is not None and not isinstance(city_param, str):
+                    log.warning("Invalid city_param for DB query: %s", type(city_param))
+                    params_valid = False
+                    
+                if not params_valid:
+                    log.error("DB query aborted due to invalid parameters | user=%s", _short_id(email))
+                    db_alerts = []
+                else:
+                    log.info(f"EXECUTING DB QUERY: region='{region_param}' country='{country_param}' city='{city_param}' threat='{threat_type}' timeout={db_timeout}s user={_short_id(email)}")
+                    with ThreadPoolExecutor(max_workers=1) as ex:
+                        future = ex.submit(
+                            fetch_alerts_from_db_strict_geo,
+                            region_param,
+                            country_param,
+                            city_param,
+                            threat_type,
+                            int(os.getenv("CHAT_ALERTS_LIMIT", "20")),
+                        )
+                        db_alerts = future.result(timeout=db_timeout) or []
+                # Defensive validation and logging of query results
+                try:
+                    if db_alerts is None:
+                        log.warning("DB query returned None, converting to empty list | user=%s", _short_id(email))
+                        db_alerts = []
+                    elif not isinstance(db_alerts, list):
+                        log.warning("DB query returned non-list type %s, converting | user=%s", type(db_alerts), _short_id(email))
+                        # If it's iterable, make a list; otherwise drop to empty list
+                        try:
+                            db_alerts = list(db_alerts) if hasattr(db_alerts, '__iter__') else []
+                        except Exception:
+                            db_alerts = []
+                    
+                    results_count = len(db_alerts)
+                    log.info(
+                        f"Database query completed successfully | results_count={results_count} query_region={region_param} query_country={country_param} query_city={city_param} query_threat={threat_type} db_timeout_used={db_timeout} user={_short_id(email)} session={session_id[:8] if session_id else 'unk'}"
                     )
-                    db_alerts = future.result(timeout=db_timeout) or []
+                    log.info(f"DB QUERY SUCCESS: {results_count} alerts returned for region='{region_param}' country='{country_param}' city='{city_param}' user={_short_id(email)}")
+                    
+                except Exception as result_error:
+                    log.error("Error processing DB query results: %s | user=%s", result_error, _short_id(email))
+                    results_count = -1
+                    db_alerts = []
             except FuturesTimeout:
-                log.error("DB fetch timed out after %ss", db_timeout)
-                log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=f"db timeout {db_timeout}s")
+                log.error(
+                    "Database fetch timed out - this may indicate DB performance issues or network problems | timeout_seconds=%s user=%s region=%s country=%s city=%s",
+                    db_timeout, _short_id(email), region_param, country_param, city_param
+                )
+                log.error(f"DB TIMEOUT: Query timed out after {db_timeout}s for region='{region_param}' country='{country_param}' city='{city_param}' user={_short_id(email)}")
+                try:
+                    log_security_event(
+                        event_type="db_alerts_fetch_timeout", 
+                        email=email, 
+                        plan=plan_name, 
+                        details=f"timeout={db_timeout}s region='{region_param}' country='{country_param}' city='{city_param}'"
+                    )
+                except Exception:
+                    pass
                 db_alerts = []
             except Exception as e:
-                log.error("DB fetch failed: %s", e)
-                log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=str(e))
+                log.error(
+                    "Database fetch failed with unexpected error: %s | user=%s",
+                    type(e).__name__, _short_id(email)
+                )
+                log.error(f"DB ERROR: {type(e).__name__}: {e} for region='{region_param}' country='{country_param}' city='{city_param}' user={_short_id(email)}")
+                try:
+                    log_security_event(
+                        event_type="db_alerts_fetch_failed", 
+                        email=email, 
+                        plan=plan_name, 
+                        details=f"error={type(e).__name__}: {str(e)[:200]} region='{region_param}'"
+                    )
+                except Exception:
+                    pass
                 db_alerts = []
         else:
             db_alerts = []
 
         count = len(db_alerts or [])
         db_elapsed = time.perf_counter() - db_start
-        log.info("DB: fetched %d alerts (%.3fs)", count, db_elapsed)
-        log_security_event(event_type="db_alerts_fetched", email=email, plan=plan_name, details=f"{count} alerts")
+        log.info("DB: fetched %d alerts (%.3fs) | user=%s", count, db_elapsed, _short_id(email))
+        try:
+            log_security_event(event_type="db_alerts_fetched", email=email, plan=plan_name, details=f"{count} alerts")
+        except Exception:
+            pass
     except Exception as e:
         db_elapsed = time.perf_counter() - db_start
         log.error("DB fetch failed unexpectedly after %.3fs: %s", db_elapsed, e)
         usage_info["fallback_reason"] = "alert_fetch_error"
-        log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=str(e))
+        try:
+            log_security_event(event_type="db_alerts_fetch_failed", email=email, plan=plan_name, details=str(e))
+        except Exception:
+            pass
         
         # Build quota object for error response
         quota_obj = _build_quota_obj(email, plan_name)
@@ -507,7 +775,7 @@ def handle_user_query(
         historical_alerts = fetch_past_incidents(
             region=region, category=history_category, days=int(os.getenv("CHAT_HISTORY_DAYS", "90")), limit=100
         )
-        log.info("[HIST] %d historical for region=%s category=%s", len(historical_alerts), region, history_category)
+        log.info("[HIST] %d historical for region=%s category=%s | user=%s", len(historical_alerts), region, history_category, _short_id(email))
     except Exception as e:
         log.warning("[HIST] fetch_past_incidents failed: %s", e)
 
@@ -518,7 +786,7 @@ def handle_user_query(
         # Merge with profile_data from main.py if provided
         if profile_data and isinstance(profile_data, dict):
             user_profile.update(profile_data)
-        log.info("[PROFILE] Loaded profile for %s", email)
+        log.info("[PROFILE] Loaded profile for %s", _short_id(email))
     except Exception as e:
         log.warning("[PROFILE] fetch_user_profile failed: %s", e)
 
@@ -573,7 +841,7 @@ def handle_user_query(
 
     # ----------- SMARTER NO-DATA / NO ALERTS GUARD -----------
     if not db_alerts:
-        log.info("No alerts found for query='%s', region='%s', threat_type='%s'", query, region, threat_type)
+        log.info("No alerts found for query='%s', region='%s', threat_type='%s' | user=%s", query, region, threat_type, _short_id(email))
         # Always call advisor (LLM) for best-effort situational summary even if no alerts in DB,
         # but protect with a timeout using a future. If the advisor times out and ASYNC_FALLBACK is enabled,
         # accept and queue a background job to finish processing and persist the result.
@@ -598,7 +866,10 @@ def handle_user_query(
                 except FuturesTimeout:
                     log.error("Advisor (no-data fallback) timed out after %ss", ADVISOR_TIMEOUT)
                     usage_info["fallback_reason"] = "advisor_timeout"
-                    log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    try:
+                        log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    except Exception:
+                        pass
                     if ASYNC_FALLBACK:
                         # spawn background job to finish processing and persist result
                         bg_session = session_id
@@ -612,7 +883,10 @@ def handle_user_query(
                             "quota": _build_quota_obj(email, plan_name),
                         }
                         set_cache(cache_key, payload)
-                        log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        try:
+                            log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        except Exception:
+                            pass
                         return payload
                     else:
                         advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
@@ -620,7 +894,10 @@ def handle_user_query(
             log.error("Advisor failed in no-alerts fallback: %s", e)
             advisory_result = {"reply": f"System error generating advice: {e}"}
             usage_info["fallback_reason"] = "advisor_error_no_alerts"
-            log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
+            try:
+                log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
+            except Exception:
+                pass
 
         reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
         
@@ -637,7 +914,10 @@ def handle_user_query(
             "metadata": advisory_result if isinstance(advisory_result, dict) else {}
         }
         set_cache(cache_key, payload)
-        log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
+        try:
+            log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
+        except Exception:
+            pass
         return payload
 
     # ---------------- Advisor call (with timeout via futures) ----------------
@@ -659,7 +939,7 @@ def handle_user_query(
 
         with ThreadPoolExecutor(max_workers=1) as ex:
             if db_alerts and (all_low or alerts_stale):
-                log.info("[Proactive Mode] All alerts low or stale → proactive advisory")
+                log.info("[Proactive Mode] All alerts low or stale → proactive advisory | user=%s", _short_id(email))
                 future = ex.submit(generate_advice, query, db_alerts, user_prof, **advisor_extra)
                 try:
                     advisory_result = future.result(timeout=ADVISOR_TIMEOUT) or {}
@@ -669,7 +949,10 @@ def handle_user_query(
                     adv_elapsed = time.perf_counter() - advisor_start
                     log.error("Advisor timed out after %ss (proactive mode) [%.3fs elapsed]", ADVISOR_TIMEOUT, adv_elapsed)
                     usage_info["fallback_reason"] = "advisor_timeout"
-                    log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    try:
+                        log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    except Exception:
+                        pass
                     if ASYNC_FALLBACK:
                         bg_session = session_id
                         start_background_job(bg_session, generate_advice, query, db_alerts, user_prof, **advisor_extra)
@@ -682,7 +965,10 @@ def handle_user_query(
                             "quota": _build_quota_obj(email, plan_name),
                         }
                         set_cache(cache_key, payload)
-                        log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        try:
+                            log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        except Exception:
+                            pass
                         return payload
                     else:
                         advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
@@ -695,7 +981,10 @@ def handle_user_query(
                     adv_elapsed = time.perf_counter() - advisor_start
                     log.error("Advisor timed out after %ss [%.3fs elapsed]", ADVISOR_TIMEOUT, adv_elapsed)
                     usage_info["fallback_reason"] = "advisor_timeout"
-                    log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    try:
+                        log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
+                    except Exception:
+                        pass
                     if ASYNC_FALLBACK:
                         bg_session = session_id
                         start_background_job(bg_session, generate_advice, query, db_alerts, user_prof, **advisor_extra)
@@ -708,7 +997,10 @@ def handle_user_query(
                             "quota": _build_quota_obj(email, plan_name),
                         }
                         set_cache(cache_key, payload)
-                        log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        try:
+                            log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
+                        except Exception:
+                            pass
                         return payload
                     else:
                         advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
@@ -717,10 +1009,13 @@ def handle_user_query(
         log.error("Advisor failed after %.3fs: %s", adv_elapsed, e)
         advisory_result = {"reply": f"System error generating advice: {e}"}
         usage_info["fallback_reason"] = "advisor_error"
-        log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
+        try:
+            log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
+        except Exception:
+            pass
 
     advisor_elapsed = time.perf_counter() - advisor_start
-    log.info("Advisor finished (%.3fs)", advisor_elapsed)
+    log.info("Advisor finished (%.3fs) | user=%s", advisor_elapsed, _short_id(email))
 
     # ---------------- Build alert payloads ----------------
     results: List[Dict[str, Any]] = []
@@ -784,8 +1079,11 @@ def handle_user_query(
             "sources": _ensure_list(alert.get("sources")),
         })
 
-    log.info("Alerts processed: %d", len(results))
-    log_security_event(event_type="alerts_processed", email=email, plan=plan_name, details=f"count={len(results)}")
+    log.info("Alerts processed: %d | user=%s", len(results), _short_id(email))
+    try:
+        log_security_event(event_type="alerts_processed", email=email, plan=plan_name, details=f"count={len(results)}")
+    except Exception:
+        pass
 
     # Optional telemetry
     try:
@@ -793,8 +1091,11 @@ def handle_user_query(
         for a in results:
             lab = a.get("threat_label") or a.get("threat_level") or "Unknown"
             label_counts[lab] = label_counts.get(lab, 0) + 1
-        log.info("[METRICS] label_counts=%s", label_counts)
-        log_security_event(event_type="alerts_label_count", email=email, plan=plan_name, details=str(label_counts))
+        log.info("[METRICS] label_counts=%s | user=%s", label_counts, _short_id(email))
+        try:
+            log_security_event(event_type="alerts_label_count", email=email, plan=plan_name, details=str(label_counts))
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -814,6 +1115,45 @@ def handle_user_query(
     }
     set_cache(cache_key, payload)
     overall_elapsed = time.perf_counter() - overall_start
-    log.info("handle_user_query completed in %.3fs", overall_elapsed)
-    log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]} elapsed={overall_elapsed:.3f}s")
+    log.info("handle_user_query completed in %.3fs | user=%s", overall_elapsed, _short_id(email))
+    try:
+        log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]} elapsed={overall_elapsed:.3f}s")
+    except Exception:
+        pass
     return payload
+
+# ---------------- Background job monitoring helpers ----------------
+def list_background_jobs() -> Dict[str, Dict[str, Any]]:
+    """Return a shallow copy of background jobs for monitoring (session_id -> metadata)."""
+    with BACKGROUND_JOBS_LOCK:
+        return {k: v.copy() for k, v in BACKGROUND_JOBS.items()}
+
+def cancel_background_job(session_id: str) -> bool:
+    """Best-effort mark a background job for cancellation. Worker must respect cancel_requested flag."""
+    with BACKGROUND_JOBS_LOCK:
+        job = BACKGROUND_JOBS.get(session_id)
+        if not job:
+            return False
+        job["cancel_requested"] = True
+    return True
+
+# ---------------- Geographic coordinate parsing / bounds checking ----------------
+def _parse_coords(s: Optional[str]) -> Optional[Dict[str, float]]:
+    """
+    Parse 'lat,lon' or 'lat lon' into {'lat': float, 'lon': float}.
+    Returns None if parse fails or values out-of-bounds.
+    """
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    sep = "," if "," in s else " "
+    parts = [p.strip() for p in s.split(sep) if p.strip()]
+    if len(parts) != 2:
+        return None
+    try:
+        lat = float(parts[0]); lon = float(parts[1])
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return None
+        return {"lat": lat, "lon": lon}
+    except Exception:
+        return None
