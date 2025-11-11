@@ -102,10 +102,13 @@ except Exception:
 
 # Try to import background status helper from chat_handler (optional)
 try:
-    from chat_handler import get_background_status
+    from chat_handler import get_background_status, start_background_job, handle_user_query
+    logger.info("Successfully imported chat_handler background functions")
 except Exception as e:
-    logger.info("chat_handler.get_background_status import failed: %s", e)
+    logger.info("chat_handler background functions import failed: %s", e)
     get_background_status = None
+    start_background_job = None
+    handle_user_query = None
 
 # RSS & Threat Engine
 try:
@@ -768,17 +771,33 @@ def chat_options():
 @login_required
 @conditional_limit(CHAT_RATE)  # limiter applied only if initialized
 def _chat_impl():
-    payload = _json_request()
+    logger.info("Chat endpoint called - starting async-first implementation")
+    
+    try:
+        payload = _json_request()
+        logger.info("Payload received: %s", {k: str(v)[:100] for k, v in payload.items()})
+    except Exception as e:
+        logger.error("Failed to parse JSON request: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Invalid JSON request"}), 400))
     
     # --- Validation ---
     try:
         query = validate_query(payload.get("query"))
+        logger.info("Query validation successful: %s", query[:100])
     except ValueError as ve:
+        logger.error("Query validation failed: %s", ve)
         return _build_cors_response(make_response(jsonify({"error": str(ve)}), 400))
     
-    email = get_logged_in_email()
+    try:
+        email = get_logged_in_email()
+        logger.info("User email obtained: %s", email)
+    except Exception as e:
+        logger.error("Failed to get user email: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Authentication required"}), 401))
+    
     profile_data = payload.get("profile_data") or {}
     input_data = payload.get("input_data") or {}
+    logger.info("Profile and input data extracted successfully")
     
     # ----- Enforce VERIFIED email for chat -----
     verified = False
@@ -814,10 +833,18 @@ def _chat_impl():
     
     # --- Always spawn background job ---
     session_id = str(__import__('uuid').uuid4())
+    logger.info("Generated session ID: %s", session_id)
+    
+    # Check if background processing is available
+    if not start_background_job or not handle_user_query:
+        logger.error("Background processing unavailable - functions not imported")
+        logger.error("start_background_job available: %s", start_background_job is not None)
+        logger.error("handle_user_query available: %s", handle_user_query is not None)
+        return _build_cors_response(make_response(jsonify({"error": "Background processing unavailable"}), 503))
     
     # Prepare arguments for background processing
     try:
-        from chat_handler import start_background_job, handle_user_query
+        logger.info("Starting background job for session: %s", session_id)
         
         # Call background job with proper arguments for handle_user_query
         start_background_job(
@@ -828,14 +855,17 @@ def _chat_impl():
             body={"profile_data": profile_data, "input_data": input_data}  # body parameter
         )
         
+        logger.info("Background job started successfully for session: %s", session_id)
+        
         # Increment usage immediately (since we're accepting the request)
         try:
             if increment_user_message_usage:
                 increment_user_message_usage(email)
+                logger.info("Usage incremented for user: %s", email)
         except Exception as e:
             logger.warning("Usage increment failed: %s", e)
         
-        return _build_cors_response(jsonify({
+        success_response = {
             "accepted": True,
             "session_id": session_id,
             "message": "Processing your request. Poll /api/chat/status/<session_id> for results.",
@@ -844,10 +874,15 @@ def _chat_impl():
                 "plan": get_plan(email) if get_plan else "FREE",
                 "background_processing": True
             }
-        }), 202)
+        }
+        
+        logger.info("Returning 202 response for session: %s", session_id)
+        return _build_cors_response(jsonify(success_response), 202)
         
     except Exception as e:
         logger.error("Failed to start background job: %s", e)
+        import traceback
+        logger.error("Traceback: %s", traceback.format_exc())
         return _build_cors_response(make_response(jsonify({"error": "Failed to start processing"}), 500))
 
 # ---------- Chat Background Status Polling Endpoint ----------

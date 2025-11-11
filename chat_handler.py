@@ -513,8 +513,12 @@ def handle_user_query(
         log_security_event(event_type="missing_email", details="handle_user_query called without email")
         raise ValueError("handle_user_query requires a valid authenticated user email.")
 
-    # ---- Timing checkpoint: Setup phase ----
+    # ---- Initialize timing variables with defaults ----
     setup_start = time.perf_counter()
+    setup_elapsed = 0.0
+    db_elapsed = 0.0 
+    preprocessing_elapsed = 0.0
+    advisor_elapsed = 0.0
     
     # ---- Soft verification guard (defense-in-depth) ----
     if not _is_verified(email):

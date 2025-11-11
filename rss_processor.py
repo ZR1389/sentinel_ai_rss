@@ -175,10 +175,10 @@ except Exception as e:
 # ---------------------------- Location Keywords Setup -------------------------
 LOCATION_KEYWORDS = None
 try:
-    keywords_path = os.path.join(os.path.dirname(__file__), "location_keywords.json")
+    keywords_path = os.path.join(os.path.dirname(__file__), "config", "location_keywords.json")
     with open(keywords_path, "r", encoding="utf-8") as f:
         LOCATION_KEYWORDS = json.load(f)
-    logger.info("[KEYWORDS] Loaded %d countries, %d cities from location_keywords.json",
+    logger.info("[KEYWORDS] Loaded %d countries, %d cities from config/location_keywords.json",
                 len(LOCATION_KEYWORDS.get("countries", {})),
                 len(LOCATION_KEYWORDS.get("cities", {})))
 except Exception as e:
@@ -591,7 +591,7 @@ def _load_keywords() -> Tuple[List[str], str]:
     seen: set[str] = set()
 
     if use_json:
-        path = os.getenv("THREAT_KEYWORDS_PATH", "threat_keywords.json")
+        path = os.getenv("THREAT_KEYWORDS_PATH", os.path.join("config", "threat_keywords.json"))
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -1758,7 +1758,7 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
     
     # Load threat keywords
     try:
-        keywords_path = os.path.join(os.path.dirname(__file__), "threat_keywords.json")
+        keywords_path = os.path.join(os.path.dirname(__file__), "config", "threat_keywords.json")
         with open(keywords_path, "r", encoding="utf-8") as f:
             threat_keywords = json.load(f)
         

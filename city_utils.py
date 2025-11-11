@@ -23,7 +23,7 @@ def _load_location_data():
     global _CITY_COORDS_CACHE, _COUNTRY_COORDS_CACHE, _CITY_TO_COUNTRY_MAP
     
     try:
-        location_file = os.path.join(os.path.dirname(__file__), "location_keywords.json")
+        location_file = os.path.join(os.path.dirname(__file__), "config", "location_keywords.json")
         if os.path.exists(location_file):
             with open(location_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
