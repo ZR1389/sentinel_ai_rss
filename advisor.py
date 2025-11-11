@@ -1047,6 +1047,10 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
 
     # Geographic validation - check if query location matches alert location
     geographic_warning = ""
+    location_match_score = 0
+    location_precision = "unknown"
+    data_statistically_valid = False
+    
     if profile_data and profile_data.get("location"):
         query_location = profile_data.get("location")
         alert_location_data = {
@@ -1054,12 +1058,29 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
             "country": alert.get("country"), 
             "region": alert.get("region")
         }
-        match_score, matched_name, warning = _validate_location_match(query_location, alert_location_data)
+        location_match_score, matched_name, warning = _validate_location_match(query_location, alert_location_data)
         if warning:
             geographic_warning = warning
             input_data["geographic_warning"] = warning
-            input_data["geographic_match_score"] = match_score
-            logger.info(f"[Advisor] Geographic validation: score={match_score}, warning={bool(warning)}")
+            
+        # Extract additional location data from input_data if available
+        location_precision = input_data.get("location_precision", "unknown")
+        data_statistically_valid = input_data.get("data_statistically_valid", False)
+        
+        input_data["geographic_match_score"] = location_match_score
+        logger.info(f"[Advisor] Geographic validation: score={location_match_score}, warning={bool(warning)}")
+
+    # NEW: Inject location validation constraints for LLM enforcement
+    input_data["llm_constraints"] = {
+        "location_match_score": location_match_score,
+        "location_precision": location_precision,
+        "low_data_volume": not data_statistically_valid,
+        "enforce_generic_recommendations": location_match_score < 30,
+        "max_explanation_bullets": 3,
+        "max_explanation_chars": 150,
+        "location_mismatch_detected": location_match_score < 30,
+        "data_quality_concerns": not data_statistically_valid or location_match_score < 50
+    }
 
     # Predictive tone nudges from future_risk_probability
     p_future = input_data.get("future_risk_probability")
