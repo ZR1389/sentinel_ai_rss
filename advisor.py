@@ -184,38 +184,116 @@ DOMAIN_PLAYBOOKS: Dict[str, List[str]] = {
 }
 
 # ---------- Geographic validation ----------
+# Import city_utils for enhanced location processing
+try:
+    from city_utils import fuzzy_match_city, normalize_city_country, get_country_for_city
+except Exception:
+    # Fallback implementations if city_utils is not available
+    def fuzzy_match_city(text: str) -> Optional[str]:
+        return None
+    def normalize_city_country(city: str, country: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+        return city.strip().title() if city else None, country.strip().title() if country else None
+    def get_country_for_city(city: str) -> Optional[str]:
+        return None
+
 def _validate_location_match(query_location: str, alert_location_data: Dict[str, Any]) -> Tuple[float, str, str]:
     """
+    Enhanced location matching using city_utils for better extraction and normalization.
     Returns: (match_score_0_100, matched_location_name, validation_warning)
     Penalizes heavily when query location doesn't match alert data location
     """
-    query_loc = query_location.lower().strip()
-    alert_city = (alert_location_data.get("city") or "").lower().strip()
-    alert_country = (alert_location_data.get("country") or "").lower().strip()
-    alert_region = (alert_location_data.get("region") or "").lower().strip()
+    if not query_location or not query_location.strip():
+        return 0.0, "Unknown", "No query location provided"
     
-    # Extract location from query (basic - can be enhanced with city_utils.py)
-    # This is a simple implementation - you may want to use NLP parsing from city_utils
-    query_city = query_loc.split()[0] if query_loc else ""
+    query_loc = query_location.strip()
+    alert_city = (alert_location_data.get("city") or "").strip()
+    alert_country = (alert_location_data.get("country") or "").strip()
+    alert_region = (alert_location_data.get("region") or "").strip()
     
-    # Check for match
+    # Use city_utils for enhanced location extraction from query
+    query_city_match = fuzzy_match_city(query_loc)
+    if not query_city_match:
+        # Fallback: try first word as city name
+        query_city_match = query_loc.split()[0] if query_loc else ""
+    
+    # Normalize both query and alert location data
+    normalized_query_city, normalized_query_country = normalize_city_country(query_city_match or query_loc, None)
+    normalized_alert_city, normalized_alert_country = normalize_city_country(alert_city, alert_country)
+    
+    # For query, use either the city match or try as country if city failed
+    # This handles cases where user queries "France" (country) vs "Lyon" (city)
+    query_as_city = (normalized_query_city or "").lower()
+    query_as_country = ""
+    if not query_as_city:
+        # Try normalizing the original query as a country
+        _, potential_country = normalize_city_country("", query_loc)
+        query_as_country = (potential_country or query_loc).lower().strip()
+    
+    # Build comprehensive location strings for comparison
+    alert_city_norm = (normalized_alert_city or "").lower()
+    alert_country_norm = (normalized_alert_country or "").lower()
+    alert_region_norm = alert_region.lower().strip()
+    
+    # Calculate match score with enhanced logic
     match_score = 0.0
-    matched_name = alert_city or alert_region or alert_country or "Unknown"
+    matched_components = []
     
-    if query_city and (query_city in alert_city or alert_city in query_city):
+    # Primary: Exact city match (highest score)
+    if query_as_city and alert_city_norm and query_as_city == alert_city_norm:
         match_score = 100.0
-    elif query_city and (query_city in alert_region or alert_region in query_city):
-        match_score = 80.0
-    elif query_city and (query_city in alert_country or alert_country in query_city):
-        match_score = 60.0
-    else:
-        # No match found - this is the Budapest->Cairo case
-        match_score = 10.0  # Minimum score to indicate severe mismatch
+        matched_components.append(f"city:{normalized_alert_city}")
     
+    # Secondary: Fuzzy city match (substring)
+    elif query_as_city and alert_city_norm and (
+        query_as_city in alert_city_norm or alert_city_norm in query_as_city
+    ):
+        match_score = 90.0
+        matched_components.append(f"city:{normalized_alert_city}")
+    
+    # Tertiary: Region match
+    elif query_as_city and alert_region_norm and (
+        query_as_city in alert_region_norm or alert_region_norm in query_as_city
+    ):
+        match_score = 75.0
+        matched_components.append(f"region:{alert_region}")
+    
+    # Quaternary: Country match - both exact and substring
+    elif (query_as_country or query_as_city) and alert_country_norm:
+        query_for_country = query_as_country or query_as_city
+        if (query_for_country == alert_country_norm or 
+            query_for_country in alert_country_norm or 
+            alert_country_norm in query_for_country):
+            match_score = 60.0
+            matched_components.append(f"country:{normalized_alert_country}")
+    
+    # Cross-check: Query city might be in alert country (geography knowledge)
+    elif query_as_city and alert_country_norm:
+        query_country = get_country_for_city(normalized_query_city or query_as_city)
+        if query_country and query_country.lower() == alert_country_norm:
+            match_score = 85.0
+            matched_components.append(f"city_in_country:{normalized_query_city}→{normalized_alert_country}")
+    
+    # No meaningful match found
+    if match_score == 0.0:
+        match_score = 10.0  # Minimum score to indicate severe mismatch
+        matched_components.append("no_match")
+    
+    # Build matched location name for display
+    matched_name = ", ".join([
+        normalized_alert_city or alert_city,
+        alert_region,
+        normalized_alert_country or alert_country
+    ]).strip(", ") or "Unknown"
+    
+    # Generate warning for low confidence matches
     warning = ""
     if match_score < 30:
         warning = f"WARNING: Input data location '{matched_name}' does not match query location '{query_location}'. Recommendations are generic only."
-        logger.warning(f"[Advisor] Geographic mismatch: query='{query_location}' vs data='{matched_name}'")
+        logger.warning(f"[Advisor] Geographic mismatch: query='{query_location}' vs data='{matched_name}' (score: {match_score:.1f})")
+    elif match_score < 70:
+        logger.info(f"[Advisor] Partial geographic match: query='{query_location}' vs data='{matched_name}' (score: {match_score:.1f}, components: {matched_components})")
+    else:
+        logger.info(f"[Advisor] Strong geographic match: query='{query_location}' vs data='{matched_name}' (score: {match_score:.1f}, components: {matched_components})")
     
     return match_score, matched_name, warning
 
