@@ -763,105 +763,92 @@ def chat_options():
     return _chat_impl()
 
 
-# Single chat implementation using conditional limiter and centralized validation
+# Single chat implementation using async-first approach for better reliability
 @app.route("/chat", methods=["POST"])
 @login_required
 @conditional_limit(CHAT_RATE)  # limiter applied only if initialized
 def _chat_impl():
-    import signal
-    import time
-
-    # Set a timeout for the entire chat request (4 minutes)
-    def timeout_handler(signum, frame):
-        raise TimeoutError("Chat request timed out")
-
-    # Only set signal handler on Unix systems
-    if hasattr(signal, 'SIGALRM'):
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(240)  # 4 minutes
-
-    start_time = time.time()
-
+    payload = _json_request()
+    
+    # --- Validation ---
     try:
-        payload = _json_request()
-
-        # --- Centralized validation ---
+        query = validate_query(payload.get("query"))
+    except ValueError as ve:
+        return _build_cors_response(make_response(jsonify({"error": str(ve)}), 400))
+    
+    email = get_logged_in_email()
+    profile_data = payload.get("profile_data") or {}
+    input_data = payload.get("input_data") or {}
+    
+    # ----- Enforce VERIFIED email for chat -----
+    verified = False
+    if verification_status:
         try:
-            query = validate_query(payload.get("query"))
-        except ValueError as ve:
-            return _build_cors_response(make_response(jsonify({"error": str(ve)}), 400))
-
-        profile_data = payload.get("profile_data") or {}
-        input_data = payload.get("input_data") or {}
-        email = get_logged_in_email()  # from JWT
-
-        if _advisor_callable is None:
-            return _build_cors_response(make_response(jsonify({"error": "Advisor unavailable"}), 503))
-
-        # ----- Enforce VERIFIED email for chat -----
-        verified = False
-        if verification_status:
-            try:
-                verified, _ = verification_status(email)
-            except Exception:
-                verified = _is_verified(email)
-        else:
+            verified, _ = verification_status(email)
+        except Exception:
             verified = _is_verified(email)
+    else:
+        verified = _is_verified(email)
 
-        if not verified:
-            return _build_cors_response(make_response(jsonify({
-                "error": "Email not verified. Please verify your email to use chat.",
-                "action": {
-                    "send_code": "/auth/verify/send",
-                    "confirm_code": "/auth/verify/confirm"
-                }
-            }), 403))
+    if not verified:
+        return _build_cors_response(make_response(jsonify({
+            "error": "Email not verified. Please verify your email to use chat.",
+            "action": {
+                "send_code": "/auth/verify/send",
+                "confirm_code": "/auth/verify/confirm"
+            }
+        }), 403))
 
-        # ----- Plan usage (chat-only) -----
-        try:
-            if ensure_user_exists:
-                ensure_user_exists(email, plan=os.getenv("DEFAULT_PLAN", "FREE"))
-            if get_plan_limits and check_user_message_quota:
-                plan_limits = get_plan_limits(email)
-                ok, msg = check_user_message_quota(email, plan_limits)
-                if not ok:
-                    return _build_cors_response(make_response(jsonify({"error": msg, "quota_exceeded": True}), 429))
-        except Exception as e:
-            logger.error("plan check failed: %s", e)
-            pass
-
-        # ----- Call Advisor (do not increment yet) -----
-        try:
-            result = _advisor_call(query=query, email=email, profile_data=profile_data, input_data=input_data)
-        except TimeoutError:
-            logger.error("Advisor call timed out after %s seconds", time.time() - start_time)
-            return _build_cors_response(make_response(jsonify({
-                "error": "Request timeout. Please try a shorter query or try again later.",
-                "timeout": True
-            }), 504))
-        except Exception as e:
-            logger.error("advisor error: %s\n%s", e, traceback.format_exc())
-            return _build_cors_response(make_response(jsonify({"error": "Advisor failed"}), 502))
-
-        # ----- Increment usage ON SUCCESS only -----
+    # ----- Plan usage (chat-only) -----
+    try:
+        if ensure_user_exists:
+            ensure_user_exists(email, plan=os.getenv("DEFAULT_PLAN", "FREE"))
+        if get_plan_limits and check_user_message_quota:
+            plan_limits = get_plan_limits(email)
+            ok, msg = check_user_message_quota(email, plan_limits)
+            if not ok:
+                return _build_cors_response(make_response(jsonify({"error": msg, "quota_exceeded": True}), 429))
+    except Exception as e:
+        logger.error("plan check failed: %s", e)
+        pass
+    
+    # --- Always spawn background job ---
+    session_id = str(__import__('uuid').uuid4())
+    
+    # Prepare arguments for background processing
+    try:
+        from chat_handler import start_background_job, handle_user_query
+        
+        # Call background job with proper arguments for handle_user_query
+        start_background_job(
+            session_id,
+            handle_user_query,
+            query,  # message parameter
+            email,  # email parameter
+            body={"profile_data": profile_data, "input_data": input_data}  # body parameter
+        )
+        
+        # Increment usage immediately (since we're accepting the request)
         try:
             if increment_user_message_usage:
                 increment_user_message_usage(email)
         except Exception as e:
-            logger.error("usage increment failed: %s", e)
-
-        return _build_cors_response(jsonify(result))
-
-    except TimeoutError:
-        logger.error("Chat request timed out after %s seconds", time.time() - start_time)
-        return _build_cors_response(make_response(jsonify({
-            "error": "Request timeout. Please try a shorter query or try again later.",
-            "timeout": True
-        }), 504))
-    finally:
-        # Clear the alarm
-        if hasattr(signal, 'SIGALRM'):
-            signal.alarm(0)
+            logger.warning("Usage increment failed: %s", e)
+        
+        return _build_cors_response(jsonify({
+            "accepted": True,
+            "session_id": session_id,
+            "message": "Processing your request. Poll /api/chat/status/<session_id> for results.",
+            "plan": get_plan(email) if get_plan else "FREE",
+            "quota": {
+                "plan": get_plan(email) if get_plan else "FREE",
+                "background_processing": True
+            }
+        }), 202)
+        
+    except Exception as e:
+        logger.error("Failed to start background job: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Failed to start processing"}), 500))
 
 # ---------- Chat Background Status Polling Endpoint ----------
 @app.route("/api/chat/status/<session_id>", methods=["GET", "OPTIONS"])

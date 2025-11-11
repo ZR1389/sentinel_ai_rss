@@ -432,23 +432,49 @@ def start_background_job(session_id: str, target_fn, *args, **kwargs) -> None:
         with BACKGROUND_JOBS_LOCK:
             BACKGROUND_JOBS[session_id]["status"] = "running"
             BACKGROUND_JOBS[session_id]["started_at"] = datetime.utcnow().isoformat() + "Z"
+        
         try:
-            res = target_fn(*args, **kwargs)
-            # Normalize result (expected to be dict)
-            out = res if isinstance(res, dict) else {"reply": str(res)}
-            # Persist into cache for quick retrieval; include sentinel metadata
-            payload = out
+            # Extract arguments - handle both old generic style and new specific style
+            if target_fn == handle_user_query:
+                # New async-first approach: direct call to handle_user_query
+                message = args[0] if args else kwargs.get("message", "")
+                email = args[1] if len(args) > 1 else kwargs.get("email", "")
+                body = kwargs.get("body", {})
+                
+                # Call the full handle_user_query logic with proper parameters
+                res = handle_user_query(message, email, body=body)
+            else:
+                # Legacy support: generic target function call
+                res = target_fn(*args, **kwargs)
+            
+            # Store result in cache with metadata
+            payload = res if isinstance(res, dict) else {"reply": str(res)}
             payload["_background"] = True
             payload["_completed_at"] = datetime.utcnow().isoformat() + "Z"
+            
             set_cache(_bg_cache_key(session_id), payload)
+            
             with BACKGROUND_JOBS_LOCK:
                 BACKGROUND_JOBS[session_id]["status"] = "done"
                 BACKGROUND_JOBS[session_id]["result"] = payload
+                
         except Exception as e:
             log.exception("Background worker for session %s failed: %s", session_id, e)
             with BACKGROUND_JOBS_LOCK:
                 BACKGROUND_JOBS[session_id]["status"] = "failed"
                 BACKGROUND_JOBS[session_id]["error"] = str(e)
+            
+            # Store error result in cache so clients can retrieve it
+            error_payload = {
+                "error": str(e),
+                "reply": "Background processing failed. Please try again.",
+                "_background": True,
+                "_error": True,
+                "_completed_at": datetime.utcnow().isoformat() + "Z"
+            }
+            set_cache(_bg_cache_key(session_id), error_payload)
+            
+            # Log security event for monitoring
             try:
                 log_security_event(event_type="background_job_failed", details=f"session={session_id} error={e}")
             except Exception:
@@ -487,6 +513,9 @@ def handle_user_query(
         log_security_event(event_type="missing_email", details="handle_user_query called without email")
         raise ValueError("handle_user_query requires a valid authenticated user email.")
 
+    # ---- Timing checkpoint: Setup phase ----
+    setup_start = time.perf_counter()
+    
     # ---- Soft verification guard (defense-in-depth) ----
     if not _is_verified(email):
         log_security_event(
@@ -587,6 +616,11 @@ def handle_user_query(
     # ---------------- Fetch alerts (with timeout) ----------------
     db_alerts: List[Dict[str, Any]] = []
     db_start = time.perf_counter()
+    
+    # ---- Timing checkpoint: Setup phase complete ----
+    setup_elapsed = db_start - setup_start
+    log.info("Setup phase: %.3fs | user=%s", setup_elapsed, _short_id(email))
+    
     try:
         log.info("DB: fetch_alerts_from_db_strict_geo(...) | user=%s session=%s", _short_id(email), session_id[:8] if session_id else "unk")
         
@@ -739,7 +773,20 @@ def handle_user_query(
 
         count = len(db_alerts or [])
         db_elapsed = time.perf_counter() - db_start
-        log.info("DB: fetched %d alerts (%.3fs) | user=%s", count, db_elapsed, _short_id(email))
+        log.info("DB phase: %.3fs (%d alerts) | user=%s", db_elapsed, count, _short_id(email))
+        
+        # Track slow DB queries
+        if db_elapsed > 20:  # Warn on slow DB queries (>20s)
+            try:
+                log_security_event(
+                    event_type="slow_db_query", 
+                    email=email, 
+                    plan=plan_name, 
+                    details=f"DB query took {db_elapsed:.2f}s for {count} alerts"
+                )
+            except Exception:
+                pass
+                
         try:
             log_security_event(event_type="db_alerts_fetched", email=email, plan=plan_name, details=f"{count} alerts")
         except Exception:
@@ -933,6 +980,11 @@ def handle_user_query(
     }
 
     advisor_start = time.perf_counter()
+    
+    # ---- Timing checkpoint: Historical/geographic processing complete ----
+    preprocessing_elapsed = advisor_start - db_start
+    log.info("Preprocessing phase: %.3fs | user=%s", preprocessing_elapsed, _short_id(email))
+    
     try:
         advisor_extra = dict(advisor_kwargs)
         user_prof = advisor_extra.pop("user_profile", None)
@@ -1015,7 +1067,19 @@ def handle_user_query(
             pass
 
     advisor_elapsed = time.perf_counter() - advisor_start
-    log.info("Advisor finished (%.3fs) | user=%s", advisor_elapsed, _short_id(email))
+    log.info("Advisor phase: %.3fs | user=%s", advisor_elapsed, _short_id(email))
+    
+    # Track slow advisor calls
+    if advisor_elapsed > 60:  # Warn on slow advisor calls (>60s)
+        try:
+            log_security_event(
+                event_type="slow_advisor_call", 
+                email=email, 
+                plan=plan_name, 
+                details=f"Advisor took {advisor_elapsed:.2f}s"
+            )
+        except Exception:
+            pass
 
     # ---------------- Build alert payloads ----------------
     results: List[Dict[str, Any]] = []
@@ -1115,7 +1179,28 @@ def handle_user_query(
     }
     set_cache(cache_key, payload)
     overall_elapsed = time.perf_counter() - overall_start
-    log.info("handle_user_query completed in %.3fs | user=%s", overall_elapsed, _short_id(email))
+    
+    # ---- Enhanced timing summary with phase breakdown ----
+    log.info("=== TIMING SUMMARY ===")
+    log.info("Setup phase: %.3fs", setup_elapsed)
+    log.info("DB phase: %.3fs", db_elapsed)
+    log.info("Preprocessing phase: %.3fs", preprocessing_elapsed) 
+    log.info("Advisor phase: %.3fs", advisor_elapsed)
+    log.info("Total request time: %.3fs | user=%s", overall_elapsed, _short_id(email))
+    log.info("=== END TIMING ===")
+    
+    # Track slow requests and log security event
+    if overall_elapsed > 50:  # Warn on slow requests (>50s)
+        try:
+            log_security_event(
+                event_type="slow_request",
+                email=email, 
+                plan=plan_name,
+                details=f"Total: {overall_elapsed:.2f}s (Setup: {setup_elapsed:.2f}s, DB: {db_elapsed:.2f}s, Preprocessing: {preprocessing_elapsed:.2f}s, Advisor: {advisor_elapsed:.2f}s)"
+            )
+        except Exception:
+            pass
+    
     try:
         log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]} elapsed={overall_elapsed:.3f}s")
     except Exception:
