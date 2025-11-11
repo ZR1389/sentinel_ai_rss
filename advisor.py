@@ -718,11 +718,51 @@ def _is_soft_irrelevant(alert: Dict[str, Any]) -> bool:
 def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str], Dict[str, List[str]]]:
     roles = _infer_roles(profile_data, user_message)
     domains = alert.get("domains") or []
-    # If upstream missed domains, backfill from text
+    
+    # Backfill domains if missing
     if not domains:
         t = _join_text(alert.get("title"), alert.get("summary"))
         domains = detect_domains(t) or []
         alert["domains"] = domains
+
+    # NEW: Validate location match and calculate precision
+    location_match_score, matched_location, location_warning = _validate_location_match(
+        user_message, 
+        {
+            "city": alert.get("city"),
+            "region": alert.get("region"), 
+            "country": alert.get("country")
+        }
+    )
+    
+    # NEW: Calculate location precision (street-level vs city-level)
+    has_coordinates = bool(alert.get("latitude") and alert.get("longitude"))
+    has_specific_venue = bool(alert.get("venue") or alert.get("address"))
+    location_precision = "high" if has_coordinates else ("medium" if has_specific_venue else "low")
+    
+    # NEW: Check statistical validity of trend data
+    incident_count = alert.get("incident_count_30d", 0)
+    baseline_ratio = alert.get("baseline_ratio", 1.0)
+    is_statistically_valid = incident_count is not None and incident_count >= 5
+    
+    # NEW: Adjust confidence based on location match and data quality
+    original_confidence = float(alert.get("confidence", 0.5))
+    
+    # Apply location match penalty
+    location_penalty = (100 - location_match_score) / 100.0  # 0.0 to 0.9
+    adjusted_confidence = original_confidence * (1.0 - location_penalty * 0.7)  # 70% max penalty
+    
+    # Apply data quality penalty
+    if not is_statistically_valid:
+        adjusted_confidence *= 0.6  # 40% penalty for insufficient data
+        logger.warning(f"[Advisor] Insufficient data: incident_count_30d={incident_count} (<5)")
+    
+    # Apply precision penalty
+    if location_precision == "low":
+        adjusted_confidence *= 0.8  # 20% penalty for low precision
+    
+    # Floor confidence at 10% to avoid 0% confidence
+    final_confidence = max(0.1, min(1.0, adjusted_confidence))
 
     raw_hits = _programmatic_playbook_hits(domains)
     hits = _filter_hits_by_profile(raw_hits, roles)
@@ -748,6 +788,7 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         else:
             processed_alert[key] = value
 
+    # NEW: Add validation metadata to payload
     payload = {
         "region": processed_alert.get("region") or processed_alert.get("city") or processed_alert.get("country"),
         "city": processed_alert.get("city"),
@@ -756,7 +797,8 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         "subcategory": processed_alert.get("subcategory") or "Unspecified",
         "label": processed_alert.get("label"),
         "score": _convert_decimal_to_float(processed_alert.get("score")),
-        "confidence": _convert_decimal_to_float(processed_alert.get("confidence")),
+        "confidence_original": original_confidence,  # Keep original for reference
+        "confidence": final_confidence,  # Use adjusted confidence
         "domains": domains,
         "reports_analyzed": processed_alert.get("reports_analyzed") or processed_alert.get("num_reports") or 1,
         "sources": _normalize_sources(processed_alert.get("sources") or []),
@@ -778,6 +820,12 @@ def _build_input_payload(alert: Dict[str, Any], user_message: str, profile_data:
         "user_message": user_message,
         "incident_count": processed_alert.get("incident_count", processed_alert.get("incident_count_30d", "n/a")),
         "threat_type": processed_alert.get("category", processed_alert.get("threat_type", "risk")),
+        # NEW: Location validation metadata
+        "location_match_score": location_match_score,
+        "location_precision": location_precision,
+        "location_validation_warning": location_warning,
+        "data_statistically_valid": is_statistically_valid,
+        "location_matched_name": matched_location,
     }
     return payload, roles, hits
 
