@@ -245,32 +245,44 @@ PERSONAL_DOMAIN_ALIAS = {
 }
 
 # ---------- Output guard ----------
+# FIXED: Patterns now allow flexible spacing and ensure proper formatting
 REQUIRED_HEADERS = [
-  r"^ALERT —", r"^BULLETPOINT RISK SUMMARY —",
-  r"^TRIGGERS / KEYWORDS —", r"^CATEGORIES / SUBCATEGORIES —",
-  r"^SOURCES —", r"^REPORTS ANALYZED —", r"^CONFIDENCE —",
-  r"^WHAT TO DO NOW —", r"^HOW TO PREPARE —",
-  r"^ROLE-SPECIFIC ACTIONS —", r"^DOMAIN PLAYBOOK HITS —",
-  r"^FORECAST —", r"^EXPLANATION —", r"^ANALYST CTA —"
+    r"^ALERT\s*—", 
+    r"^BULLETPOINT RISK SUMMARY\s*—",
+    r"^TRIGGERS\s*/\s*KEYWORDS\s*—", 
+    r"^CATEGORIES\s*/\s*SUBCATEGORIES\s*—",
+    r"^SOURCES\s*—", 
+    r"^REPORTS ANALYZED\s*—", 
+    r"^CONFIDENCE\s*—",
+    r"^WHAT TO DO NOW\s*—", 
+    r"^HOW TO PREPARE\s*—",
+    r"^ROLE-SPECIFIC ACTIONS\s*—", 
+    r"^DOMAIN PLAYBOOK HITS\s*—",
+    r"^FORECAST\s*—", 
+    r"^EXPLANATION\s*—", 
+    r"^ANALYST CTA\s*—"
 ]
 
 def ensure_sections(advisory: str) -> str:
-    """Simplified: only add section if completely missing"""
+    """Simplified: only add section if completely missing, with proper spacing"""
     out = advisory.strip()
     lines = out.split('\n')
     
     for pat in REQUIRED_HEADERS:
-        header_text = pat.strip("^$").replace(r"\ ", " ").replace(r" —", " —")
+        # Extract header text from pattern more reliably
+        header_text = re.sub(r'[\^\$\s\\]', '', pat).replace('—', '').strip()
+        header_text = re.sub(r'(?<!^)([A-Z])([A-Z]+)', r' \1\2', header_text)  # Add spaces
+        header_text = header_text.replace('  ', ' ').strip() + ' —'  # Ensure spacing
         
         # Check if section header exists
         section_idx = -1
         for i, line in enumerate(lines):
-            if re.search(pat, line):
+            if re.search(pat, line, re.IGNORECASE):
                 section_idx = i
                 break
         
         if section_idx == -1:
-            # Section completely missing - add it
+            # Section completely missing - add it with proper spacing
             out += f"\n\n{header_text}\n• [auto] Section added (no content)"
             lines = out.split('\n')  # Rebuild lines for next iteration
     
@@ -297,16 +309,20 @@ def ensure_has_playbook_or_alts(advisory: str, playbook_hits: dict, alts: list) 
     return out
 
 def clean_auto_sections(advisory: str) -> str:
-    """Remove BOTH placeholders AND empty sections"""
+    """Remove BOTH placeholders AND empty sections, fix spacing issues"""
     # Remove auto-added lines
     cleaned = re.sub(r"\n?• \[auto\] Section added \(no content\)", "", advisory)
     
     # Remove orphaned headers (header followed by nothing or another header)
+    # FIXED: Better pattern to catch various spacing issues
     cleaned = re.sub(
-        r'\n\n([A-Z][A-Z\s/]+ —)\s*\n(?=\n|$|[A-Z][A-Z\s/]+ —)',
+        r'\n\n([A-Z][A-Za-z\s/]+?)\s*—\s*\n(?=\n|$|[A-Z][A-Za-z\s/]+?—)',
         '', 
         cleaned
     )
+    
+    # Fix missing spaces after section headers
+    cleaned = re.sub(r'([A-Z][A-Za-z\s/]+?—)([A-Z])', r'\1 \2', cleaned)
     
     return cleaned.strip()
 
