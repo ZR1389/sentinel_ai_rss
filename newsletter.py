@@ -8,16 +8,17 @@ import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
+from config import CONFIG
 
 from security_log_utils import log_security_event
 
 # -------- Config --------
-BREVO_API_KEY = os.getenv("BREVO_API_KEY")
-NEWSLETTER_LIST_ID = int(os.getenv("NEWSLETTER_LIST_ID", "3"))
-DATABASE_URL = os.getenv("DATABASE_URL")
-HTTP_TIMEOUT = float(os.getenv("NEWSLETTER_HTTP_TIMEOUT", "12"))
+BREVO_API_KEY = CONFIG.email.brevo_api_key
+NEWSLETTER_LIST_ID = CONFIG.email.newsletter_list_id
+DATABASE_URL = CONFIG.database.url
+HTTP_TIMEOUT = float(os.getenv("NEWSLETTER_HTTP_TIMEOUT", "12"))  # Keep this as fallback for now
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=CONFIG.security.log_level)
 logger = logging.getLogger("newsletter")
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

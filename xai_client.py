@@ -5,13 +5,14 @@ from contextlib import contextmanager
 from xai_sdk import Client
 from xai_sdk.chat import user, system
 from llm_rate_limiter import rate_limited
+from config import CONFIG
 
 logger = logging.getLogger("xai_client")
 
-XAI_API_KEY = os.getenv("GROK_API_KEY")
+XAI_API_KEY = CONFIG.llm.grok_api_key
 XAI_API_HOST = "api.x.ai"
-GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
-TEMPERATURE = float(os.getenv("GROK_TEMPERATURE", 0.3))
+GROK_MODEL = CONFIG.llm.grok_model
+TEMPERATURE = CONFIG.llm.grok_temperature
 
 @contextmanager
 def _timeout(seconds: int):

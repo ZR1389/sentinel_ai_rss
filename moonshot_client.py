@@ -9,6 +9,7 @@ import logging
 import httpx
 from typing import List, Dict, Any, Optional
 from llm_rate_limiter import rate_limited
+from config import CONFIG
 
 # Load environment variables
 try:
@@ -20,8 +21,8 @@ except ImportError:
 logger = logging.getLogger("moonshot_client")
 
 # Moonshot API Configuration
-MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY")
-MOONSHOT_MODEL = os.getenv("MOONSHOT_MODEL", "moonshot-v1-128k")  # Default to 128k context model
+MOONSHOT_API_KEY = CONFIG.llm.moonshot_api_key
+MOONSHOT_MODEL = CONFIG.llm.moonshot_model
 MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 
 @rate_limited("moonshot")

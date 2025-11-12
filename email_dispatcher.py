@@ -5,11 +5,12 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from typing import Optional
+from config import CONFIG
 
 logger = logging.getLogger("email_dispatcher")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=CONFIG.security.log_level)
 
-EMAIL_PUSH_ENABLED = os.getenv("EMAIL_PUSH_ENABLED", "false").lower() in ("1","true","yes","y")
+EMAIL_PUSH_ENABLED = CONFIG.email.push_enabled
 
 try:
     from plan_utils import user_has_paid_plan as _is_paid
@@ -28,12 +29,12 @@ def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from
         logger.debug("email dispatch disabled via env")
         return False
 
-    host = os.getenv("SMTP_HOST")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER")
-    pwd  = os.getenv("SMTP_PASS")
-    use_tls = os.getenv("SMTP_TLS", "true").lower() in ("1","true","yes","y")
-    from_addr = from_addr or os.getenv("EMAIL_FROM", user or "no-reply@sentinel.local")
+    host = CONFIG.email.smtp_host
+    port = CONFIG.email.smtp_port
+    user = CONFIG.email.smtp_user
+    pwd  = CONFIG.email.smtp_pass
+    use_tls = CONFIG.email.smtp_tls
+    from_addr = from_addr or CONFIG.email.email_from or user or "no-reply@sentinel.local"
 
     if not host or not user or not pwd:
         logger.warning("SMTP creds missing; skipping email dispatch")

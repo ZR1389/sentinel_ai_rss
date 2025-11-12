@@ -510,9 +510,10 @@ class EmbeddingManager:
         else:
             self.tokenizer = None
             
+        from config import CONFIG
         self.quota = QuotaMetrics()
-        self.daily_limit = int(os.getenv("EMBEDDING_QUOTA_DAILY", "10000"))
-        self.request_limit = int(os.getenv("EMBEDDING_REQUESTS_DAILY", "5000"))
+        self.daily_limit = CONFIG.app.embedding_quota_daily
+        self.request_limit = CONFIG.app.embedding_requests_daily
         self.lock = threading.Lock()
         
     def _check_quota(self, text: str) -> bool:

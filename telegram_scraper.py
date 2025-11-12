@@ -5,18 +5,19 @@ import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
+from config import CONFIG
 
 from db_utils import save_raw_alerts_to_db
 
 logger = logging.getLogger("telegram_scraper")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=CONFIG.security.log_level)
 
 # Feature gate: disabled by default
-TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() in ("1","true","yes","y")
+TELEGRAM_ENABLED = CONFIG.telegram.enabled
 
 # Optional bounds / hygiene
-MAX_MSG_AGE_DAYS = int(os.getenv("TELEGRAM_MAX_MSG_AGE_DAYS", "7"))
-BATCH_LIMIT      = int(os.getenv("TELEGRAM_BATCH_LIMIT", "300"))
+MAX_MSG_AGE_DAYS = CONFIG.telegram.max_msg_age_days
+BATCH_LIMIT = CONFIG.telegram.batch_limit
 
 # Try import Telethon (recommended), else soft-disable
 try:
@@ -91,9 +92,9 @@ async def ingest_telegram_channels_to_db(channels: List[str], limit: int = BATCH
     if not _HAVE_TELETHON:
         return {"ok": False, "reason": "telethon not installed", "count": 0}
 
-    api_id  = os.getenv("TELEGRAM_API_ID")
-    api_hash= os.getenv("TELEGRAM_API_HASH")
-    session = os.getenv("TELEGRAM_SESSION", "sentinel")
+    api_id = CONFIG.telegram.api_id
+    api_hash = CONFIG.telegram.api_hash
+    session = CONFIG.telegram.session
 
     if not api_id or not api_hash:
         return {"ok": False, "reason": "TELEGRAM_API_ID/TELEGRAM_API_HASH missing", "count": 0}

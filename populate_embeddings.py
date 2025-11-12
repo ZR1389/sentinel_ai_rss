@@ -71,7 +71,8 @@ def populate_embeddings(
     openai_client = None
     try:
         from openai import OpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
+        from config import CONFIG
+        api_key = CONFIG.llm.openai_api_key
         if api_key:
             openai_client = OpenAI(api_key=api_key)
             logger.info("Using OpenAI client for embeddings")

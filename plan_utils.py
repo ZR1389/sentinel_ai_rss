@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 import logging
 
 from security_log_utils import log_security_event  # keep your existing logger
+from config import CONFIG
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-DEFAULT_PLAN = os.getenv("DEFAULT_PLAN", "FREE").upper()
+DATABASE_URL = CONFIG.database.url
+DEFAULT_PLAN = CONFIG.app.default_plan.upper()
 # Which plans count as "paid" for feature gating (Telegram/Email/Push/PDF)
 PAID_PLANS = set(
-    p.strip().upper() for p in os.getenv("PAID_PLANS", "PRO,ENTERPRISE").split(",") if p.strip()
+    p.strip().upper() for p in CONFIG.app.paid_plans.split(",") if p.strip()
 )
 
 logging.basicConfig(

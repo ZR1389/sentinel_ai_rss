@@ -16,12 +16,12 @@ healthcheck_path = "/health"
 # Cron jobs for maintenance tasks
 [[cron]]
   name = "retention-cleanup"
-  command = "python retention_worker.py"
+  command = "python railway_cron.py cleanup"
   schedule = "0 */6 * * *"  # Every 6 hours
   
 [[cron]]
   name = "daily-vacuum"
-  command = "python -c 'from retention_worker import perform_vacuum; perform_vacuum()'"
+  command = "python railway_cron.py vacuum"
   schedule = "0 2 * * *"    # Daily at 2 AM UTC
 
 # Environment Variables (set these in Railway Dashboard)

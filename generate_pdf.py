@@ -4,9 +4,10 @@ import os
 import logging
 from typing import Optional
 from datetime import datetime
+from config import CONFIG
 
 logger = logging.getLogger("generate_pdf")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=CONFIG.security.log_level)
 
 try:
     from plan_utils import user_has_paid_plan as _is_paid

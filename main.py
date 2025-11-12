@@ -57,9 +57,11 @@ metrics = get_metrics_logger("sentinel.main")
 from validation import validate_alert_batch, validate_enrichment_data
 
 # ---------- CORS (more restrictive default) ----------
+# Import centralized configuration
+from config import CONFIG
+
 # Default: production frontends only — override with comma-separated env var if needed
-ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "https://zikarisk.com,https://app.zikarisk.com")
-ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
+ALLOWED_ORIGINS = [o.strip() for o in CONFIG.app.allowed_origins.split(",") if o.strip()]
 
 def _build_cors_response(resp):
     origin = request.headers.get("Origin")
@@ -365,7 +367,7 @@ def validate_query(query_val: Any, max_len: int = CHAT_QUERY_MAX_CHARS) -> str:
     return query
 
 # ---------- Optional psycopg2 fallback for Telegram linking ----------
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = CONFIG.database.url
 _psql_ok = True
 try:
     import psycopg2

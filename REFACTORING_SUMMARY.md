@@ -58,8 +58,9 @@ retention_worker.py    # Data retention management
 
 ### Test Files
 ```
-test_enrichment_pipeline.py     # Pipeline stage testing
-test_refactored_enrichment.py   # Integration testing
+tests/test_enrichment_pipeline.py     # Pipeline stage testing
+tests/test_refactored_enrichment.py   # Integration testing
+run_tests.py                          # Main test runner
 ```
 
 ## Environment Variables Configuration

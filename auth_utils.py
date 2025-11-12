@@ -14,17 +14,18 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from security_log_utils import log_security_event
+from config import CONFIG
 
 # INJECT: Password strength check
 from password_strength_utils import is_strong_password
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-JWT_SECRET = os.getenv("JWT_SECRET")  # DO NOT default in production
-JWT_ALGORITHM = os.getenv("JWT_ALG", "HS256")
-JWT_EXP_MINUTES = int(os.getenv("JWT_EXP_MINUTES", "60"))          # access token lifetime
-REFRESH_EXP_DAYS = int(os.getenv("REFRESH_EXP_DAYS", "30"))        # refresh lifetime
+DATABASE_URL = CONFIG.database.url
+JWT_SECRET = CONFIG.security.jwt_secret  # DO NOT default in production
+JWT_ALGORITHM = CONFIG.security.jwt_algorithm
+JWT_EXP_MINUTES = CONFIG.security.jwt_exp_minutes         # access token lifetime
+REFRESH_EXP_DAYS = CONFIG.security.jwt_refresh_exp_days   # refresh lifetime
 
-DEFAULT_PLAN = os.getenv("DEFAULT_PLAN", "FREE").upper()
+DEFAULT_PLAN = CONFIG.app.default_plan.upper()
 
 def _conn():
     if not DATABASE_URL:

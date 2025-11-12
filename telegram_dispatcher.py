@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import logging
 from typing import Optional
+from config import CONFIG
 
 logger = logging.getLogger("telegram_dispatcher")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=CONFIG.security.log_level)
 
-TELEGRAM_PUSH_ENABLED = os.getenv("TELEGRAM_PUSH_ENABLED", "false").lower() in ("1","true","yes","y")
+TELEGRAM_PUSH_ENABLED = CONFIG.telegram.push_enabled
 
 # Plan gate (no metering here)
 try:
@@ -34,7 +35,7 @@ def send_telegram_message(user_email: str, chat_id: str, text: str, parse_mode: 
         logger.debug("telegram push disabled or missing deps")
         return False
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = CONFIG.telegram.bot_token
     if not token:
         logger.warning("TELEGRAM_BOT_TOKEN missing; skipping telegram push")
         return False

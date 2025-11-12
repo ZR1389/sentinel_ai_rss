@@ -2,12 +2,13 @@
 import os, logging
 from openai import OpenAI
 from llm_rate_limiter import rate_limited
+from config import CONFIG
 
 logger = logging.getLogger("openai_client_wrapper")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-DEFAULT_TEMP = float(os.getenv("OPENAI_TEMPERATURE", "0.4"))
+OPENAI_API_KEY = CONFIG.llm.openai_api_key
+DEFAULT_MODEL = CONFIG.llm.openai_model
+DEFAULT_TEMP = CONFIG.llm.openai_temperature
 
 client = OpenAI(api_key=OPENAI_API_KEY, timeout=60.0) if OPENAI_API_KEY else None
 

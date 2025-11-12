@@ -93,11 +93,13 @@ except Exception:
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # kept for compatibility elsewhere
+from config import CONFIG
+
+OPENAI_API_KEY = CONFIG.llm.openai_api_key  # kept for compatibility elsewhere
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-TEMPERATURE = float(os.getenv("ADVISOR_TEMPERATURE", 0.2))
+TEMPERATURE = CONFIG.llm.advisor_temperature
 
 # ---------- Model usage tracking ----------
 _model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0}

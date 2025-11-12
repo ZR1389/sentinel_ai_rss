@@ -1,10 +1,11 @@
 # deepseek_client.py — DeepSeek API wrapper
 import os, requests, logging
 from llm_rate_limiter import rate_limited
+from config import CONFIG
 
 logger = logging.getLogger("deepseek_client")
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_API_KEY = CONFIG.llm.deepseek_api_key
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
 @rate_limited("deepseek")

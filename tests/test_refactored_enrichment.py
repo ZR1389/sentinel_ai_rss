@@ -7,8 +7,8 @@ import sys
 import os
 from datetime import datetime
 
-# Add the current directory to the Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add the parent directory to the Python path so we can import from root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_refactored_enrich_and_store():
     """Test the refactored enrich_and_store_alerts function."""

@@ -25,27 +25,25 @@ logger = logging.getLogger("db_utils")
 
 _connection_pool = None
 
-def get_db_url() -> Optional[str]:
-    return os.getenv("DATABASE_URL")
-
 def get_connection_pool():
     """Get or create the global connection pool."""
     global _connection_pool
     if _connection_pool is None:
-        db_url = get_db_url()
-        if not db_url:
+        from config import CONFIG
+        
+        if not CONFIG.database.url:
             raise RuntimeError("DATABASE_URL not set")
         try:
             _connection_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=int(os.getenv("DB_POOL_MIN_SIZE", "1")),
-                maxconn=int(os.getenv("DB_POOL_MAX_SIZE", "20")),
-                dsn=db_url
+                minconn=CONFIG.database.pool_min_size,
+                maxconn=CONFIG.database.pool_max_size,
+                dsn=CONFIG.database.url
             )
             # Register cleanup on exit
             atexit.register(close_connection_pool)
             logger.info("Connection pool initialized (min=%s, max=%s)", 
-                       os.getenv("DB_POOL_MIN_SIZE", "1"), 
-                       os.getenv("DB_POOL_MAX_SIZE", "20"))
+                       CONFIG.database.pool_min_size, 
+                       CONFIG.database.pool_max_size)
         except Exception as e:
             logger.error("Failed to create connection pool: %s", e)
             raise
@@ -324,8 +322,9 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     """
     Bulk upsert into alerts (final schema Option A).
     """
-    db_url = get_db_url()
-    if not db_url:
+    from config import CONFIG
+    
+    if not CONFIG.database.url:
         log_security_event("db_config_error", "DATABASE_URL not set for save_alerts_to_db")
         raise RuntimeError("DATABASE_URL not set")
 
