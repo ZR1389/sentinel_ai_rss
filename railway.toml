@@ -1,0 +1,41 @@
+# Railway deployment configuration for Sentinel AI
+
+# Health Check Configuration
+# Railway will ping this endpoint to check service health
+healthcheck_path = "/health"
+
+# Build Configuration  
+[build]
+  builder = "python"
+  
+[deploy]
+  healthcheck_path = "/health"
+  healthcheck_timeout = 30
+  restart_policy = "on_failure"
+
+# Environment Variables (set these in Railway Dashboard)
+# Required:
+# - DATABASE_URL
+# - OPENAI_API_KEY (or XAI_API_KEY or DEEPSEEK_API_KEY)
+# 
+# Optional:
+# - REDIS_URL
+# - PORT (defaults to Railway's provided port)
+# - KEYWORDS_SOURCE (defaults to "merge")
+
+# Start Command Options (choose one):
+# 
+# RECOMMENDED: Main application with health endpoints
+# gunicorn main:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2
+#
+# Alternative: Standalone health server (testing/debugging)
+# python health_server.py
+#
+# Advanced: FastAPI health server (requires: pip install fastapi uvicorn)
+# uvicorn health_check:app --host 0.0.0.0 --port $PORT
+#
+# Note: FastAPI imports will show warnings if not installed, but Flask fallback works perfectly
+
+# Railway Service Configuration
+[services.web]
+  start_command = "uvicorn health_check:app --host 0.0.0.0 --port $PORT"

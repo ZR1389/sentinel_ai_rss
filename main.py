@@ -77,6 +77,38 @@ def _after(resp):
 def _options_only():
     return _build_cors_response(make_response("", 204))
 
+# ---------- Health Check Endpoints for Railway ----------
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Comprehensive health check for Railway zero-downtime deployments."""
+    try:
+        from health_check import perform_health_check
+        health_data = perform_health_check()
+        status_code = 200  # Always return 200 for Railway compatibility
+        return make_response(jsonify(health_data), status_code)
+    except Exception as e:
+        return make_response(jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }), 500)
+
+@app.route("/health/quick", methods=["GET"])  
+def health_quick():
+    """Quick health check - database only."""
+    try:
+        from health_check import check_database_health
+        db_check = check_database_health()
+        status = "healthy" if db_check["connected"] else "degraded"
+        return jsonify({"status": status, "database": db_check})
+    except Exception as e:
+        return make_response(jsonify({"status": "error", "error": str(e)}), 500)
+
+@app.route("/ping", methods=["GET"])
+def ping():
+    """Simple liveness probe."""
+    return jsonify({"status": "ok", "message": "pong"})
+
 # ---------- Imports: plan / advisor / engines ----------
 try:
     from plan_utils import (
