@@ -31,9 +31,5 @@ COPY . .
 
 EXPOSE 8080
 
-# Copy and use absolute override script
-COPY railway_start.sh .
-RUN chmod +x railway_start.sh
-
-# ABSOLUTE OVERRIDE - no gunicorn allowed
-CMD ["./railway_start.sh"]
+# Use shell form to allow environment variable expansion
+CMD gunicorn main:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2
