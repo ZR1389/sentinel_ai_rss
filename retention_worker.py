@@ -61,12 +61,12 @@ except ImportError:
 
 def cleanup_old_alerts():
     """Delete alerts older than retention period"""
-    from config import CONFIG
-    
-    cutoff = datetime.now(timezone.utc) - timedelta(days=CONFIG.app.alert_retention_days)
+    # Use direct environment access for Railway cron compatibility
+    retention_days = int(os.getenv("ALERT_RETENTION_DAYS", "90"))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     logger.info("retention_cleanup_started", 
-               retention_days=CONFIG.app.alert_retention_days, 
+               retention_days=retention_days, 
                cutoff_date=cutoff.isoformat())
     
     start_time = datetime.now()
@@ -138,7 +138,7 @@ def cleanup_old_alerts():
         
         total_duration = (datetime.now() - start_time).total_seconds() * 1000
         logger.info("retention_cleanup_completed",
-                   retention_days=CONFIG.app.alert_retention_days,
+                   retention_days=retention_days,
                    total_duration_ms=round(total_duration, 2))
         
     except Exception as e:

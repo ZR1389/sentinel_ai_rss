@@ -41,7 +41,13 @@ def setup_cron_environment():
         for key, value in os.environ.items():
             if any(keyword in key.upper() for keyword in ['DATABASE', 'DB', 'URL', 'RAILWAY']):
                 logger.info(f"  {key}={'*' * len(value) if 'KEY' in key or 'SECRET' in key or 'PASSWORD' in key else value}")
+        
+        # Try to load from potential config sources
+        logger.info("Trying alternative configuration sources...")
         return False
+    
+    # Set a flag to indicate cron environment for fallback logic
+    os.environ['RAILWAY_CRON_MODE'] = 'true'
     
     logger.info("Environment setup completed successfully")
     return True

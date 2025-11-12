@@ -29,21 +29,30 @@ def get_connection_pool():
     """Get or create the global connection pool."""
     global _connection_pool
     if _connection_pool is None:
-        from config import CONFIG
+        # Try centralized config first, fallback to direct env for cron jobs
+        try:
+            from config import CONFIG
+            database_url = CONFIG.database.url
+            min_size = CONFIG.database.pool_min_size
+            max_size = CONFIG.database.pool_max_size
+        except (ImportError, AttributeError):
+            # Fallback for Railway cron jobs that can't load CONFIG
+            database_url = os.getenv("DATABASE_URL")
+            min_size = int(os.getenv("DB_POOL_MIN_SIZE", "1"))
+            max_size = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
         
-        if not CONFIG.database.url:
+        if not database_url:
             raise RuntimeError("DATABASE_URL not set")
         try:
             _connection_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=CONFIG.database.pool_min_size,
-                maxconn=CONFIG.database.pool_max_size,
-                dsn=CONFIG.database.url
+                minconn=min_size,
+                maxconn=max_size,
+                dsn=database_url
             )
             # Register cleanup on exit
             atexit.register(close_connection_pool)
             logger.info("Connection pool initialized (min=%s, max=%s)", 
-                       CONFIG.database.pool_min_size, 
-                       CONFIG.database.pool_max_size)
+                       min_size, max_size)
         except Exception as e:
             logger.error("Failed to create connection pool: %s", e)
             raise
@@ -322,9 +331,15 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     """
     Bulk upsert into alerts (final schema Option A).
     """
-    from config import CONFIG
+    # Try centralized config first, fallback to direct env for cron jobs
+    try:
+        from config import CONFIG
+        database_url = CONFIG.database.url
+    except (ImportError, AttributeError):
+        # Fallback for Railway cron jobs
+        database_url = os.getenv("DATABASE_URL")
     
-    if not CONFIG.database.url:
+    if not database_url:
         log_security_event("db_config_error", "DATABASE_URL not set for save_alerts_to_db")
         raise RuntimeError("DATABASE_URL not set")
 
