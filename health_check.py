@@ -1,43 +1,14 @@
 """
-health_check.py - Comprehensive health check endpoint for Railway deployments
+health_check.py - Health monitoring functions for Sentinel AI
 
-Provides /health endpoint for:
-- Zero-downtime deployments
-- Uptime monitoring  
-- Service dependency validation
-- Performance metrics
-
-Usage:
-    uvicorn health_check:app --host 0.0.0.0 --port $PORT
+Provides comprehensive health check functions used by the main Flask application.
+No standalone server - functions are imported by main.py
 """
 
 from datetime import datetime
 import os
 import json
 from typing import Dict, Any, List
-
-try:
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import JSONResponse
-except ImportError:
-    # Fallback to Flask if FastAPI not available
-    try:
-        from flask import Flask, jsonify
-        FastAPI = None
-    except ImportError:
-        FastAPI = None
-
-# Initialize FastAPI app
-if FastAPI:
-    app = FastAPI(
-        title="Sentinel AI Health Check",
-        description="Health monitoring endpoint for Railway deployments",
-        version="1.0.0"
-    )
-else:
-    # Fallback Flask app
-    from flask import Flask
-    flask_app = Flask(__name__)
 
 def check_database_health() -> Dict[str, Any]:
     """Check database connectivity and pool status."""
@@ -302,83 +273,4 @@ def perform_health_check() -> Dict[str, Any]:
         }
     }
 
-# FastAPI routes
-if FastAPI:
-    @app.get("/health")
-    @app.get("/")
-    def health_endpoint():
-        """Main health check endpoint for Railway and monitoring."""
-        try:
-            health_data = perform_health_check()
-            status_code = 200 if health_data["status"] == "healthy" else 503
-            return JSONResponse(content=health_data, status_code=status_code)
-        except Exception as e:
-            return JSONResponse(
-                content={
-                    "status": "error",
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "error": str(e),
-                    "issues": [f"Health check failed: {str(e)}"]
-                },
-                status_code=500
-            )
-    
-    @app.get("/health/quick")
-    def quick_health():
-        """Quick health check - just database ping."""
-        try:
-            db_check = check_database_health()
-            status = "healthy" if db_check["connected"] else "unhealthy"
-            return JSONResponse(
-                content={"status": status, "timestamp": datetime.utcnow().isoformat() + "Z"},
-                status_code=200 if status == "healthy" else 503
-            )
-        except Exception as e:
-            return JSONResponse(
-                content={"status": "error", "error": str(e)},
-                status_code=500
-            )
-    
-    @app.get("/health/detailed")
-    def detailed_health():
-        """Detailed health check with full diagnostics."""
-        health_data = perform_health_check()
-        return JSONResponse(content=health_data, status_code=200)
-
-# Flask routes (fallback)
-else:
-    @flask_app.route('/health')
-    @flask_app.route('/')
-    def health_endpoint():
-        """Main health check endpoint for Railway and monitoring."""
-        try:
-            health_data = perform_health_check()
-            status_code = 200 if health_data["status"] == "healthy" else 503
-            response = jsonify(health_data)
-            response.status_code = status_code
-            return response
-        except Exception as e:
-            response = jsonify({
-                "status": "error",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "error": str(e),
-                "issues": [f"Health check failed: {str(e)}"]
-            })
-            response.status_code = 500
-            return response
-
-# For direct execution
-if __name__ == "__main__":
-    # Test health check
-    health_result = perform_health_check()
-    print("=== Sentinel AI Health Check ===")
-    print(json.dumps(health_result, indent=2))
-    
-    if health_result["status"] == "healthy":
-        print("\n✅ All systems healthy")
-        exit(0)
-    else:
-        print(f"\n❌ Issues found: {len(health_result['issues'])}")
-        for issue in health_result["issues"]:
-            print(f"  - {issue}")
-        exit(1)
+# End of health check functions - used by main.py Flask app
