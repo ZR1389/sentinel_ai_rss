@@ -1,0 +1,6 @@
+# MINIMAL REQUIREMENTS FOR TESTING DEPLOYMENT
+Flask==3.0.3
+gunicorn==23.0.0
+psycopg2-binary==2.9.10
+requests==2.31.0
+python-dotenv==1.0.1
