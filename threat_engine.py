@@ -16,11 +16,15 @@ import tempfile
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
-import logging
 import numpy as np
 import pycountry
 from dotenv import load_dotenv
 from decimal import Decimal  # <-- for safe JSON default
+
+# Structured logging setup
+from logging_config import get_logger, get_metrics_logger
+logger = get_logger("threat_engine")
+metrics = get_metrics_logger("threat_engine")
 
 # -------- Optional LLM clients / prompts (do not fail engine if absent) --------
 try:
@@ -283,12 +287,11 @@ def compute_confidence(
         return _clamp(base_confidence)
     
     else:
-        logger.warning(f"Unknown confidence type: {confidence_type}")
+        logger.warning("unknown_confidence_type", confidence_type=confidence_type)
         return 0.5  # default fallback
 
 # ---------- Setup ----------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("threat_engine")
+# Logging already configured in imports
 
 # New: simple per-run counters for model usage & a safe bucket state
 _model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
@@ -356,9 +359,9 @@ TEMPERATURE = float(os.getenv("THREAT_ENGINE_TEMPERATURE", "0.4"))
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")  # hint for your xai client; not enforced here
 
 if RAILWAY_ENV:
-    logger.info(f"Running in Railway environment: {RAILWAY_ENV}")
+    logger.info("environment_check", railway_env=RAILWAY_ENV)
 else:
-    logger.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
+    logger.info("environment_check", railway_env=None, mode="local")
 
 if not DATABASE_URL:
     msg = "DATABASE_URL not set!"
@@ -477,7 +480,11 @@ def deduplicate_alerts(
                         if row and len(row) >= 2:
                             similarity = float(row[1])
                             duplicate_uuid = row[0]
-                            logger.info(f"Semantic duplicate found: {alert.get('uuid')} ~ {duplicate_uuid} (sim: {similarity:.2f})")
+                            logger.info("semantic_duplicate_detected", 
+                                       alert_uuid=alert.get('uuid'),
+                                       duplicate_uuid=duplicate_uuid,
+                                       similarity=round(similarity, 3),
+                                       method="pgvector")
                             continue  # Skip duplicate
                         
                         # Add embedding to alert for persistence by save_alerts_to_db()
@@ -498,7 +505,11 @@ def deduplicate_alerts(
                         if row and len(row) >= 2:
                             similarity = float(row[1])
                             duplicate_uuid = row[0]
-                            logger.info(f"Semantic duplicate found (fallback): {alert.get('uuid')} ~ {duplicate_uuid} (sim: {similarity:.2f})")
+                            logger.info("semantic_duplicate_detected",
+                                       alert_uuid=alert.get('uuid'),
+                                       duplicate_uuid=duplicate_uuid, 
+                                       similarity=round(similarity, 3),
+                                       method="fallback")
                             continue  # Skip duplicate
                         
                         alert["embedding"] = emb
@@ -1117,31 +1128,60 @@ def _normalize_for_db(a: dict) -> dict:
     return a
 
 def enrich_and_store_alerts(region=None, country=None, city=None, category=None, limit=1000, write_to_db: bool = ENGINE_WRITE_TO_DB):
+    start_time = datetime.now()
+    
     # Use enhanced category filtering
     raw_alerts = get_category_specific_alerts(region=region, country=country, city=city, category=category, limit=limit)
     if not raw_alerts:
-        logger.info("No raw alerts to process.")
+        logger.info("raw_alerts_fetch", count=0, region=region, country=country, city=city, category=category)
         return []
 
-    logger.info(f"Fetched {len(raw_alerts)} category-relevant raw alerts. Starting enrichment and filtering...")
+    fetch_duration = (datetime.now() - start_time).total_seconds() * 1000
+    logger.info("raw_alerts_fetched", 
+               count=len(raw_alerts), 
+               region=region, 
+               country=country, 
+               city=city, 
+               category=category,
+               fetch_duration_ms=round(fetch_duration, 2))
+    
+    enrich_start = datetime.now()
     enriched_alerts = summarize_alerts(raw_alerts)
+    enrich_duration = (datetime.now() - enrich_start).total_seconds() * 1000
 
     if enriched_alerts and write_to_db:
         normalized = [_normalize_for_db(x) for x in enriched_alerts]
-        logger.info(f"Storing {len(normalized)} enriched alerts to alerts table...")
+        
+        save_start = datetime.now()
         try:
             save_alerts_to_db(normalized)
-            logger.info("Enriched alerts saved to DB successfully.")
+            save_duration = (datetime.now() - save_start).total_seconds() * 1000
+            
+            metrics.database_operation(
+                operation="save_alerts",
+                table="alerts", 
+                duration_ms=round(save_duration, 2),
+                rows_affected=len(normalized)
+            )
+            
+            logger.info("alerts_saved_to_db", count=len(normalized))
         except Exception as e:
-            logger.error(f"Failed to save alerts to DB: {e}")
+            logger.error("alerts_save_failed", error=str(e), count=len(normalized))
             if ENGINE_FAIL_CLOSED:
                 raise
 
     elif enriched_alerts and not write_to_db:
-        logger.warning("ENGINE_WRITE_TO_DB is FALSE — skipping DB save.")
+        logger.warning("alerts_not_saved", reason="write_to_db_disabled", count=len(enriched_alerts))
 
     else:
-        logger.info("No enriched alerts to store.")
+        logger.info("no_enriched_alerts_to_store")
+
+    total_duration = (datetime.now() - start_time).total_seconds() * 1000
+    logger.info("enrichment_completed",
+               raw_count=len(raw_alerts),
+               enriched_count=len(enriched_alerts),
+               total_duration_ms=round(total_duration, 2),
+               enrichment_duration_ms=round(enrich_duration, 2))
 
     return enriched_alerts
 

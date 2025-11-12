@@ -38,18 +38,20 @@ app.register_blueprint(webpush_bp)
 # ---------- Global Error Handlers ----------
 @app.errorhandler(500)
 def handle_500_error(e):
-    logger.error("=== 500 ERROR CAUGHT ===")
-    logger.error("Request URL: %s", request.url)
-    logger.error("Request method: %s", request.method) 
-    logger.error("Request headers: %s", dict(request.headers))
-    logger.error("Error: %s", str(e))
     import traceback
-    logger.error("Traceback: %s", traceback.format_exc())
+    logger.error("server_error_500",
+                url=request.url,
+                method=request.method,
+                headers=dict(request.headers),
+                error=str(e),
+                traceback=traceback.format_exc())
     return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 # ---------- Logging ----------
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logger = logging.getLogger("sentinel.main")
+from logging_config import get_logger, get_metrics_logger, setup_logging
+setup_logging("sentinel-api")
+logger = get_logger("sentinel.main")
+metrics = get_metrics_logger("sentinel.main")
 
 # ---------- CORS (more restrictive default) ----------
 # Default: production frontends only — override with comma-separated env var if needed

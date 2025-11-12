@@ -81,5 +81,6 @@ spacy>=3.7.0
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 Flask-Limiter>=3.12
 gevent>=25.9.1
+structlog>=24.0.0
 
 # Note: FastAPI removed - using Flask app in main.py with health_check.py functions

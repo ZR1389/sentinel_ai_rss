@@ -37,9 +37,7 @@ except Exception:
 try:
     from unidecode import unidecode
 except Exception as e:
-    # Logger not yet initialized, so import logging temporarily
-    import logging
-    logging.getLogger("rss_processor").warning(f"[UNIDECODE] unidecode library not available, text normalization will be degraded: {e}")
+    # Fallback unidecode function for text normalization
     def unidecode(s: str) -> str:  # type: ignore
         return s
 
@@ -81,9 +79,10 @@ except ImportError:
             self.write_to_db = os.getenv("RSS_WRITE_TO_DB", "true").lower() in ("1", "true", "yes", "y")
     config = FallbackConfig()
 
-import logging
-logging.basicConfig(level=logging.DEBUG, force=True)
-logger = logging.getLogger("rss_processor")
+# Structured logging setup
+from logging_config import get_logger, get_metrics_logger
+logger = get_logger("rss_processor") 
+metrics = get_metrics_logger("rss_processor")
 
 # Global client for batch processing 
 _GLOBAL_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
