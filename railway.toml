@@ -23,18 +23,14 @@ healthcheck_path = "/health"
 # - PORT (defaults to Railway's provided port)
 # - KEYWORDS_SOURCE (defaults to "merge")
 
-# Start Command Options (choose one):
+# Start Command Options:
 # 
-# RECOMMENDED: Main application with health endpoints
+# NOTE: Procfile takes precedence over railway.toml start_command
+# Current Procfile: uvicorn health_check:app --host 0.0.0.0 --port $PORT
+#
+# Alternative configurations:
 # gunicorn main:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2
-#
-# Alternative: Standalone health server (testing/debugging)
 # python health_server.py
-#
-# Advanced: FastAPI health server (requires: pip install fastapi uvicorn)
-# uvicorn health_check:app --host 0.0.0.0 --port $PORT
-#
-# Note: FastAPI imports will show warnings if not installed, but Flask fallback works perfectly
 
 # Railway Service Configuration
 [services.web]
