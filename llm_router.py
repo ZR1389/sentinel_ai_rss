@@ -4,8 +4,26 @@ from deepseek_client import deepseek_chat
 from openai_client_wrapper import openai_chat
 from xai_client import grok_chat
 from moonshot_client import moonshot_chat
+from llm_rate_limiter import rate_limited
 
 logger = logging.getLogger("llm_router")
+
+# Create rate-limited wrapper functions for the router
+@rate_limited("deepseek")
+def deepseek_chat_limited(messages, temperature=0.4, timeout=15):
+    return deepseek_chat(messages, temperature=temperature, timeout=timeout)
+
+@rate_limited("openai")
+def openai_chat_limited(messages, temperature=0.4, timeout=15):
+    return openai_chat(messages, temperature=temperature, timeout=timeout)
+
+@rate_limited("xai")
+def grok_chat_limited(messages, temperature=0.4, timeout=15):
+    return grok_chat(messages, temperature=temperature, timeout=timeout)
+
+@rate_limited("moonshot")
+def moonshot_chat_limited(messages, temperature=0.4, timeout=15):
+    return moonshot_chat(messages, temperature=temperature, timeout=timeout)
 
 def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general"):
     usage_counts = usage_counts or {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
@@ -37,22 +55,22 @@ def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general")
     def try_provider(name):
         try:
             if name == "deepseek" and deepseek_chat:
-                s = deepseek_chat(messages, temperature=temperature, timeout=TIMEOUT_DEEPSEEK)
+                s = deepseek_chat_limited(messages, temperature=temperature, timeout=TIMEOUT_DEEPSEEK)
                 if s and s.strip():
                     usage_counts["deepseek"] += 1
                     return s.strip(), "deepseek"
             elif name == "openai" and openai_chat:
-                s = openai_chat(messages, temperature=temperature, timeout=TIMEOUT_OPENAI)
+                s = openai_chat_limited(messages, temperature=temperature, timeout=TIMEOUT_OPENAI)
                 if s and s.strip():
                     usage_counts["openai"] += 1
                     return s.strip(), "openai"
             elif name == "grok" and grok_chat:
-                s = grok_chat(messages, temperature=temperature, timeout=TIMEOUT_GROK)
+                s = grok_chat_limited(messages, temperature=temperature, timeout=TIMEOUT_GROK)
                 if s and s.strip():
                     usage_counts["grok"] += 1
                     return s.strip(), "grok"
             elif name == "moonshot" and moonshot_chat:
-                s = moonshot_chat(messages, temperature=temperature, timeout=TIMEOUT_MOONSHOT)
+                s = moonshot_chat_limited(messages, temperature=temperature, timeout=TIMEOUT_MOONSHOT)
                 if s and s.strip():
                     usage_counts["moonshot"] += 1
                     return s.strip(), "moonshot"
@@ -95,22 +113,22 @@ def route_llm_search(query, context="", usage_counts=None):
     # Try primary provider first
     try:
         if search_provider == "grok" and grok_chat:
-            result = grok_chat(search_messages, temperature=0.3, timeout=12)
+            result = grok_chat_limited(search_messages, temperature=0.3, timeout=12)
             if result and result.strip():
                 usage_counts["grok"] += 1
                 return result.strip(), "grok"
         elif search_provider == "openai" and openai_chat:
-            result = openai_chat(search_messages, temperature=0.3, timeout=15)
+            result = openai_chat_limited(search_messages, temperature=0.3, timeout=15)
             if result and result.strip():
                 usage_counts["openai"] += 1
                 return result.strip(), "openai"
         elif search_provider == "moonshot" and moonshot_chat:
-            result = moonshot_chat(search_messages, temperature=0.3, max_tokens=800, timeout=8)
+            result = moonshot_chat_limited(search_messages, temperature=0.3, timeout=8)
             if result and result.strip():
                 usage_counts["moonshot"] += 1
                 return result.strip(), "moonshot"
         elif search_provider == "deepseek" and deepseek_chat:
-            result = deepseek_chat(search_messages, temperature=0.3, timeout=10)
+            result = deepseek_chat_limited(search_messages, temperature=0.3, timeout=10)
             if result and result.strip():
                 usage_counts["deepseek"] += 1
                 return result.strip(), "deepseek"
@@ -121,22 +139,22 @@ def route_llm_search(query, context="", usage_counts=None):
     logger.info(f"[LLM Search Router] Falling back to {fallback_provider}")
     try:
         if fallback_provider == "openai" and openai_chat:
-            result = openai_chat(search_messages, temperature=0.3, timeout=15)
+            result = openai_chat_limited(search_messages, temperature=0.3, timeout=15)
             if result and result.strip():
                 usage_counts["openai"] += 1
                 return result.strip(), "openai"
         elif fallback_provider == "grok" and grok_chat:
-            result = grok_chat(search_messages, temperature=0.3, timeout=12)
+            result = grok_chat_limited(search_messages, temperature=0.3, timeout=12)
             if result and result.strip():
                 usage_counts["grok"] += 1
                 return result.strip(), "grok"
         elif fallback_provider == "deepseek" and deepseek_chat:
-            result = deepseek_chat(search_messages, temperature=0.3, timeout=10)
+            result = deepseek_chat_limited(search_messages, temperature=0.3, timeout=10)
             if result and result.strip():
                 usage_counts["deepseek"] += 1
                 return result.strip(), "deepseek"
         elif fallback_provider == "moonshot" and moonshot_chat:
-            result = moonshot_chat(search_messages, temperature=0.3, max_tokens=800, timeout=8)
+            result = moonshot_chat_limited(search_messages, temperature=0.3, timeout=8)
             if result and result.strip():
                 usage_counts["moonshot"] += 1
                 return result.strip(), "moonshot"
@@ -180,22 +198,22 @@ def route_llm_batch(alerts_batch, usage_counts=None):
     
     try:
         if batch_provider == "grok" and grok_chat:
-            result = grok_chat(batch_messages, temperature=0.2, timeout=12)
+            result = grok_chat_limited(batch_messages, temperature=0.2, timeout=12)
             if result and result.strip():
                 usage_counts["grok"] += 1
                 return result.strip(), "grok"
         elif batch_provider == "openai" and openai_chat:
-            result = openai_chat(batch_messages, temperature=0.2, timeout=15)
+            result = openai_chat_limited(batch_messages, temperature=0.2, timeout=15)
             if result and result.strip():
                 usage_counts["openai"] += 1
                 return result.strip(), "openai"
         elif batch_provider == "moonshot" and moonshot_chat:
-            result = moonshot_chat(batch_messages, temperature=0.2, max_tokens=2000, timeout=8)
+            result = moonshot_chat_limited(batch_messages, temperature=0.2, timeout=8)
             if result and result.strip():
                 usage_counts["moonshot"] += 1
                 return result.strip(), "moonshot"
         elif batch_provider == "deepseek" and deepseek_chat:
-            result = deepseek_chat(batch_messages, temperature=0.2, timeout=10)
+            result = deepseek_chat_limited(batch_messages, temperature=0.2, timeout=10)
             if result and result.strip():
                 usage_counts["deepseek"] += 1
                 return result.strip(), "deepseek"

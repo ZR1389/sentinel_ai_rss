@@ -15,6 +15,34 @@ except ImportError as e:
     def unidecode(s: str) -> str:  # type: ignore
         return s
 
+# Import defensive score handling
+try:
+    from score_type_safety import safe_numeric_score, safe_score_comparison
+except ImportError:
+    # Fallback if score_type_safety not available
+    def safe_numeric_score(value, default=0.0, min_val=0.0, max_val=100.0):
+        """Fallback safe score conversion"""
+        try:
+            if value is None:
+                return default
+            return max(min_val, min(max_val, float(value)))
+        except (ValueError, TypeError):
+            return default
+    
+    def safe_score_comparison(score1, score2, operator='>'):
+        """Fallback safe score comparison"""
+        try:
+            s1, s2 = float(score1 or 0), float(score2 or 0)
+            if operator == '>': return s1 > s2
+            elif operator == '>=': return s1 >= s2
+            elif operator == '<': return s1 < s2
+            elif operator == '<=': return s1 <= s2
+            elif operator == '==': return abs(s1 - s2) < 0.001
+            elif operator == '!=': return abs(s1 - s2) >= 0.001
+            return False
+        except (ValueError, TypeError):
+            return False
+
 # Shared heuristics/taxonomy
 from risk_shared import (
     compute_keyword_weight,
@@ -388,15 +416,15 @@ def compute_future_risk_probability(incidents: List[Dict[str, Any]]) -> float:
 def stats_average_score(incidents: List[Dict[str, Any]]) -> float:
     """
     Average of 'score' field over incidents (ignoring missing/invalid).
+    Uses safe score conversion to handle TEXT score columns.
     """
     vals: List[float] = []
     for inc in incidents or []:
         s = inc.get("score")
-        try:
-            if s is not None:
-                vals.append(float(s))
-        except Exception:
-            continue
+        # Use safe score conversion instead of raw float()
+        safe_val = safe_numeric_score(s, default=None)
+        if safe_val is not None:
+            vals.append(safe_val)
     if not vals:
         return 0.0
     return round(sum(vals) / len(vals), 1)
@@ -431,11 +459,10 @@ def early_warning_indicators(incidents: List[Dict[str, Any]]) -> List[str]:
             continue
         if dt >= now - timedelta(days=14):
             total += 1
-            try:
-                if float(inc.get("score", 0)) > 75.0:
-                    high += 1
-            except Exception:
-                pass
+            # Use safe score comparison to handle TEXT scores from database
+            score_value = inc.get("score", 0)
+            if safe_score_comparison(score_value, 75.0, '>'):
+                high += 1
     if total >= 5 and (high / max(total, 1)) >= 0.4:
         out.append("high_severity_cluster")
 
