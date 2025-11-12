@@ -5,6 +5,12 @@ Test script for location service improvements and validation.
 
 import json
 import logging
+import sys
+import os
+
+# Add the project root to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
 from location_service_consolidated import (
     detect_location, 
     is_location_ambiguous,

@@ -241,6 +241,61 @@ class RSSConfig:
 
 
 @dataclass(frozen=True)
+class BatchProcessingConfig:
+    """Optimized batch processing configuration."""
+    # Buffer management
+    max_buffer_size: int = _getenv_int("BATCH_MAX_BUFFER_SIZE", 1000)
+    max_buffer_age_seconds: int = _getenv_int("BATCH_MAX_BUFFER_AGE_SEC", 3600)  # 1 hour
+    max_result_age_seconds: int = _getenv_int("BATCH_MAX_RESULT_AGE_SEC", 7200)  # 2 hours
+    
+    # Flush triggers - optimized for performance
+    size_threshold: int = _getenv_int("BATCH_SIZE_THRESHOLD", 25)  # Optimal for LLM APIs
+    time_threshold_seconds: float = _getenv_float("BATCH_TIME_THRESHOLD_SEC", 300.0)  # 5 minutes
+    
+    # Performance optimization
+    enable_adaptive_sizing: bool = _getenv_bool("BATCH_ENABLE_ADAPTIVE_SIZING", True)
+    enable_priority_flushing: bool = _getenv_bool("BATCH_ENABLE_PRIORITY_FLUSHING", True)
+    enable_performance_monitoring: bool = _getenv_bool("BATCH_ENABLE_PERFORMANCE_MONITORING", True)
+    enable_timer_flush: bool = _getenv_bool("BATCH_ENABLE_TIMER_FLUSH", True)
+    
+    # Optimized thresholds
+    optimal_batch_size: int = _getenv_int("BATCH_OPTIMAL_SIZE", 25)
+    min_batch_size: int = _getenv_int("BATCH_MIN_SIZE", 5)
+    max_batch_size: int = _getenv_int("BATCH_MAX_SIZE", 50)
+    
+    # Timeout optimization
+    fast_flush_timeout_sec: float = _getenv_float("BATCH_FAST_FLUSH_TIMEOUT_SEC", 120.0)  # 2 minutes
+    emergency_timeout_sec: float = _getenv_float("BATCH_EMERGENCY_TIMEOUT_SEC", 60.0)  # 1 minute
+    
+    # Performance targets
+    performance_target_ms: float = _getenv_float("BATCH_PERFORMANCE_TARGET_MS", 2000.0)  # 2s target
+    throughput_target_eps: float = _getenv_float("BATCH_THROUGHPUT_TARGET_EPS", 10.0)  # 10 entries/sec
+    
+    # Memory management
+    memory_pressure_threshold: float = _getenv_float("BATCH_MEMORY_PRESSURE_THRESHOLD", 0.85)  # 85%
+    aggressive_flush_threshold: float = _getenv_float("BATCH_AGGRESSIVE_FLUSH_THRESHOLD", 0.95)  # 95%
+    
+    def __post_init__(self):
+        """Validate batch processing configuration."""
+        if self.max_buffer_size < 1:
+            raise ValueError("BATCH_MAX_BUFFER_SIZE must be >= 1")
+        if self.size_threshold < 1:
+            raise ValueError("BATCH_SIZE_THRESHOLD must be >= 1")
+        if self.min_batch_size < 1:
+            raise ValueError("BATCH_MIN_SIZE must be >= 1")
+        if self.min_batch_size > self.max_batch_size:
+            raise ValueError("BATCH_MIN_SIZE must be <= BATCH_MAX_SIZE")
+        if self.size_threshold > self.max_buffer_size:
+            raise ValueError("BATCH_SIZE_THRESHOLD must be <= BATCH_MAX_BUFFER_SIZE")
+        if not (0.0 < self.memory_pressure_threshold < 1.0):
+            raise ValueError("BATCH_MEMORY_PRESSURE_THRESHOLD must be between 0.0 and 1.0")
+        if not (0.0 < self.aggressive_flush_threshold <= 1.0):
+            raise ValueError("BATCH_AGGRESSIVE_FLUSH_THRESHOLD must be between 0.0 and 1.0")
+        if self.memory_pressure_threshold >= self.aggressive_flush_threshold:
+            raise ValueError("BATCH_MEMORY_PRESSURE_THRESHOLD must be < BATCH_AGGRESSIVE_FLUSH_THRESHOLD")
+
+
+@dataclass(frozen=True)
 class Config:
     """Master configuration object."""
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -251,6 +306,7 @@ class Config:
     webpush: WebPushConfig = field(default_factory=WebPushConfig)
     app: ApplicationConfig = field(default_factory=ApplicationConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
+    batch_processing: BatchProcessingConfig = field(default_factory=BatchProcessingConfig)
     
     def validate(self):
         """Validate the complete configuration."""
@@ -259,6 +315,9 @@ class Config:
         
         # Validate RSS config
         self.rss.__post_init__()
+        
+        # Validate batch processing config
+        self.batch_processing.__post_init__()
 
 
 # Global config instance - no fallbacks, everything centralized
