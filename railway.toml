@@ -13,25 +13,26 @@ healthcheck_path = "/health"
   healthcheck_timeout = 30
   restart_policy = "on_failure"
 
+# Cron jobs for maintenance tasks
+[[cron]]
+  name = "retention-cleanup"
+  command = "python retention_worker.py"
+  schedule = "0 */6 * * *"  # Every 6 hours
+  
+[[cron]]
+  name = "daily-vacuum"
+  command = "python -c 'from retention_worker import perform_vacuum; perform_vacuum()'"
+  schedule = "0 2 * * *"    # Daily at 2 AM UTC
+
 # Environment Variables (set these in Railway Dashboard)
 # Required:
 # - DATABASE_URL
 # - OPENAI_API_KEY (or XAI_API_KEY or DEEPSEEK_API_KEY)
 # 
+# Optional Retention Settings:
+# - ALERT_RETENTION_DAYS=90 (default: 90 days)
+# 
 # Optional:
 # - REDIS_URL
 # - PORT (defaults to Railway's provided port)
 # - KEYWORDS_SOURCE (defaults to "merge")
-
-# Start Command Options:
-# 
-# NOTE: Procfile takes precedence over railway.toml start_command
-# Current Procfile: uvicorn health_check:app --host 0.0.0.0 --port $PORT
-#
-# Alternative configurations:
-# gunicorn main:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2
-# python health_server.py
-
-# Railway Service Configuration
-[services.web]
-  start_command = "uvicorn health_check:app --host 0.0.0.0 --port $PORT"

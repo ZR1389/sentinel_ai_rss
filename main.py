@@ -109,6 +109,49 @@ def ping():
     """Simple liveness probe."""
     return jsonify({"status": "ok", "message": "pong"})
 
+# ---------- Retention Management Endpoints ----------
+@app.route("/admin/retention/status", methods=["GET"])
+def retention_status():
+    """Check retention worker status and database statistics."""
+    try:
+        from retention_worker import health_check as retention_health_check
+        status = retention_health_check()
+        return jsonify(status)
+    except Exception as e:
+        return make_response(jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }), 500)
+
+@app.route("/admin/retention/cleanup", methods=["POST"])
+def manual_retention_cleanup():
+    """Manually trigger retention cleanup (admin only)."""
+    try:
+        # Basic auth check - in production you'd want proper JWT validation
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from retention_worker import cleanup_old_alerts
+        result = cleanup_old_alerts()
+        
+        return jsonify({
+            "status": "success",
+            "message": "Retention cleanup completed",
+            "result": result,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        })
+        
+    except Exception as e:
+        return make_response(jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }), 500)
+
 # ---------- Imports: plan / advisor / engines ----------
 try:
     from plan_utils import (
@@ -1792,24 +1835,26 @@ def batch_enrich_alerts():
         alerts_batch = [dict(alert) for alert in alerts]
 
         # Process batch with 128k context
-        result, model_used = route_llm_batch(alerts_batch)
-
-        return _build_cors_response(jsonify({
-            "ok": True,
-            "alerts_processed": len(alerts_batch),
-            "model": model_used,
-            "enrichment_result": result[:500] + "..." if len(result) > 500 else result,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }))
-
+        try:
+            batch_result = route_llm_batch(alerts_batch, context_window="128k")
+            
+            return _build_cors_response(jsonify({
+                "ok": True,
+                "message": f"Batch processing completed",
+                "processed": len(alerts_batch),
+                "result": batch_result
+            }))
+            
+        except Exception as batch_error:
+            logger.error(f"Batch processing error: {batch_error}")
+            return _build_cors_response(make_response(jsonify({
+                "error": f"Batch processing failed: {str(batch_error)}"
+            }), 500))
+            
     except Exception as e:
-        logger.error("batch_enrich_alerts error: %s\n%s", e, traceback.format_exc())
-        return _build_cors_response(make_response(jsonify({"error": "Batch enrichment failed"}), 500))
+        logger.error(f"Batch endpoint error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
-# ---------- Entrypoint ----------
 if __name__ == "__main__":
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8080"))
-    debug = bool(os.getenv("FLASK_DEBUG", "").lower() in ("1","true","yes","y"))
-    logger.info("Starting Sentinel AI API on %s:%s (debug=%s)", host, port, debug)
-    app.run(host=host, port=port, debug=debug)
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
