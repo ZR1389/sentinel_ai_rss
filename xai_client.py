@@ -1,15 +1,35 @@
 import os
+import signal
+import logging
+from contextlib import contextmanager
 from xai_sdk import Client
 from xai_sdk.chat import user, system
+
+logger = logging.getLogger("xai_client")
 
 XAI_API_KEY = os.getenv("GROK_API_KEY")
 XAI_API_HOST = "api.x.ai"
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")
 TEMPERATURE = float(os.getenv("GROK_TEMPERATURE", 0.3))
 
+@contextmanager
+def _timeout(seconds: int):
+    """Force-timeout wrapper for blocking calls using SIGALRM"""
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"LLM call exceeded {seconds}s")
+    
+    # Set the signal handler
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)  # Cancel the alarm
+
 def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, timeout=15):
     """
-    Grok chat completion with timeout support.
+    Grok chat completion with **enforced** timeout support.
+    Uses SIGALRM to prevent indefinite blocking.
     
     Args:
         messages: List of message dicts
@@ -18,20 +38,23 @@ def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, timeout=15):
         timeout: Request timeout in seconds (default: 15s for fast-failover)
     """
     if not XAI_API_KEY:
-        print("[Grok-3-mini] API key missing.")
+        logger.error("[Grok-3-mini] API key missing.")
         return None
+    
     try:
-        # Note: xai_sdk may not support timeout parameter directly
-        # This is a best-effort timeout hint
-        client = Client(api_host=XAI_API_HOST, api_key=XAI_API_KEY)
-        chat = client.chat.create(model=model, temperature=temperature)
-        for m in messages:
-            if m["role"] == "system":
-                chat.append(system(m["content"]))
-            elif m["role"] == "user":
-                chat.append(user(m["content"]))
-        response = chat.sample()
-        return response.content.strip()
+        with _timeout(timeout):
+            client = Client(api_host=XAI_API_HOST, api_key=XAI_API_KEY)
+            chat = client.chat.create(model=model, temperature=temperature)
+            for m in messages:
+                if m["role"] == "system":
+                    chat.append(system(m["content"]))
+                elif m["role"] == "user":
+                    chat.append(user(m["content"]))
+            response = chat.sample()
+            return response.content.strip() if response else None
+    except TimeoutError:
+        logger.error(f"[Grok-3-mini] Timeout after {timeout}s")
+        return None
     except Exception as e:
-        print(f"[Grok-3-mini error] {e}")
+        logger.error(f"[Grok-3-mini error] {e}")
         return None
