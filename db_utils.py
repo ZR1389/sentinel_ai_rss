@@ -126,26 +126,308 @@ def _get_db_connection():
     finally:
         _release_conn(conn)
 
-# Database operation helpers with guaranteed connection return
+# Enhanced database operation helpers with comprehensive logging and performance monitoring
+import time
+import hashlib
+from functools import wraps
+from typing import Union
+
+# Database performance monitoring
+_query_stats = {}
+_slow_query_threshold = 1.0  # Log queries taking longer than 1 second
+
+def _log_query_performance(query: str, params: tuple, duration: float, row_count: int = None):
+    """Log database query performance metrics"""
+    # Create query signature for tracking
+    query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
+    query_type = query.strip().split()[0].upper()
+    
+    # Track query statistics
+    if query_hash not in _query_stats:
+        _query_stats[query_hash] = {
+            'query_type': query_type,
+            'total_calls': 0,
+            'total_duration': 0,
+            'avg_duration': 0,
+            'max_duration': 0,
+            'min_duration': float('inf'),
+            'slow_queries': 0
+        }
+    
+    stats = _query_stats[query_hash]
+    stats['total_calls'] += 1
+    stats['total_duration'] += duration
+    stats['avg_duration'] = stats['total_duration'] / stats['total_calls']
+    stats['max_duration'] = max(stats['max_duration'], duration)
+    stats['min_duration'] = min(stats['min_duration'], duration)
+    
+    if duration > _slow_query_threshold:
+        stats['slow_queries'] += 1
+        logger.warning(
+            f"[SLOW_QUERY] {query_type} took {duration:.3f}s (hash: {query_hash}) "
+            f"- rows: {row_count if row_count is not None else 'N/A'}"
+        )
+        logger.debug(f"[SLOW_QUERY_DETAILS] Query: {query[:200]}...")
+        logger.debug(f"[SLOW_QUERY_PARAMS] Params: {params}")
+    
+    # Log detailed performance info for debugging
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            f"[DB_PERF] {query_type} {query_hash} - "
+            f"duration: {duration:.3f}s, rows: {row_count if row_count is not None else 'N/A'}, "
+            f"avg: {stats['avg_duration']:.3f}s, calls: {stats['total_calls']}"
+        )
+
+def _sanitize_query_for_log(query: str, max_length: int = 150) -> str:
+    """Sanitize query for logging (remove sensitive data, truncate)"""
+    # Remove common sensitive patterns
+    import re
+    sanitized = query
+    
+    # Replace potential sensitive values in common patterns
+    sanitized = re.sub(r'(password|token|key)\s*=\s*[\'"][^\'\"]+[\'"]', r'\1=***', sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r'(password|token|key)\s*=\s*\%s', r'\1=%s', sanitized, flags=re.IGNORECASE)
+    
+    # Truncate if too long
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length] + "..."
+    
+    return sanitized
+
+def _log_db_operation(operation_type: str, query: str, params: tuple, duration: float = None, row_count: int = None, error: Exception = None):
+    """Comprehensive database operation logging"""
+    sanitized_query = _sanitize_query_for_log(query)
+    
+    if error:
+        logger.error(
+            f"[DB_ERROR] {operation_type} failed - Query: {sanitized_query} "
+            f"- Error: {error}"
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"[DB_ERROR_PARAMS] Params: {params}")
+    else:
+        if duration is not None:
+            logger.info(
+                f"[DB_SUCCESS] {operation_type} completed in {duration:.3f}s - "
+                f"Query: {sanitized_query}"
+                f"{f' - Rows: {row_count}' if row_count is not None else ''}"
+            )
+        else:
+            logger.info(f"[DB_SUCCESS] {operation_type} - Query: {sanitized_query}")
+        
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"[DB_PARAMS] Params: {params}")
+
 def execute(query: str, params: tuple = ()) -> None:
-    """Execute a single statement with guaranteed connection return"""
-    with _get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
+    """
+    Execute a single statement with comprehensive logging and performance monitoring
+    
+    Args:
+        query: SQL query to execute
+        params: Query parameters (tuple)
+        
+    Raises:
+        Exception: Database execution errors
+    """
+    start_time = time.time()
+    error = None
+    
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                
+        # Log successful execution
+        duration = time.time() - start_time
+        _log_db_operation("EXECUTE", query, params, duration)
+        _log_query_performance(query, params, duration)
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        error = e
+        _log_db_operation("EXECUTE", query, params, duration, error=error)
+        raise
 
 def fetch_one(query: str, params: tuple = ()):
-    """Fetch a single row with guaranteed connection return"""
-    with _get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            return cur.fetchone()
+    """
+    Fetch a single row with comprehensive logging and performance monitoring
+    
+    Args:
+        query: SQL query to execute
+        params: Query parameters (tuple)
+        
+    Returns:
+        Single row result or None
+        
+    Raises:
+        Exception: Database query errors
+    """
+    start_time = time.time()
+    error = None
+    result = None
+    
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                result = cur.fetchone()
+                
+        # Log successful fetch
+        duration = time.time() - start_time
+        row_count = 1 if result is not None else 0
+        _log_db_operation("FETCH_ONE", query, params, duration, row_count)
+        _log_query_performance(query, params, duration, row_count)
+        
+        return result
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        error = e
+        _log_db_operation("FETCH_ONE", query, params, duration, error=error)
+        raise
 
 def fetch_all(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
-    """Fetch all rows as dicts with guaranteed connection return"""
-    with _get_db_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, params)
-            return cur.fetchall()
+    """
+    Fetch all rows as dicts with comprehensive logging and performance monitoring
+    
+    Args:
+        query: SQL query to execute
+        params: Query parameters (tuple)
+        
+    Returns:
+        List of dictionary rows
+        
+    Raises:
+        Exception: Database query errors
+    """
+    start_time = time.time()
+    error = None
+    result = []
+    
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, params)
+                result = cur.fetchall()
+                
+        # Log successful fetch
+        duration = time.time() - start_time
+        row_count = len(result)
+        _log_db_operation("FETCH_ALL", query, params, duration, row_count)
+        _log_query_performance(query, params, duration, row_count)
+        
+        return result
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        error = e
+        _log_db_operation("FETCH_ALL", query, params, duration, error=error)
+        raise
+
+def execute_batch(query: str, params_list: List[tuple]) -> int:
+    """
+    Execute batch operations with comprehensive logging
+    
+    Args:
+        query: SQL query to execute
+        params_list: List of parameter tuples for batch execution
+        
+    Returns:
+        Number of affected rows
+        
+    Raises:
+        Exception: Database execution errors
+    """
+    if not params_list:
+        logger.warning("[DB_BATCH] No parameters provided for batch execution")
+        return 0
+    
+    start_time = time.time()
+    error = None
+    affected_rows = 0
+    
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Use execute_batch for better performance
+                from psycopg2.extras import execute_batch
+                execute_batch(cur, query, params_list, page_size=1000)
+                affected_rows = len(params_list)
+                
+        # Log successful batch execution
+        duration = time.time() - start_time
+        _log_db_operation("EXECUTE_BATCH", query, (f"{len(params_list)} batches",), duration, affected_rows)
+        _log_query_performance(query, (f"{len(params_list)} batches",), duration, affected_rows)
+        
+        return affected_rows
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        error = e
+        _log_db_operation("EXECUTE_BATCH", query, (f"{len(params_list)} batches",), duration, error=error)
+        raise
+
+def get_query_performance_stats() -> Dict[str, Any]:
+    """
+    Get comprehensive database query performance statistics
+    
+    Returns:
+        Dictionary containing query performance metrics
+    """
+    total_calls = sum(stats['total_calls'] for stats in _query_stats.values())
+    total_duration = sum(stats['total_duration'] for stats in _query_stats.values())
+    total_slow_queries = sum(stats['slow_queries'] for stats in _query_stats.values())
+    
+    return {
+        'summary': {
+            'total_queries': total_calls,
+            'total_duration': total_duration,
+            'average_duration': total_duration / total_calls if total_calls > 0 else 0,
+            'slow_queries': total_slow_queries,
+            'slow_query_percentage': (total_slow_queries / total_calls * 100) if total_calls > 0 else 0,
+            'query_types': len(_query_stats)
+        },
+        'detailed_stats': _query_stats,
+        'top_slow_queries': sorted(
+            _query_stats.items(),
+            key=lambda x: x[1]['slow_queries'],
+            reverse=True
+        )[:10]
+    }
+
+def log_database_performance_summary():
+    """Log a comprehensive database performance summary"""
+    stats = get_query_performance_stats()
+    summary = stats['summary']
+    
+    logger.info("=" * 80)
+    logger.info("📊 DATABASE PERFORMANCE SUMMARY")
+    logger.info("=" * 80)
+    logger.info(f"Total Queries: {summary['total_queries']:,}")
+    logger.info(f"Total Duration: {summary['total_duration']:.2f}s")
+    logger.info(f"Average Duration: {summary['average_duration']:.3f}s")
+    logger.info(f"Slow Queries: {summary['slow_queries']} ({summary['slow_query_percentage']:.1f}%)")
+    logger.info(f"Unique Query Types: {summary['query_types']}")
+    
+    # Log top slow queries
+    if stats['top_slow_queries']:
+        logger.info(f"\n🐌 Top Slow Query Types:")
+        for query_hash, query_stats in stats['top_slow_queries'][:5]:
+            if query_stats['slow_queries'] > 0:
+                logger.info(
+                    f"  {query_stats['query_type']} (Hash: {query_hash}) - "
+                    f"{query_stats['slow_queries']} slow queries, "
+                    f"avg: {query_stats['avg_duration']:.3f}s, "
+                    f"max: {query_stats['max_duration']:.3f}s"
+                )
+    
+    logger.info("=" * 80)
+
+def reset_query_performance_stats():
+    """Reset query performance statistics"""
+    global _query_stats
+    _query_stats = {}
+    logger.info("[DB_PERF] Query performance statistics reset")
 
 def log_security_event(event_type: str, details: str) -> None:
     try:
