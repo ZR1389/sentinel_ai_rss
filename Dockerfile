@@ -31,4 +31,6 @@ COPY . .
 
 EXPOSE 8080
 
-CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:8080", "--timeout", "120"]
+# Use Railway-optimized health server with proper port handling
+# Force rebuild: 2025-11-12
+CMD exec uvicorn railway_health:app --host 0.0.0.0 --port ${PORT:-8080}
