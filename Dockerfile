@@ -31,6 +31,9 @@ COPY . .
 
 EXPOSE 8080
 
-# Use Railway-optimized health server with proper port handling
-# Force rebuild: 2025-11-12
-CMD exec uvicorn railway_health:app --host 0.0.0.0 --port ${PORT:-8080}
+# Copy and use absolute override script
+COPY railway_start.sh .
+RUN chmod +x railway_start.sh
+
+# ABSOLUTE OVERRIDE - no gunicorn allowed
+CMD ["./railway_start.sh"]
