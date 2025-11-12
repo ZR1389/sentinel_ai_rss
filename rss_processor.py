@@ -90,15 +90,15 @@ _GLOBAL_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
 # Alert building restored to original working code
 
-# Import circuit breaker for Moonshot API protection
+# Import circuit breaker for LLM API protection
 try:
-    from moonshot_circuit_breaker import CircuitBreakerOpenError
+    from llm_rate_limiter import moonshot_circuit
 except ImportError:
     # Fallback if circuit breaker not available
-    class CircuitBreakerOpenError(Exception):
-        def __init__(self, message: str, retry_after: float = 0):
-            super().__init__(message)
-            self.retry_after = retry_after
+    class MockCircuitBreaker:
+        def call(self, func, *args, **kwargs):
+            return func(*args, **kwargs)
+    moonshot_circuit = MockCircuitBreaker()
 
 # Import proper batch state management (eliminates function attribute anti-pattern)
 from batch_state_manager import get_batch_state_manager
@@ -1368,10 +1368,8 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
 
     try:
         # CIRCUIT BREAKER PROTECTION: Prevent infinite retries and DDoS
-        from moonshot_circuit_breaker import get_moonshot_circuit_breaker, CircuitBreakerOpenError
         from moonshot_client import MoonshotClient
         
-        circuit_breaker = get_moonshot_circuit_breaker()
         moonshot = MoonshotClient()
 
         # Define the actual Moonshot call as an async function
@@ -1384,7 +1382,7 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
             )
         
         # Execute through circuit breaker
-        response = await circuit_breaker.call(make_moonshot_call)
+        response = await moonshot_circuit.call(make_moonshot_call)
 
         # Parse JSON array
         import re, json
@@ -1422,10 +1420,13 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
         # If we get here, processing failed
         raise Exception("No valid response or failed to parse JSON")
 
-    except CircuitBreakerOpenError as e:
-        # Circuit breaker is open - don't retry, wait for recovery
-        logger.warning(f"[Moonshot] Circuit breaker OPEN, skipping batch: {e}")
-        logger.info(f"[Moonshot] Will retry batch after {e.retry_after:.1f} seconds")
+    except Exception as e:
+        # Circuit breaker is open or other error - don't retry, wait for recovery
+        if "Circuit breaker open" in str(e):
+            logger.warning(f"[Moonshot] Circuit breaker OPEN, skipping batch: {e}")
+            logger.info(f"[Moonshot] Will retry batch after circuit breaker recovery")
+        else:
+            logger.warning(f"[Moonshot] Batch processing failed: {e}")
         
         # Record circuit breaker metrics
         metrics.increment_error_count("batch_processing", "circuit_breaker_open")

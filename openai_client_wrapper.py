@@ -1,6 +1,7 @@
 # openai_client_wrapper.py — Sentinel unified OpenAI client
 import os, logging
 from openai import OpenAI
+from llm_rate_limiter import rate_limited
 
 logger = logging.getLogger("openai_client_wrapper")
 
@@ -10,6 +11,7 @@ DEFAULT_TEMP = float(os.getenv("OPENAI_TEMPERATURE", "0.4"))
 
 client = OpenAI(api_key=OPENAI_API_KEY, timeout=60.0) if OPENAI_API_KEY else None
 
+@rate_limited("openai")
 def openai_chat(messages, temperature=DEFAULT_TEMP, model=DEFAULT_MODEL, timeout=20):
     """
     OpenAI chat completion with timeout support.

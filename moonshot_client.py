@@ -8,6 +8,7 @@ import json
 import logging
 import httpx
 from typing import List, Dict, Any, Optional
+from llm_rate_limiter import rate_limited
 
 # Load environment variables
 try:
@@ -23,6 +24,7 @@ MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY")
 MOONSHOT_MODEL = os.getenv("MOONSHOT_MODEL", "moonshot-v1-128k")  # Default to 128k context model
 MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 
+@rate_limited("moonshot")
 def moonshot_chat(messages: List[Dict[str, str]], temperature: float = 0.4, max_tokens: int = 1000, timeout: float = 20.0) -> Optional[str]:
     """
     Call Kimi Moonshot API for chat completions.

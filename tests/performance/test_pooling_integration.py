@@ -5,7 +5,7 @@ Integration test to verify connection pooling works with actual database operati
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 def test_integration():
     """Test connection pooling with database operations."""

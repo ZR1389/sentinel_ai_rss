@@ -10,10 +10,8 @@ from dataclasses import dataclass
 from config import CONFIG
 from metrics import METRICS
 
-# Import circuit breaker
-from moonshot_circuit_breaker import get_moonshot_circuit_breaker, CircuitBreakerOpenError
-
-MOONSHOT_CB = get_moonshot_circuit_breaker()
+# Import circuit breaker and rate limiting
+from llm_rate_limiter import get_all_circuit_breaker_stats, moonshot_circuit
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +225,7 @@ class LocationExtractor:
         METRICS.increment("location_batches_sent", len(batch))
         
         try:
-            results = await MOONSHOT_CB.call(self._call_moonshot, batch)
+            results = await moonshot_circuit.call(self._call_moonshot, batch)
             await self._apply_batch_results(batch, results)
         except Exception as e:
             logger.error(f"Batch flush failed: {e}", exc_info=True)
@@ -253,11 +251,11 @@ class LocationExtractor:
             )
         
         try:
-            response = await MOONSHOT_CB.call(_moonshot_call)
+            response = await moonshot_circuit.call(_moonshot_call)
             return self._parse_response(response, batch)
-        except CircuitBreakerOpenError as e:
+        except Exception as e:
             logger.error(f"[LocationExtractor] Moonshot circuit breaker open: {e}")
-            METRICS.increment("moonshot_circuit_breaker_open")
+            METRICS.increment("moonshot_llm_circuit_breaker_open")
             raise
     
     async def _apply_batch_results(

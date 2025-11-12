@@ -1,11 +1,13 @@
 # deepseek_client.py — DeepSeek API wrapper
 import os, requests, logging
+from llm_rate_limiter import rate_limited
 
 logger = logging.getLogger("deepseek_client")
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
+@rate_limited("deepseek")
 def deepseek_chat(messages, temperature=0.4, model="deepseek-chat", timeout=15):
     """
     Minimal DeepSeek chat interface.

@@ -4,6 +4,7 @@ import logging
 from contextlib import contextmanager
 from xai_sdk import Client
 from xai_sdk.chat import user, system
+from llm_rate_limiter import rate_limited
 
 logger = logging.getLogger("xai_client")
 
@@ -26,6 +27,7 @@ def _timeout(seconds: int):
     finally:
         signal.alarm(0)  # Cancel the alarm
 
+@rate_limited("xai")
 def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, timeout=15):
     """
     Grok chat completion with **enforced** timeout support.
