@@ -57,12 +57,17 @@ def _coerce_numeric(value, default, min_val=None, max_val=None):
 
 ## Testing
 
-Comprehensive test suite created (`test_db_numeric_coercion.py`) validates:
+Comprehensive test suite created (`tests/integration/test_db_numeric_coercion.py`) validates:
 - ✅ Basic function behavior with edge cases
 - ✅ String-to-numeric conversion
 - ✅ Bounds checking and clamping
 - ✅ NaN and invalid value handling
 - ✅ Realistic alert data scenarios
+
+Additional integration testing (`tests/integration/test_complete_numeric_protection.py`) verifies:
+- ✅ End-to-end numeric type safety chain
+- ✅ Database migration compatibility
+- ✅ Score type safety module integration
 
 ## Benefits
 
@@ -109,7 +114,8 @@ save_alerts_to_db([alert_data])  # Success: score=0, confidence=1.0, latitude=90
 
 ## Files Modified
 - `/db_utils.py`: Core implementation
-- `/test_db_numeric_coercion.py`: Comprehensive validation
+- `/tests/integration/test_db_numeric_coercion.py`: Comprehensive validation
+- `/tests/integration/test_complete_numeric_protection.py`: End-to-end integration testing
 
 ## Integration
 - ✅ Compatible with existing database schema

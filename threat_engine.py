@@ -11,6 +11,8 @@ import json
 import re
 import hashlib
 import threading
+import fcntl
+import tempfile
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
@@ -294,6 +296,38 @@ def json_default(obj):
         except Exception:
             return str(obj)
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+def _atomic_write_json(path, data):
+    """
+    Atomic JSON write using temporary file + rename to prevent race conditions.
+    
+    This prevents concurrent threads from corrupting JSON cache files by:
+    1. Writing to a temporary file in the same directory
+    2. Using atomic rename operation (POSIX guarantees atomicity)
+    3. Cleaning up temp file on failure
+    
+    Args:
+        path: Target file path for JSON data
+        data: Data to serialize to JSON
+    """
+    dir_path = os.path.dirname(path)
+    os.makedirs(dir_path, exist_ok=True)
+    
+    # Create temp file in same directory to ensure same filesystem
+    fd, tmp_path = tempfile.mkstemp(suffix='.tmp', dir=dir_path)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=json_default)
+        
+        # Atomic rename (POSIX guarantees atomicity)
+        os.replace(tmp_path, path)
+    except Exception:
+        # Clean up temp file on any failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass  # Temp file may already be cleaned up
+        raise
 
 load_dotenv()
 
@@ -957,8 +991,7 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
         seen.add(h)
 
     # Persist cache
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(unique_alerts, f, indent=2, ensure_ascii=False, default=json_default)
+    _atomic_write_json(cache_path, unique_alerts)
 
     # Persist failures (backup)
     if failed_alerts:
@@ -981,8 +1014,7 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
                     alert["longitude"] = alert.get("longitude")
                     old_failed.append(alert)
                     failed_hashes.add(h)
-            with open(failed_cache_path, "w", encoding="utf-8") as f:
-                json.dump(old_failed, f, indent=2, ensure_ascii=False, default=json_default)
+            _atomic_write_json(failed_cache_path, old_failed)
         except Exception as e:
             logger.error(f"[Failed alert backup error] {e}")
 

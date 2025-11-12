@@ -4,8 +4,22 @@
 from __future__ import annotations
 import re
 import math
+import os
+import hashlib
+import threading
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Sequence
+
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 try:
     from unidecode import unidecode
@@ -529,3 +543,164 @@ def decide_with_default_keywords(text: str, title: str = "") -> MatchResult:
       res = decide_with_default_keywords(body, title)
     """
     return DEFAULT_MATCHER.decide(text, title)
+
+
+# ---------------------- Embedding Quota Manager ----------------------
+
+@dataclass
+class QuotaMetrics:
+    """Track daily embedding usage metrics."""
+    daily_tokens: int = 0
+    daily_requests: int = 0
+    last_reset: Optional[datetime] = None
+
+
+class EmbeddingManager:
+    """
+    Manages OpenAI embedding quota and provides fallback mechanisms.
+    
+    Features:
+    - Daily token/request limits with automatic reset
+    - Thread-safe quota tracking
+    - Fallback to deterministic hash when quota exceeded
+    - Configurable limits via environment variables
+    """
+    
+    def __init__(self):
+        # Initialize tokenizer if available
+        if tiktoken:
+            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        else:
+            self.tokenizer = None
+            
+        self.quota = QuotaMetrics()
+        self.daily_limit = int(os.getenv("EMBEDDING_QUOTA_DAILY", "10000"))
+        self.request_limit = int(os.getenv("EMBEDDING_REQUESTS_DAILY", "5000"))
+        self.lock = threading.Lock()
+        
+    def _check_quota(self, text: str) -> bool:
+        """Check if we have quota for this request."""
+        with self.lock:
+            now = datetime.utcnow()
+            
+            # Reset daily counter if needed (check if it's a new day)
+            if (self.quota.last_reset is None or 
+                (now - self.quota.last_reset).days >= 1):
+                self.quota.daily_tokens = 0
+                self.quota.daily_requests = 0
+                self.quota.last_reset = now
+                
+            # Calculate tokens for this request
+            if self.tokenizer:
+                tokens = len(self.tokenizer.encode(text))
+            else:
+                # Rough estimation: ~4 chars per token
+                tokens = len(text) // 4
+                
+            # Check token limit
+            if self.quota.daily_tokens + tokens > self.daily_limit:
+                import logging
+                logger = logging.getLogger("risk_shared.embedding")
+                logger.warning(
+                    f"Embedding quota exceeded: {self.quota.daily_tokens + tokens}/{self.daily_limit} tokens"
+                )
+                return False
+                
+            # Check request limit
+            if self.quota.daily_requests >= self.request_limit:
+                import logging
+                logger = logging.getLogger("risk_shared.embedding")
+                logger.warning(
+                    f"Embedding request limit exceeded: {self.quota.daily_requests}/{self.request_limit} requests"
+                )
+                return False
+                
+            # Update quota
+            self.quota.daily_tokens += tokens
+            self.quota.daily_requests += 1
+            return True
+    
+    def get_embedding_safe(self, text: str, client) -> List[float]:
+        """
+        Get embedding with quota and fallback protection.
+        
+        Args:
+            text: Text to embed
+            client: OpenAI client instance
+            
+        Returns:
+            List of embedding floats (either from API or fallback)
+        """
+        if not text:
+            return self._fallback_hash(text)
+            
+        # Check if we have sufficient quota
+        if not self._check_quota(text):
+            return self._fallback_hash(text)
+            
+        try:
+            # Attempt API call with timeout
+            resp = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text[:8192],  # Truncate to model limit
+                timeout=10.0
+            )
+            return resp.data[0].embedding
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger("risk_shared.embedding")
+            logger.error(f"Embedding API error: {e}, using fallback")
+            return self._fallback_hash(text)
+    
+    def _fallback_hash(self, text: str) -> List[float]:
+        """
+        Generate deterministic hash-based embedding fallback.
+        
+        Creates a 10-dimensional vector from SHA-1 hash segments.
+        Provides consistent results for the same input text.
+        """
+        if not text:
+            # Return zero vector for empty text
+            return [0.0] * 10
+            
+        # Generate SHA-1 hash
+        h = hashlib.sha1(text.encode("utf-8")).hexdigest()
+        
+        # Convert hex segments to normalized floats
+        # Take 4-char hex segments, convert to int, normalize to [0,1]
+        return [int(h[i:i+4], 16) % 997 / 997.0 for i in range(0, 40, 4)]
+    
+    def get_quota_status(self) -> Dict[str, int]:
+        """Get current quota usage statistics."""
+        with self.lock:
+            return {
+                "daily_tokens": self.quota.daily_tokens,
+                "daily_requests": self.quota.daily_requests,
+                "token_limit": self.daily_limit,
+                "request_limit": self.request_limit,
+                "tokens_remaining": max(0, self.daily_limit - self.quota.daily_tokens),
+                "requests_remaining": max(0, self.request_limit - self.quota.daily_requests),
+            }
+
+
+# Global embedding manager instance
+embedding_manager = EmbeddingManager()
+
+
+def get_embedding(text: str, client=None) -> List[float]:
+    """
+    Get text embedding with quota management and fallback.
+    
+    Args:
+        text: Text to embed
+        client: OpenAI client instance (optional)
+        
+    Returns:
+        List of embedding floats
+    """
+    if client and OpenAI:
+        return embedding_manager.get_embedding_safe(text, client)
+    else:
+        # No client available, use deterministic fallback
+        return embedding_manager._fallback_hash(text)
