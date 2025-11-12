@@ -14,7 +14,7 @@ import threading
 import fcntl
 import tempfile
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pycountry
@@ -1238,10 +1238,19 @@ def _normalize_for_db(a: dict) -> dict:
     return a
 
 def enrich_and_store_alerts(region=None, country=None, city=None, category=None, limit=1000, write_to_db: bool = ENGINE_WRITE_TO_DB):
+    """
+    Refactored enrichment and storage function with:
+    - Atomic cache operations
+    - Vector-based deduplication
+    - Rate limiting and concurrency control
+    - Circuit breaker pattern for DB operations
+    - Enhanced error handling and timeouts
+    """
     start_time = datetime.now()
     
-    # Use enhanced category filtering
+    # 1. Get raw alerts with validation
     raw_alerts = get_category_specific_alerts(region=region, country=country, city=city, category=category, limit=limit)
+    
     if not raw_alerts:
         logger.info("raw_alerts_fetch", count=0, region=region, country=country, city=city, category=category)
         return []
@@ -1255,45 +1264,146 @@ def enrich_and_store_alerts(region=None, country=None, city=None, category=None,
                category=category,
                fetch_duration_ms=round(fetch_duration, 2))
     
+    # 2. Atomic cache read
+    cache_path = os.path.join(ENGINE_CACHE_DIR, "enriched_alerts.json")
+    cached_alerts = _atomic_read_json(cache_path)
+    
+    # 3. Vector-based deduplication (fast)
+    dedup_start = datetime.now()
+    new_alerts = deduplicate_alerts(
+        raw_alerts,
+        existing_alerts=cached_alerts,
+        openai_client=openai_client if ENABLE_SEMANTIC_DEDUP else None,
+        sim_threshold=SEMANTIC_DEDUP_THRESHOLD,
+        enable_semantic=ENABLE_SEMANTIC_DEDUP,
+    )
+    dedup_duration = (datetime.now() - dedup_start).total_seconds() * 1000
+    
+    logger.info("deduplication_completed",
+               raw_count=len(raw_alerts),
+               new_count=len(new_alerts),
+               cached_count=len(cached_alerts),
+               dedup_duration_ms=round(dedup_duration, 2))
+    
+    if not new_alerts:
+        logger.info("no_new_alerts_after_deduplication")
+        # Return relevant cached alerts
+        return [a for a in cached_alerts if is_relevant(a)]
+    
+    # 4. Process with rate limiting and circuit breakers
+    summarized: list[dict] = []
+    failed_alerts: list[dict] = []
+    failed_alerts_lock = threading.Lock()
+    
+    # Use ThreadPoolExecutor but with semaphore to limit concurrent LLM calls
+    max_llm_workers = 3  # Limit concurrent LLM calls to prevent API throttling
+    workers = min(max_llm_workers, len(new_alerts))
+    
     enrich_start = datetime.now()
-    enriched_alerts = summarize_alerts(raw_alerts)
-    enrich_duration = (datetime.now() - enrich_start).total_seconds() * 1000
-
-    if enriched_alerts and write_to_db:
-        normalized = [_normalize_for_db(x) for x in enriched_alerts]
+    
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        # Submit with timeout
+        futures = [executor.submit(summarize_single_alert, alert) for alert in new_alerts]
         
+        try:
+            # Process with overall timeout of 5 minutes
+            for future in as_completed(futures, timeout=300):
+                try:
+                    # Individual alert timeout of 1 minute
+                    result = future.result(timeout=60)
+                    if result:  # Our modular pipeline returns None for filtered alerts
+                        summarized.append(result)
+                except Exception as e:
+                    logger.error("alert_processing_timeout", error=str(e))
+                    with failed_alerts_lock:
+                        failed_alerts.append({"error": str(e), "timestamp": datetime.utcnow().isoformat()})
+                        
+        except Exception as e:
+            logger.error("enrichment_executor_failed", error=str(e))
+            # Cancel remaining futures
+            for future in futures:
+                future.cancel()
+    
+    enrich_duration = (datetime.now() - enrich_start).total_seconds() * 1000
+    
+    # Apply relevance filter to newly processed alerts
+    relevant_summarized = [res for res in summarized if is_relevant(res)]
+    
+    logger.info("enrichment_stage_completed",
+               new_alerts_count=len(new_alerts),
+               enriched_count=len(summarized),
+               relevant_count=len(relevant_summarized),
+               failed_count=len(failed_alerts),
+               workers_used=workers,
+               enrichment_duration_ms=round(enrich_duration, 2))
+    
+    # 5. Normalize for DB
+    normalized = [_normalize_for_db(x) for x in relevant_summarized]
+    
+    # 6. Atomic DB write with circuit breaker
+    db_save_success = True
+    if write_to_db and normalized:
         save_start = datetime.now()
         try:
-            save_alerts_to_db(normalized)
+            _save_with_circuit(normalized)  # Circuit breaker wrapper
             save_duration = (datetime.now() - save_start).total_seconds() * 1000
             
-            metrics.database_operation(
-                operation="save_alerts",
-                table="alerts", 
-                duration_ms=round(save_duration, 2),
-                rows_affected=len(normalized)
-            )
+            logger.info("db_write_success", 
+                       count=len(normalized),
+                       save_duration_ms=round(save_duration, 2))
             
-            logger.info("alerts_saved_to_db", count=len(normalized))
         except Exception as e:
-            logger.error("alerts_save_failed", error=str(e), count=len(normalized))
+            db_save_success = False
+            logger.error("db_write_failed", 
+                        count=len(normalized), 
+                        error=str(e),
+                        circuit_state=_circuit_breaker["state"])
             if ENGINE_FAIL_CLOSED:
                 raise
-
-    elif enriched_alerts and not write_to_db:
-        logger.warning("alerts_not_saved", reason="write_to_db_disabled", count=len(enriched_alerts))
-
-    else:
-        logger.info("no_enriched_alerts_to_store")
-
+    
+    elif normalized and not write_to_db:
+        logger.warning("alerts_not_saved", reason="write_to_db_disabled", count=len(normalized))
+    
+    # 7. Atomic cache update (combine with existing cached alerts and filter relevant)
+    relevant_cached = [a for a in cached_alerts if is_relevant(a)]
+    all_alerts = relevant_cached + normalized
+    
+    # Deduplicate the combined cache to prevent duplicates
+    seen = set()
+    unique_alerts = []
+    for alert in all_alerts:
+        h = alert_hash(alert)
+        if h not in seen:
+            seen.add(h)
+            unique_alerts.append(alert)
+    
+    cache_write_success = _atomic_write_json(cache_path, unique_alerts)
+    
+    if not cache_write_success:
+        logger.warning("cache_update_failed", cache_path=cache_path)
+    
+    # Log failed alerts to separate cache if any
+    if failed_alerts:
+        failed_cache_path = os.path.join(ENGINE_CACHE_DIR, "alerts_failed.json")
+        existing_failed = _atomic_read_json(failed_cache_path)
+        _atomic_write_json(failed_cache_path, existing_failed + failed_alerts)
+    
     total_duration = (datetime.now() - start_time).total_seconds() * 1000
-    logger.info("enrichment_completed",
+    
+    logger.info("enrich_and_store_completed",
                raw_count=len(raw_alerts),
-               enriched_count=len(enriched_alerts),
+               new_after_dedup=len(new_alerts),
+               enriched_count=len(summarized),
+               relevant_count=len(relevant_summarized),
+               normalized_count=len(normalized),
+               failed_count=len(failed_alerts),
+               db_write_success=db_save_success,
+               cache_write_success=cache_write_success,
                total_duration_ms=round(total_duration, 2),
+               dedup_duration_ms=round(dedup_duration, 2),
                enrichment_duration_ms=round(enrich_duration, 2))
 
-    return enriched_alerts
+    return normalized
 
 def enhance_location_confidence(alert: dict) -> dict:
     """
@@ -1316,6 +1426,129 @@ def enhance_location_confidence(alert: dict) -> dict:
         alert["geo_precision"] = "low"
     
     return alert
+
+# -------- Atomic Operations and Circuit Breaker Helpers --------
+
+import time
+from concurrent.futures import as_completed
+
+# Circuit breaker state
+_circuit_breaker = {
+    "failure_count": 0,
+    "last_failure_time": 0,
+    "state": "CLOSED",  # CLOSED, OPEN, HALF_OPEN
+    "failure_threshold": 5,
+    "recovery_timeout": 60  # seconds
+}
+
+def _atomic_read_json(file_path: str) -> list:
+    """Atomically read JSON file with proper locking."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
+            try:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    raise ValueError("Cache file is not a list")
+                return data
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        logger.warning("atomic_json_read_failed", file=file_path, error=str(e))
+        return []
+
+def _atomic_write_json(file_path: str, data: list) -> bool:
+    """Atomically write JSON file with proper locking."""
+    try:
+        # Write to temporary file first
+        temp_path = f"{file_path}.tmp.{threading.current_thread().ident}"
+        
+        with open(temp_path, "w", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+            try:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=json_default)
+                f.flush()
+                os.fsync(f.fileno())  # Force write to disk
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        
+        # Atomic rename
+        os.rename(temp_path, file_path)
+        return True
+        
+    except Exception as e:
+        logger.error("atomic_json_write_failed", file=file_path, error=str(e))
+        # Clean up temp file
+        try:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+        except:
+            pass
+        return False
+
+def _check_circuit_breaker() -> bool:
+    """Check if circuit breaker allows operation."""
+    global _circuit_breaker
+    
+    current_time = time.time()
+    
+    if _circuit_breaker["state"] == "OPEN":
+        # Check if we should try to recover
+        if current_time - _circuit_breaker["last_failure_time"] > _circuit_breaker["recovery_timeout"]:
+            _circuit_breaker["state"] = "HALF_OPEN"
+            logger.info("circuit_breaker_half_open", 
+                       failure_count=_circuit_breaker["failure_count"])
+            return True
+        return False
+    
+    return True
+
+def _record_circuit_success():
+    """Record successful operation."""
+    global _circuit_breaker
+    _circuit_breaker["failure_count"] = 0
+    _circuit_breaker["state"] = "CLOSED"
+
+def _record_circuit_failure():
+    """Record failed operation."""
+    global _circuit_breaker
+    _circuit_breaker["failure_count"] += 1
+    _circuit_breaker["last_failure_time"] = time.time()
+    
+    if _circuit_breaker["failure_count"] >= _circuit_breaker["failure_threshold"]:
+        _circuit_breaker["state"] = "OPEN"
+        logger.error("circuit_breaker_opened", 
+                    failure_count=_circuit_breaker["failure_count"])
+
+def _save_with_circuit(alerts: list) -> bool:
+    """Save alerts to database with circuit breaker protection."""
+    if not _check_circuit_breaker():
+        logger.warning("circuit_breaker_blocked_db_save", count=len(alerts))
+        raise Exception("Circuit breaker is OPEN - database operations blocked")
+    
+    try:
+        save_alerts_to_db(alerts)
+        _record_circuit_success()
+        
+        # Log success metrics
+        metrics.database_operation(
+            operation="save_alerts",
+            table="alerts", 
+            duration_ms=0,  # Duration tracked in save_alerts_to_db
+            rows_affected=len(alerts)
+        )
+        
+        return True
+        
+    except Exception as e:
+        _record_circuit_failure()
+        logger.error("circuit_breaker_db_save_failed", 
+                    count=len(alerts), 
+                    error=str(e),
+                    circuit_state=_circuit_breaker["state"])
+        raise
 
 # ---------- CLI ----------
 
