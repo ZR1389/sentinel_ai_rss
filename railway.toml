@@ -6,7 +6,7 @@ healthcheck_path = "/health"
 
 # Build Configuration  
 [build]
-  builder = "python"
+  builder = "dockerfile"
   
 [deploy]
   healthcheck_path = "/health"
