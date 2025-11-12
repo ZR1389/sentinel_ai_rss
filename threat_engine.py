@@ -26,6 +26,9 @@ from logging_config import get_logger, get_metrics_logger
 logger = get_logger("threat_engine")
 metrics = get_metrics_logger("threat_engine")
 
+# Input validation
+from validation import validate_alert, validate_alert_batch, validate_enrichment_data
+
 # -------- Optional LLM clients / prompts (do not fail engine if absent) --------
 try:
     from openai import OpenAI
@@ -792,6 +795,14 @@ def _compute_future_risk_prob(historical_incidents: list[dict]) -> float:
         return 0.0
 
 def summarize_single_alert(alert: dict) -> dict:
+    # Validate input alert structure
+    is_valid, error = validate_alert(alert)
+    if not is_valid:
+        logger.error("single_alert_validation_failed", 
+                    alert_uuid=alert.get("uuid", "no-uuid"),
+                    error=error)
+        raise ValueError(f"Alert validation failed: {error}")
+    
     title = alert.get("title", "") or ""
     summary = alert.get("summary", "") or ""
     full_text = f"{title}\n{summary}".strip()
@@ -982,6 +993,25 @@ def summarize_single_alert(alert: dict) -> dict:
     return alert
 
 def summarize_alerts(alerts: list[dict]) -> list[dict]:
+    start_time = datetime.now()
+    
+    # Validate input alerts first
+    valid_alerts, validation_errors = validate_alert_batch(alerts)
+    
+    if validation_errors:
+        logger.warning("alert_validation_issues", 
+                      total_alerts=len(alerts),
+                      valid_alerts=len(valid_alerts),
+                      validation_errors=len(validation_errors))
+        for error in validation_errors[:5]:  # Log first 5 errors
+            logger.error("alert_validation_failed", error=error)
+    
+    if not valid_alerts:
+        logger.warning("no_valid_alerts_to_process", 
+                      total_input=len(alerts),
+                      validation_errors=len(validation_errors))
+        return []
+    
     os.makedirs(ENGINE_CACHE_DIR, exist_ok=True)
     cache_path = os.path.join(ENGINE_CACHE_DIR, "enriched_alerts.json")
     failed_cache_path = os.path.join(ENGINE_CACHE_DIR, "alerts_failed.json")
@@ -999,7 +1029,7 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
         cached_alerts = []
 
     new_alerts = deduplicate_alerts(
-        alerts,
+        valid_alerts,
         existing_alerts=cached_alerts,
         openai_client=openai_client if ENABLE_SEMANTIC_DEDUP else None,
         sim_threshold=SEMANTIC_DEDUP_THRESHOLD,
@@ -1015,10 +1045,41 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
     failed_alerts_lock = threading.Lock()
 
     def process(alert):
+        # Additional validation before processing (defensive)
+        is_valid, error = validate_alert(alert)
+        if not is_valid:
+            logger.error("invalid_alert_skipped", 
+                        alert_uuid=alert.get("uuid", "no-uuid"), 
+                        error=error)
+            return None
+        
         try:
-            return summarize_single_alert(alert)
+            start_time = datetime.now()
+            result = summarize_single_alert(alert)
+            
+            if result:
+                # Validate enriched result before returning
+                is_valid_enriched, enriched_error = validate_enrichment_data(result)
+                if not is_valid_enriched:
+                    logger.error("enriched_alert_validation_failed",
+                                alert_uuid=result.get("uuid", "no-uuid"),
+                                error=enriched_error)
+                    return None
+                
+                duration = (datetime.now() - start_time).total_seconds() * 1000
+                metrics.alert_enriched(
+                    alert_uuid=result.get("uuid"),
+                    confidence=result.get("confidence", 0.0),
+                    duration_ms=round(duration, 2),
+                    location_confidence=result.get("location_confidence")
+                )
+            
+            return result
+            
         except Exception as e:
-            logger.error(f"[ThreatEngine] Failed to enrich alert: {e}")
+            logger.error("enrichment_failed", 
+                        alert_uuid=alert.get("uuid", "no-uuid"),
+                        error=str(e))
             with failed_alerts_lock:
                 failed_alerts.append(alert)
             return None

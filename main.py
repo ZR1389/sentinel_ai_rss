@@ -53,6 +53,9 @@ setup_logging("sentinel-api")
 logger = get_logger("sentinel.main")
 metrics = get_metrics_logger("sentinel.main")
 
+# Input validation
+from validation import validate_alert_batch, validate_enrichment_data
+
 # ---------- CORS (more restrictive default) ----------
 # Default: production frontends only — override with comma-separated env var if needed
 ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "https://zikarisk.com,https://app.zikarisk.com")
@@ -321,7 +324,7 @@ else:
 
 # Default rates (override with env)
 CHAT_RATE = os.getenv("CHAT_RATE", "10 per minute;200 per day")
-SEARCH_RATE = os.getenv("SEARCH_RATE", "30 per minute;500 per hour")
+SEARCH_RATE = os.getenv("SEARCH_RATE", "20 per minute;500 per hour")
 BATCH_ENRICH_RATE = os.getenv("BATCH_ENRICH_RATE", "5 per minute;100 per hour")
 CHAT_QUERY_MAX_CHARS = int(os.getenv("CHAT_QUERY_MAX_CHARS", "5000"))
 
