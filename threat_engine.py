@@ -361,6 +361,9 @@ SEMANTIC_DEDUP_THRESHOLD = float(os.getenv("SEMANTIC_DEDUP_THRESHOLD", "0.9"))
 TEMPERATURE = float(os.getenv("THREAT_ENGINE_TEMPERATURE", "0.4"))
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")  # hint for your xai client; not enforced here
 
+# Configuration for enrichment pipeline
+USE_MODULAR_ENRICHMENT = os.getenv("USE_MODULAR_ENRICHMENT", "true").lower() == "true"
+
 if RAILWAY_ENV:
     logger.info("environment_check", railway_env=RAILWAY_ENV)
 else:
@@ -384,6 +387,15 @@ if not OPENAI_API_KEY:
     logger.info("OPENAI_API_KEY not set — LLM features will be limited.")
 if openai_client is None and ENABLE_SEMANTIC_DEDUP:
     logger.info("OpenAI client unavailable — semantic dedup will use fallback hashing only.")
+
+# New modular enrichment system
+try:
+    from enrichment_stages import get_enrichment_pipeline, enrich_single_alert as modular_enrich_alert
+    MODULAR_ENRICHMENT_AVAILABLE = True
+except ImportError as e:
+    logger.warning("modular_enrichment_unavailable", error=str(e))
+    MODULAR_ENRICHMENT_AVAILABLE = False
+    modular_enrich_alert = None
 
 # ---------- Static Data ----------
 CATEGORIES = [
@@ -795,6 +807,43 @@ def _compute_future_risk_prob(historical_incidents: list[dict]) -> float:
         return 0.0
 
 def summarize_single_alert(alert: dict) -> dict:
+    """Alert enrichment function with modular pipeline support.
+    
+    This function uses the new modular enrichment pipeline when available,
+    with fallback to legacy behavior for backward compatibility.
+    """
+    # Use modular enrichment if available and enabled
+    if USE_MODULAR_ENRICHMENT and MODULAR_ENRICHMENT_AVAILABLE and modular_enrich_alert:
+        try:
+            logger.debug("using_modular_enrichment_pipeline", 
+                        alert_uuid=alert.get("uuid", "no-uuid"))
+            
+            result = modular_enrich_alert(alert)
+            
+            if result is None:
+                # Check if this was a validation error vs. content filtering
+                from validation import validate_alert
+                is_valid, error = validate_alert(alert)
+                if not is_valid:
+                    raise ValueError(f"Alert validation failed: {error}")
+                
+                # Otherwise it was content filtering, return None
+                logger.info("alert_filtered_by_modular_pipeline", 
+                           alert_uuid=alert.get("uuid", "no-uuid"))
+                return None
+            
+            return result
+            
+        except Exception as e:
+            logger.error("modular_enrichment_failed_fallback_to_legacy", 
+                        alert_uuid=alert.get("uuid", "no-uuid"),
+                        error=str(e))
+            # Fall through to legacy enrichment
+    
+    # Legacy enrichment logic (maintained for backward compatibility)
+    logger.debug("using_legacy_enrichment", 
+                alert_uuid=alert.get("uuid", "no-uuid"))
+    
     # Validate input alert structure
     is_valid, error = validate_alert(alert)
     if not is_valid:
