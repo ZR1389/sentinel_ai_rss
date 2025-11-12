@@ -226,268 +226,2112 @@
     "zimbabwe": "Zimbabwe"
   },
   "cities": {
-    "kabul": {"lat": 34.5553, "lon": 69.2075, "country": "afghanistan", "region": "south_asia"},
-    "tirana": {"lat": 41.3275, "lon": 19.8189, "country": "albania", "region": "southeastern_europe"},
-    "algiers": {"lat": 36.7538, "lon": 3.0588, "country": "algeria", "region": "north_africa"},
-    "luanda": {"lat": -8.8368, "lon": 13.2343, "country": "angola", "region": "southern_africa"},
-    "buenos aires": {"lat": -34.6118, "lon": -58.3960, "country": "argentina", "region": "south_america"},
-    "yerevan": {"lat": 40.1792, "lon": 44.4991, "country": "armenia", "region": "western_asia"},
-    "sydney": {"lat": -33.8688, "lon": 151.2093, "country": "australia", "region": "oceania"},
-    "melbourne": {"lat": -37.8136, "lon": 144.9631, "country": "australia", "region": "oceania"},
-    "brisbane": {"lat": -27.4705, "lon": 153.0260, "country": "australia", "region": "oceania"},
-    "perth": {"lat": -31.9505, "lon": 115.8605, "country": "australia", "region": "oceania"},
-    "adelaide": {"lat": -34.9285, "lon": 138.6007, "country": "australia", "region": "oceania"},
-    "canberra": {"lat": -35.2809, "lon": 149.1300, "country": "australia", "region": "oceania"},
-    "vienna": {"lat": 48.2082, "lon": 16.3738, "country": "austria", "region": "central_europe"},
-    "wien": {"lat": 48.2082, "lon": 16.3738, "country": "austria", "region": "central_europe"},
-    "baku": {"lat": 40.4093, "lon": 49.8671, "country": "azerbaijan", "region": "western_asia"},
-    "manama": {"lat": 26.2285, "lon": 50.5860, "country": "bahrain", "region": "western_asia"},
-    "dhaka": {"lat": 23.8103, "lon": 90.4125, "country": "bangladesh", "region": "south_asia"},
-    "minsk": {"lat": 53.9045, "lon": 27.5615, "country": "belarus", "region": "eastern_europe"},
-    "brussels": {"lat": 50.8503, "lon": 4.3517, "country": "belgium", "region": "western_europe"},
-    "bruxelles": {"lat": 50.8503, "lon": 4.3517, "country": "belgium", "region": "western_europe"},
-    "sarajevo": {"lat": 43.8486, "lon": 18.3564, "country": "bosnia and herzegovina", "region": "southeastern_europe"},
-    "brasilia": {"lat": -15.8267, "lon": -47.9218, "country": "brazil", "region": "south_america"},
-    "rio de janeiro": {"lat": -22.9068, "lon": -43.1729, "country": "brazil", "region": "south_america"},
-    "sao paulo": {"lat": -23.5558, "lon": -46.6396, "country": "brazil", "region": "south_america"},
-    "são paulo": {"lat": -23.5558, "lon": -46.6396, "country": "brazil", "region": "south_america"},
-    "sofia": {"lat": 42.6977, "lon": 23.3219, "country": "bulgaria", "region": "southeastern_europe"},
-    "plovdiv": {"lat": 42.1354, "lon": 24.7453, "country": "bulgaria", "region": "southeastern_europe"},
-    "phnom penh": {"lat": 11.5449, "lon": 104.8922, "country": "cambodia", "region": "southeast_asia"},
-    "ottawa": {"lat": 45.4215, "lon": -75.6972, "country": "canada", "region": "north_america"},
-    "toronto": {"lat": 43.6532, "lon": -79.3832, "country": "canada", "region": "north_america"},
-    "montreal": {"lat": 45.5017, "lon": -73.5673, "country": "canada", "region": "north_america"},
-    "vancouver": {"lat": 49.2827, "lon": -123.1207, "country": "canada", "region": "north_america"},
-    "calgary": {"lat": 51.0447, "lon": -114.0719, "country": "canada", "region": "north_america"},
-    "edmonton": {"lat": 53.5461, "lon": -113.4938, "country": "canada", "region": "north_america"},
-    "quebec": {"lat": 46.8139, "lon": -71.2080, "country": "canada", "region": "north_america"},
-    "quebec city": {"lat": 46.8139, "lon": -71.2080, "country": "canada", "region": "north_america"},
-    "winnipeg": {"lat": 49.8951, "lon": -97.1384, "country": "canada", "region": "north_america"},
-    "halifax": {"lat": 44.6488, "lon": -63.5752, "country": "canada", "region": "north_america"},
-    "santiago": {"lat": -33.4489, "lon": -70.6693, "country": "chile", "region": "south_america"},
-    "beijing": {"lat": 39.9042, "lon": 116.4074, "country": "china", "region": "east_asia"},
-    "shanghai": {"lat": 31.2304, "lon": 121.4737, "country": "china", "region": "east_asia"},
-    "hong kong": {"lat": 22.3193, "lon": 114.1694, "country": "china", "region": "east_asia"},
-    "guangzhou": {"lat": 23.1291, "lon": 113.2644, "country": "china", "region": "east_asia"},
-    "shenzhen": {"lat": 22.5431, "lon": 114.0579, "country": "china", "region": "east_asia"},
-    "bogota": {"lat": 4.7110, "lon": -74.0721, "country": "colombia", "region": "south_america"},
-    "bogotá": {"lat": 4.7110, "lon": -74.0721, "country": "colombia", "region": "south_america"},
-    "medellin": {"lat": 6.2476, "lon": -75.5658, "country": "colombia", "region": "south_america"},
-    "cali": {"lat": 3.4516, "lon": -76.5320, "country": "colombia", "region": "south_america"},
-    "san jose": {"lat": 9.9281, "lon": -84.0907, "country": "costa rica", "region": "central_america"},
-    "zagreb": {"lat": 45.8150, "lon": 15.9819, "country": "croatia", "region": "southeastern_europe"},
-    "havana": {"lat": 23.1136, "lon": -82.3666, "country": "cuba", "region": "caribbean"},
-    "nicosia": {"lat": 35.1856, "lon": 33.3823, "country": "cyprus", "region": "western_asia"},
-    "prague": {"lat": 50.0755, "lon": 14.4378, "country": "czech republic", "region": "central_europe"},
-    "praha": {"lat": 50.0755, "lon": 14.4378, "country": "czech republic", "region": "central_europe"},
-    "copenhagen": {"lat": 55.6761, "lon": 12.5683, "country": "denmark", "region": "northern_europe"},
-    "københavn": {"lat": 55.6761, "lon": 12.5683, "country": "denmark", "region": "northern_europe"},
-    "quito": {"lat": -0.1807, "lon": -78.4678, "country": "ecuador", "region": "south_america"},
-    "cairo": {"lat": 30.0444, "lon": 31.2357, "country": "egypt", "region": "north_africa"},
-    "tallinn": {"lat": 59.4370, "lon": 24.7536, "country": "estonia", "region": "northern_europe"},
-    "addis ababa": {"lat": 9.1450, "lon": 40.4897, "country": "ethiopia", "region": "east_africa"},
-    "helsinki": {"lat": 60.1699, "lon": 24.9384, "country": "finland", "region": "northern_europe"},
-    "paris": {"lat": 48.8566, "lon": 2.3522, "country": "france", "region": "western_europe"},
-    "marseille": {"lat": 43.2965, "lon": 5.3698, "country": "france", "region": "western_europe"},
-    "lyon": {"lat": 45.7640, "lon": 4.8357, "country": "france", "region": "western_europe"},
-    "toulouse": {"lat": 43.6047, "lon": 1.4442, "country": "france", "region": "western_europe"},
-    "nice": {"lat": 43.7102, "lon": 7.2620, "country": "france", "region": "western_europe"},
-    "nantes": {"lat": 47.2184, "lon": -1.5536, "country": "france", "region": "western_europe"},
-    "berlin": {"lat": 52.5200, "lon": 13.4050, "country": "germany", "region": "central_europe"},
-    "munich": {"lat": 48.1351, "lon": 11.5820, "country": "germany", "region": "central_europe"},
-    "münchen": {"lat": 48.1351, "lon": 11.5820, "country": "germany", "region": "central_europe"},
-    "hamburg": {"lat": 53.5511, "lon": 9.9937, "country": "germany", "region": "central_europe"},
-    "frankfurt": {"lat": 50.1109, "lon": 8.6821, "country": "germany", "region": "central_europe"},
-    "cologne": {"lat": 50.9375, "lon": 6.9603, "country": "germany", "region": "central_europe"},
-    "köln": {"lat": 50.9375, "lon": 6.9603, "country": "germany", "region": "central_europe"},
-    "athens": {"lat": 37.9838, "lon": 23.7275, "country": "greece", "region": "southern_europe"},
-    "budapest": {"lat": 47.4979, "lon": 19.0402, "country": "hungary", "region": "central_europe"},
-    "reykjavik": {"lat": 64.1466, "lon": -21.9426, "country": "iceland", "region": "northern_europe"},
-    "new delhi": {"lat": 28.6139, "lon": 77.2090, "country": "india", "region": "south_asia"},
-    "delhi": {"lat": 28.7041, "lon": 77.1025, "country": "india", "region": "south_asia"},
-    "mumbai": {"lat": 19.0760, "lon": 72.8777, "country": "india", "region": "south_asia"},
-    "bangalore": {"lat": 12.9716, "lon": 77.5946, "country": "india", "region": "south_asia"},
-    "bengaluru": {"lat": 12.9716, "lon": 77.5946, "country": "india", "region": "south_asia"},
-    "kolkata": {"lat": 22.5726, "lon": 88.3639, "country": "india", "region": "south_asia"},
-    "chennai": {"lat": 13.0827, "lon": 80.2707, "country": "india", "region": "south_asia"},
-    "hyderabad": {"lat": 17.3850, "lon": 78.4867, "country": "india", "region": "south_asia"},
-    "jakarta": {"lat": -6.2088, "lon": 106.8456, "country": "indonesia", "region": "southeast_asia"},
-    "tehran": {"lat": 35.6892, "lon": 51.3890, "country": "iran", "region": "western_asia"},
-    "baghdad": {"lat": 33.3152, "lon": 44.3661, "country": "iraq", "region": "western_asia"},
-    "dublin": {"lat": 53.3498, "lon": -6.2603, "country": "ireland", "region": "western_europe"},
-    "tel aviv": {"lat": 32.0853, "lon": 34.7818, "country": "israel", "region": "western_asia"},
-    "jerusalem": {"lat": 31.7683, "lon": 35.2137, "country": "israel", "region": "western_asia"},
-    "rome": {"lat": 41.9028, "lon": 12.4964, "country": "italy", "region": "southern_europe"},
-    "roma": {"lat": 41.9028, "lon": 12.4964, "country": "italy", "region": "southern_europe"},
-    "milan": {"lat": 45.4642, "lon": 9.1900, "country": "italy", "region": "southern_europe"},
-    "milano": {"lat": 45.4642, "lon": 9.1900, "country": "italy", "region": "southern_europe"},
-    "naples": {"lat": 40.8518, "lon": 14.2681, "country": "italy", "region": "southern_europe"},
-    "napoli": {"lat": 40.8518, "lon": 14.2681, "country": "italy", "region": "southern_europe"},
-    "florence": {"lat": 43.7696, "lon": 11.2558, "country": "italy", "region": "southern_europe"},
-    "firenze": {"lat": 43.7696, "lon": 11.2558, "country": "italy", "region": "southern_europe"},
-    "tokyo": {"lat": 35.6762, "lon": 139.6503, "country": "japan", "region": "east_asia"},
-    "osaka": {"lat": 34.6937, "lon": 135.5023, "country": "japan", "region": "east_asia"},
-    "kyoto": {"lat": 35.0116, "lon": 135.7681, "country": "japan", "region": "east_asia"},
-    "amman": {"lat": 31.9454, "lon": 35.9284, "country": "jordan", "region": "western_asia"},
-    "almaty": {"lat": 43.2220, "lon": 76.8512, "country": "kazakhstan", "region": "central_asia"},
-    "nairobi": {"lat": -1.2921, "lon": 36.8219, "country": "kenya", "region": "east_africa"},
-    "pristina": {"lat": 42.6629, "lon": 21.1655, "country": "kosovo", "region": "southeastern_europe"},
-    "kuwait city": {"lat": 29.3759, "lon": 47.9774, "country": "kuwait", "region": "western_asia"},
-    "riga": {"lat": 56.9496, "lon": 24.1052, "country": "latvia", "region": "northern_europe"},
-    "beirut": {"lat": 33.8938, "lon": 35.5018, "country": "lebanon", "region": "western_asia"},
-    "vilnius": {"lat": 54.6872, "lon": 25.2797, "country": "lithuania", "region": "northern_europe"},
-    "luxembourg": {"lat": 49.6116, "lon": 6.1319, "country": "luxembourg", "region": "western_europe"},
-    "kuala lumpur": {"lat": 3.1390, "lon": 101.6869, "country": "malaysia", "region": "southeast_asia"},
-    "bamako": {"lat": 12.6392, "lon": -8.0029, "country": "mali", "region": "west_africa"},
-    "mexico city": {"lat": 19.4326, "lon": -99.1332, "country": "mexico", "region": "north_america"},
-    "ciudad de méxico": {"lat": 19.4326, "lon": -99.1332, "country": "mexico", "region": "north_america"},
-    "guadalajara": {"lat": 20.6597, "lon": -103.3496, "country": "mexico", "region": "north_america"},
-    "monterrey": {"lat": 25.6866, "lon": -100.3161, "country": "mexico", "region": "north_america"},
-    "chisinau": {"lat": 47.0105, "lon": 28.8638, "country": "moldova", "region": "eastern_europe"},
-    "casablanca": {"lat": 33.5731, "lon": -7.5898, "country": "morocco", "region": "north_africa"},
-    "rabat": {"lat": 34.0209, "lon": -6.8416, "country": "morocco", "region": "north_africa"},
-    "yangon": {"lat": 16.8409, "lon": 96.1735, "country": "myanmar", "region": "southeast_asia"},
-    "kathmandu": {"lat": 27.7172, "lon": 85.3240, "country": "nepal", "region": "south_asia"},
-    "amsterdam": {"lat": 52.3676, "lon": 4.9041, "country": "netherlands", "region": "western_europe"},
-    "rotterdam": {"lat": 51.9225, "lon": 4.4792, "country": "netherlands", "region": "western_europe"},
-    "auckland": {"lat": -36.8485, "lon": 174.7633, "country": "new zealand", "region": "oceania"},
-    "wellington": {"lat": -41.2865, "lon": 174.7762, "country": "new zealand", "region": "oceania"},
-    "abuja": {"lat": 9.0579, "lon": 7.4951, "country": "nigeria", "region": "west_africa"},
-    "lagos": {"lat": 6.5244, "lon": 3.3792, "country": "nigeria", "region": "west_africa"},
-    "oslo": {"lat": 59.9139, "lon": 10.7522, "country": "norway", "region": "northern_europe"},
-    "muscat": {"lat": 23.5859, "lon": 58.4059, "country": "oman", "region": "western_asia"},
-    "islamabad": {"lat": 33.6844, "lon": 73.0479, "country": "pakistan", "region": "south_asia"},
-    "karachi": {"lat": 24.8607, "lon": 67.0011, "country": "pakistan", "region": "south_asia"},
-    "lahore": {"lat": 31.5204, "lon": 74.3587, "country": "pakistan", "region": "south_asia"},
-    "ramallah": {"lat": 31.9073, "lon": 35.2044, "country": "palestine", "region": "western_asia"},
-    "panama city": {"lat": 8.9824, "lon": -79.5199, "country": "panama", "region": "central_america"},
-    "port moresby": {"lat": -9.4438, "lon": 147.1803, "country": "papua new guinea", "region": "oceania"},
-    "lima": {"lat": -12.0464, "lon": -77.0428, "country": "peru", "region": "south_america"},
-    "manila": {"lat": 14.5995, "lon": 120.9842, "country": "philippines", "region": "southeast_asia"},
-    "warsaw": {"lat": 52.2297, "lon": 21.0122, "country": "poland", "region": "central_europe"},
-    "warszawa": {"lat": 52.2297, "lon": 21.0122, "country": "poland", "region": "central_europe"},
-    "lisbon": {"lat": 38.7223, "lon": -9.1393, "country": "portugal", "region": "southern_europe"},
-    "lisboa": {"lat": 38.7223, "lon": -9.1393, "country": "portugal", "region": "southern_europe"},
-    "porto": {"lat": 41.1579, "lon": -8.6291, "country": "portugal", "region": "southern_europe"},
-    "doha": {"lat": 25.2854, "lon": 51.5310, "country": "qatar", "region": "western_asia"},
-    "bucharest": {"lat": 44.4268, "lon": 26.1025, "country": "romania", "region": "southeastern_europe"},
-    "bucurești": {"lat": 44.4268, "lon": 26.1025, "country": "romania", "region": "southeastern_europe"},
-    "cluj": {"lat": 46.7712, "lon": 23.6236, "country": "romania", "region": "southeastern_europe"},
-    "cluj-napoca": {"lat": 46.7712, "lon": 23.6236, "country": "romania", "region": "southeastern_europe"},
-    "moscow": {"lat": 55.7558, "lon": 37.6173, "country": "russia", "region": "eastern_europe"},
-    "saint petersburg": {"lat": 59.9311, "lon": 30.3609, "country": "russia", "region": "eastern_europe"},
-    "sankt petersburg": {"lat": 59.9311, "lon": 30.3609, "country": "russia", "region": "eastern_europe"},
-    "kigali": {"lat": -1.9441, "lon": 30.0619, "country": "rwanda", "region": "east_africa"},
-    "riyadh": {"lat": 24.7136, "lon": 46.6753, "country": "saudi arabia", "region": "western_asia"},
-    "jeddah": {"lat": 21.4858, "lon": 39.1925, "country": "saudi arabia", "region": "western_asia"},
-    "dakar": {"lat": 14.7167, "lon": -17.4677, "country": "senegal", "region": "west_africa"},
-    "belgrade": {"lat": 44.7866, "lon": 20.4489, "country": "serbia", "region": "southeastern_europe"},
-    "beograd": {"lat": 44.7866, "lon": 20.4489, "country": "serbia", "region": "southeastern_europe"},
-    "novi sad": {"lat": 45.2671, "lon": 19.8335, "country": "serbia", "region": "southeastern_europe"},
-    "nis": {"lat": 43.3209, "lon": 21.8958, "country": "serbia", "region": "southeastern_europe"},
-    "niš": {"lat": 43.3209, "lon": 21.8958, "country": "serbia", "region": "southeastern_europe"},
-    "singapore": {"lat": 1.3521, "lon": 103.8198, "country": "singapore", "region": "southeast_asia"},
-    "bratislava": {"lat": 48.1486, "lon": 17.1077, "country": "slovakia", "region": "central_europe"},
-    "ljubljana": {"lat": 46.0569, "lon": 14.5058, "country": "slovenia", "region": "central_europe"},
-    "mogadishu": {"lat": 2.0469, "lon": 45.3182, "country": "somalia", "region": "east_africa"},
-    "cape town": {"lat": -33.9249, "lon": 18.4241, "country": "south africa", "region": "southern_africa"},
-    "johannesburg": {"lat": -26.2041, "lon": 28.0473, "country": "south africa", "region": "southern_africa"},
-    "pretoria": {"lat": -25.7479, "lon": 28.2293, "country": "south africa", "region": "southern_africa"},
-    "seoul": {"lat": 37.5665, "lon": 126.9780, "country": "south korea", "region": "east_asia"},
-    "busan": {"lat": 35.1796, "lon": 129.0756, "country": "south korea", "region": "east_asia"},
-    "juba": {"lat": 4.8594, "lon": 31.5713, "country": "south sudan", "region": "east_africa"},
-    "madrid": {"lat": 40.4168, "lon": -3.7038, "country": "spain", "region": "southern_europe"},
-    "barcelona": {"lat": 41.3851, "lon": 2.1734, "country": "spain", "region": "southern_europe"},
-    "valencia": {"lat": 39.4699, "lon": -0.3763, "country": "spain", "region": "southern_europe"},
-    "seville": {"lat": 37.3891, "lon": -5.9845, "country": "spain", "region": "southern_europe"},
-    "sevilla": {"lat": 37.3891, "lon": -5.9845, "country": "spain", "region": "southern_europe"},
-    "colombo": {"lat": 6.9271, "lon": 79.8612, "country": "sri lanka", "region": "south_asia"},
-    "khartoum": {"lat": 15.5007, "lon": 32.5599, "country": "sudan", "region": "east_africa"},
-    "stockholm": {"lat": 59.3293, "lon": 18.0686, "country": "sweden", "region": "northern_europe"},
-    "gothenburg": {"lat": 57.7089, "lon": 11.9746, "country": "sweden", "region": "northern_europe"},
-    "göteborg": {"lat": 57.7089, "lon": 11.9746, "country": "sweden", "region": "northern_europe"},
-    "zurich": {"lat": 47.3769, "lon": 8.5417, "country": "switzerland", "region": "central_europe"},
-    "zürich": {"lat": 47.3769, "lon": 8.5417, "country": "switzerland", "region": "central_europe"},
-    "geneva": {"lat": 46.2044, "lon": 6.1432, "country": "switzerland", "region": "central_europe"},
-    "genève": {"lat": 46.2044, "lon": 6.1432, "country": "switzerland", "region": "central_europe"},
-    "bern": {"lat": 46.9481, "lon": 7.4474, "country": "switzerland", "region": "central_europe"},
-    "damascus": {"lat": 33.5138, "lon": 36.2765, "country": "syria", "region": "western_asia"},
-    "aleppo": {"lat": 36.2021, "lon": 37.1343, "country": "syria", "region": "western_asia"},
-    "taipei": {"lat": 25.0330, "lon": 121.5654, "country": "taiwan", "region": "east_asia"},
-    "dar es salaam": {"lat": -6.7924, "lon": 39.2083, "country": "tanzania", "region": "east_africa"},
-    "bangkok": {"lat": 13.7563, "lon": 100.5018, "country": "thailand", "region": "southeast_asia"},
-    "ankara": {"lat": 39.9334, "lon": 32.8597, "country": "turkey", "region": "western_asia"},
-    "istanbul": {"lat": 41.0082, "lon": 28.9784, "country": "turkey", "region": "western_asia"},
-    "kampala": {"lat": 0.3476, "lon": 32.5825, "country": "uganda", "region": "east_africa"},
-    "kyiv": {"lat": 50.4501, "lon": 30.5234, "country": "ukraine", "region": "eastern_europe"},
-    "kiev": {"lat": 50.4501, "lon": 30.5234, "country": "ukraine", "region": "eastern_europe"},
-    "kharkiv": {"lat": 49.9935, "lon": 36.2304, "country": "ukraine", "region": "eastern_europe"},
-    "odesa": {"lat": 46.4825, "lon": 30.7233, "country": "ukraine", "region": "eastern_europe"},
-    "lviv": {"lat": 49.8397, "lon": 24.0297, "country": "ukraine", "region": "eastern_europe"},
-    "dubai": {"lat": 25.2048, "lon": 55.2708, "country": "united arab emirates", "region": "western_asia"},
-    "abu dhabi": {"lat": 24.4539, "lon": 54.3773, "country": "united arab emirates", "region": "western_asia"},
-    "london": {"lat": 51.5074, "lon": -0.1278, "country": "united kingdom", "region": "western_europe"},
-    "manchester": {"lat": 53.4808, "lon": -2.2426, "country": "united kingdom", "region": "western_europe"},
-    "birmingham": {"lat": 52.4862, "lon": -1.8904, "country": "united kingdom", "region": "western_europe"},
-    "glasgow": {"lat": 55.8642, "lon": -4.2518, "country": "united kingdom", "region": "western_europe"},
-    "edinburgh": {"lat": 55.9533, "lon": -3.1883, "country": "united kingdom", "region": "western_europe"},
-    "liverpool": {"lat": 53.4084, "lon": -2.9916, "country": "united kingdom", "region": "western_europe"},
-    "bristol": {"lat": 51.4545, "lon": -2.5879, "country": "united kingdom", "region": "western_europe"},
-    "leeds": {"lat": 53.8008, "lon": -1.5491, "country": "united kingdom", "region": "western_europe"},
-    "cardiff": {"lat": 51.4816, "lon": -3.1791, "country": "united kingdom", "region": "western_europe"},
-    "belfast": {"lat": 54.5973, "lon": -5.9301, "country": "united kingdom", "region": "western_europe"},
-    "new york": {"lat": 40.7128, "lon": -74.0060, "country": "united states", "region": "north_america"},
-    "new york city": {"lat": 40.7128, "lon": -74.0060, "country": "united states", "region": "north_america"},
-    "nyc": {"lat": 40.7128, "lon": -74.0060, "country": "united states", "region": "north_america"},
-    "los angeles": {"lat": 34.0522, "lon": -118.2437, "country": "united states", "region": "north_america"},
-    "chicago": {"lat": 41.8781, "lon": -87.6298, "country": "united states", "region": "north_america"},
-    "houston": {"lat": 29.7604, "lon": -95.3698, "country": "united states", "region": "north_america"},
-    "phoenix": {"lat": 33.4484, "lon": -112.0740, "country": "united states", "region": "north_america"},
-    "philadelphia": {"lat": 39.9526, "lon": -75.1652, "country": "united states", "region": "north_america"},
-    "san antonio": {"lat": 29.4241, "lon": -98.4936, "country": "united states", "region": "north_america"},
-    "san diego": {"lat": 32.7157, "lon": -117.1611, "country": "united states", "region": "north_america"},
-    "dallas": {"lat": 32.7767, "lon": -96.7970, "country": "united states", "region": "north_america"},
-    "san francisco": {"lat": 37.7749, "lon": -122.4194, "country": "united states", "region": "north_america"},
-    "austin": {"lat": 30.2672, "lon": -97.7431, "country": "united states", "region": "north_america"},
-    "seattle": {"lat": 47.6062, "lon": -122.3321, "country": "united states", "region": "north_america"},
-    "denver": {"lat": 39.7392, "lon": -104.9903, "country": "united states", "region": "north_america"},
-    "washington": {"lat": 38.9072, "lon": -77.0369, "country": "united states", "region": "north_america"},
-    "washington dc": {"lat": 38.9072, "lon": -77.0369, "country": "united states", "region": "north_america"},
-    "boston": {"lat": 42.3601, "lon": -71.0589, "country": "united states", "region": "north_america"},
-    "miami": {"lat": 25.7617, "lon": -80.1918, "country": "united states", "region": "north_america"},
-    "atlanta": {"lat": 33.7490, "lon": -84.3880, "country": "united states", "region": "north_america"},
-    "las vegas": {"lat": 36.1699, "lon": -115.1398, "country": "united states", "region": "north_america"},
-    "montevideo": {"lat": -34.9011, "lon": -56.1645, "country": "uruguay", "region": "south_america"},
-    "tashkent": {"lat": 41.2995, "lon": 69.2401, "country": "uzbekistan", "region": "central_asia"},
-    "caracas": {"lat": 10.4806, "lon": -66.9036, "country": "venezuela", "region": "south_america"},
-    "hanoi": {"lat": 21.0285, "lon": 105.8542, "country": "vietnam", "region": "southeast_asia"},
-    "ho chi minh": {"lat": 10.8231, "lon": 106.6297, "country": "vietnam", "region": "southeast_asia"},
-    "ho chi minh city": {"lat": 10.8231, "lon": 106.6297, "country": "vietnam", "region": "southeast_asia"},
-    "saigon": {"lat": 10.8231, "lon": 106.6297, "country": "vietnam", "region": "southeast_asia"},
-    "sanaa": {"lat": 15.3694, "lon": 44.1910, "country": "yemen", "region": "western_asia"},
-    "lusaka": {"lat": -15.3875, "lon": 28.3228, "country": "zambia", "region": "southern_africa"},
-    "harare": {"lat": -17.8292, "lon": 31.0522, "country": "zimbabwe", "region": "southern_africa"}
+    "kabul": {
+      "lat": 34.5553,
+      "lon": 69.2075,
+      "country": "afghanistan",
+      "region": "south_asia"
+    },
+    "tirana": {
+      "lat": 41.3275,
+      "lon": 19.8189,
+      "country": "albania",
+      "region": "southeastern_europe"
+    },
+    "algiers": {
+      "lat": 36.7538,
+      "lon": 3.0588,
+      "country": "algeria",
+      "region": "north_africa"
+    },
+    "luanda": {
+      "lat": -8.8368,
+      "lon": 13.2343,
+      "country": "angola",
+      "region": "southern_africa"
+    },
+    "buenos aires": {
+      "lat": -34.6118,
+      "lon": -58.396,
+      "country": "argentina",
+      "region": "south_america"
+    },
+    "yerevan": {
+      "lat": 40.1792,
+      "lon": 44.4991,
+      "country": "armenia",
+      "region": "western_asia"
+    },
+    "sydney": {
+      "lat": -33.8688,
+      "lon": 151.2093,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "melbourne": {
+      "lat": -37.8136,
+      "lon": 144.9631,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "brisbane": {
+      "lat": -27.4705,
+      "lon": 153.026,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "perth": {
+      "lat": -31.9505,
+      "lon": 115.8605,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "adelaide": {
+      "lat": -34.9285,
+      "lon": 138.6007,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "canberra": {
+      "lat": -35.2809,
+      "lon": 149.13,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "vienna": {
+      "lat": 48.2082,
+      "lon": 16.3738,
+      "country": "austria",
+      "region": "central_europe"
+    },
+    "wien": {
+      "lat": 48.2082,
+      "lon": 16.3738,
+      "country": "austria",
+      "region": "central_europe"
+    },
+    "baku": {
+      "lat": 40.4093,
+      "lon": 49.8671,
+      "country": "azerbaijan",
+      "region": "western_asia"
+    },
+    "manama": {
+      "lat": 26.2285,
+      "lon": 50.586,
+      "country": "bahrain",
+      "region": "western_asia"
+    },
+    "dhaka": {
+      "lat": 23.8103,
+      "lon": 90.4125,
+      "country": "bangladesh",
+      "region": "south_asia"
+    },
+    "minsk": {
+      "lat": 53.9045,
+      "lon": 27.5615,
+      "country": "belarus",
+      "region": "eastern_europe"
+    },
+    "brussels": {
+      "lat": 50.8503,
+      "lon": 4.3517,
+      "country": "belgium",
+      "region": "western_europe"
+    },
+    "bruxelles": {
+      "lat": 50.8503,
+      "lon": 4.3517,
+      "country": "belgium",
+      "region": "western_europe"
+    },
+    "sarajevo": {
+      "lat": 43.8486,
+      "lon": 18.3564,
+      "country": "bosnia and herzegovina",
+      "region": "southeastern_europe"
+    },
+    "brasilia": {
+      "lat": -15.8267,
+      "lon": -47.9218,
+      "country": "brazil",
+      "region": "south_america"
+    },
+    "rio de janeiro": {
+      "lat": -22.9068,
+      "lon": -43.1729,
+      "country": "brazil",
+      "region": "south_america"
+    },
+    "sao paulo": {
+      "lat": -23.5558,
+      "lon": -46.6396,
+      "country": "brazil",
+      "region": "south_america"
+    },
+    "são paulo": {
+      "lat": -23.5558,
+      "lon": -46.6396,
+      "country": "brazil",
+      "region": "south_america"
+    },
+    "sofia": {
+      "lat": 42.6977,
+      "lon": 23.3219,
+      "country": "bulgaria",
+      "region": "southeastern_europe"
+    },
+    "plovdiv": {
+      "lat": 42.1354,
+      "lon": 24.7453,
+      "country": "bulgaria",
+      "region": "southeastern_europe"
+    },
+    "phnom penh": {
+      "lat": 11.5449,
+      "lon": 104.8922,
+      "country": "cambodia",
+      "region": "southeast_asia"
+    },
+    "ottawa": {
+      "lat": 45.4215,
+      "lon": -75.6972,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "toronto": {
+      "lat": 43.6532,
+      "lon": -79.3832,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "montreal": {
+      "lat": 45.5017,
+      "lon": -73.5673,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "vancouver": {
+      "lat": 49.2827,
+      "lon": -123.1207,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "calgary": {
+      "lat": 51.0447,
+      "lon": -114.0719,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "edmonton": {
+      "lat": 53.5461,
+      "lon": -113.4938,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "quebec": {
+      "lat": 46.8139,
+      "lon": -71.208,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "quebec city": {
+      "lat": 46.8139,
+      "lon": -71.208,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "winnipeg": {
+      "lat": 49.8951,
+      "lon": -97.1384,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "halifax": {
+      "lat": 44.6488,
+      "lon": -63.5752,
+      "country": "canada",
+      "region": "north_america"
+    },
+    "santiago": {
+      "lat": -33.4489,
+      "lon": -70.6693,
+      "country": "chile",
+      "region": "south_america"
+    },
+    "beijing": {
+      "lat": 39.9042,
+      "lon": 116.4074,
+      "country": "china",
+      "region": "east_asia"
+    },
+    "shanghai": {
+      "lat": 31.2304,
+      "lon": 121.4737,
+      "country": "china",
+      "region": "east_asia"
+    },
+    "hong kong": {
+      "lat": 22.3193,
+      "lon": 114.1694,
+      "country": "china",
+      "region": "east_asia"
+    },
+    "guangzhou": {
+      "lat": 23.1291,
+      "lon": 113.2644,
+      "country": "china",
+      "region": "east_asia"
+    },
+    "shenzhen": {
+      "lat": 22.5431,
+      "lon": 114.0579,
+      "country": "china",
+      "region": "east_asia"
+    },
+    "bogota": {
+      "lat": 4.711,
+      "lon": -74.0721,
+      "country": "colombia",
+      "region": "south_america"
+    },
+    "bogotá": {
+      "lat": 4.711,
+      "lon": -74.0721,
+      "country": "colombia",
+      "region": "south_america"
+    },
+    "medellin": {
+      "lat": 6.2476,
+      "lon": -75.5658,
+      "country": "colombia",
+      "region": "south_america"
+    },
+    "cali": {
+      "lat": 3.4516,
+      "lon": -76.532,
+      "country": "colombia",
+      "region": "south_america"
+    },
+    "san jose": {
+      "lat": 9.9281,
+      "lon": -84.0907,
+      "country": "costa rica",
+      "region": "central_america"
+    },
+    "zagreb": {
+      "lat": 45.815,
+      "lon": 15.9819,
+      "country": "croatia",
+      "region": "southeastern_europe"
+    },
+    "havana": {
+      "lat": 23.1136,
+      "lon": -82.3666,
+      "country": "cuba",
+      "region": "caribbean"
+    },
+    "nicosia": {
+      "lat": 35.1856,
+      "lon": 33.3823,
+      "country": "cyprus",
+      "region": "western_asia"
+    },
+    "prague": {
+      "lat": 50.0755,
+      "lon": 14.4378,
+      "country": "czech republic",
+      "region": "central_europe"
+    },
+    "praha": {
+      "lat": 50.0755,
+      "lon": 14.4378,
+      "country": "czech republic",
+      "region": "central_europe"
+    },
+    "copenhagen": {
+      "lat": 55.6761,
+      "lon": 12.5683,
+      "country": "denmark",
+      "region": "northern_europe"
+    },
+    "københavn": {
+      "lat": 55.6761,
+      "lon": 12.5683,
+      "country": "denmark",
+      "region": "northern_europe"
+    },
+    "quito": {
+      "lat": -0.1807,
+      "lon": -78.4678,
+      "country": "ecuador",
+      "region": "south_america"
+    },
+    "cairo": {
+      "lat": 30.0444,
+      "lon": 31.2357,
+      "country": "egypt",
+      "region": "north_africa"
+    },
+    "tallinn": {
+      "lat": 59.437,
+      "lon": 24.7536,
+      "country": "estonia",
+      "region": "northern_europe"
+    },
+    "addis ababa": {
+      "lat": 9.145,
+      "lon": 40.4897,
+      "country": "ethiopia",
+      "region": "east_africa"
+    },
+    "helsinki": {
+      "lat": 60.1699,
+      "lon": 24.9384,
+      "country": "finland",
+      "region": "northern_europe"
+    },
+    "paris": {
+      "lat": 48.8566,
+      "lon": 2.3522,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "marseille": {
+      "lat": 43.2965,
+      "lon": 5.3698,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "lyon": {
+      "lat": 45.764,
+      "lon": 4.8357,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "toulouse": {
+      "lat": 43.6047,
+      "lon": 1.4442,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "nice": {
+      "lat": 43.7102,
+      "lon": 7.262,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "nantes": {
+      "lat": 47.2184,
+      "lon": -1.5536,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "berlin": {
+      "lat": 52.52,
+      "lon": 13.405,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "munich": {
+      "lat": 48.1351,
+      "lon": 11.582,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "münchen": {
+      "lat": 48.1351,
+      "lon": 11.582,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "hamburg": {
+      "lat": 53.5511,
+      "lon": 9.9937,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "frankfurt": {
+      "lat": 50.1109,
+      "lon": 8.6821,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "cologne": {
+      "lat": 50.9375,
+      "lon": 6.9603,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "köln": {
+      "lat": 50.9375,
+      "lon": 6.9603,
+      "country": "germany",
+      "region": "central_europe"
+    },
+    "athens": {
+      "lat": 37.9838,
+      "lon": 23.7275,
+      "country": "greece",
+      "region": "southern_europe"
+    },
+    "budapest": {
+      "lat": 47.4979,
+      "lon": 19.0402,
+      "country": "hungary",
+      "region": "central_europe"
+    },
+    "reykjavik": {
+      "lat": 64.1466,
+      "lon": -21.9426,
+      "country": "iceland",
+      "region": "northern_europe"
+    },
+    "new delhi": {
+      "lat": 28.6139,
+      "lon": 77.209,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "delhi": {
+      "lat": 28.7041,
+      "lon": 77.1025,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "mumbai": {
+      "lat": 19.076,
+      "lon": 72.8777,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "bangalore": {
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "bengaluru": {
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "kolkata": {
+      "lat": 22.5726,
+      "lon": 88.3639,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "chennai": {
+      "lat": 13.0827,
+      "lon": 80.2707,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "hyderabad": {
+      "lat": 17.385,
+      "lon": 78.4867,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "jakarta": {
+      "lat": -6.2088,
+      "lon": 106.8456,
+      "country": "indonesia",
+      "region": "southeast_asia"
+    },
+    "tehran": {
+      "lat": 35.6892,
+      "lon": 51.389,
+      "country": "iran",
+      "region": "western_asia"
+    },
+    "baghdad": {
+      "lat": 33.3152,
+      "lon": 44.3661,
+      "country": "iraq",
+      "region": "western_asia"
+    },
+    "dublin": {
+      "lat": 53.3498,
+      "lon": -6.2603,
+      "country": "ireland",
+      "region": "western_europe"
+    },
+    "tel aviv": {
+      "lat": 32.0853,
+      "lon": 34.7818,
+      "country": "israel",
+      "region": "western_asia"
+    },
+    "jerusalem": {
+      "lat": 31.7683,
+      "lon": 35.2137,
+      "country": "israel",
+      "region": "western_asia"
+    },
+    "rome": {
+      "lat": 41.9028,
+      "lon": 12.4964,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "roma": {
+      "lat": 41.9028,
+      "lon": 12.4964,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "milan": {
+      "lat": 45.4642,
+      "lon": 9.19,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "milano": {
+      "lat": 45.4642,
+      "lon": 9.19,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "naples": {
+      "lat": 40.8518,
+      "lon": 14.2681,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "napoli": {
+      "lat": 40.8518,
+      "lon": 14.2681,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "florence": {
+      "lat": 43.7696,
+      "lon": 11.2558,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "firenze": {
+      "lat": 43.7696,
+      "lon": 11.2558,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "tokyo": {
+      "lat": 35.6762,
+      "lon": 139.6503,
+      "country": "japan",
+      "region": "east_asia"
+    },
+    "osaka": {
+      "lat": 34.6937,
+      "lon": 135.5023,
+      "country": "japan",
+      "region": "east_asia"
+    },
+    "kyoto": {
+      "lat": 35.0116,
+      "lon": 135.7681,
+      "country": "japan",
+      "region": "east_asia"
+    },
+    "amman": {
+      "lat": 31.9454,
+      "lon": 35.9284,
+      "country": "jordan",
+      "region": "western_asia"
+    },
+    "almaty": {
+      "lat": 43.222,
+      "lon": 76.8512,
+      "country": "kazakhstan",
+      "region": "central_asia"
+    },
+    "nairobi": {
+      "lat": -1.2921,
+      "lon": 36.8219,
+      "country": "kenya",
+      "region": "east_africa"
+    },
+    "pristina": {
+      "lat": 42.6629,
+      "lon": 21.1655,
+      "country": "kosovo",
+      "region": "southeastern_europe"
+    },
+    "kuwait city": {
+      "lat": 29.3759,
+      "lon": 47.9774,
+      "country": "kuwait",
+      "region": "western_asia"
+    },
+    "riga": {
+      "lat": 56.9496,
+      "lon": 24.1052,
+      "country": "latvia",
+      "region": "northern_europe"
+    },
+    "beirut": {
+      "lat": 33.8938,
+      "lon": 35.5018,
+      "country": "lebanon",
+      "region": "western_asia"
+    },
+    "vilnius": {
+      "lat": 54.6872,
+      "lon": 25.2797,
+      "country": "lithuania",
+      "region": "northern_europe"
+    },
+    "luxembourg": {
+      "lat": 49.6116,
+      "lon": 6.1319,
+      "country": "luxembourg",
+      "region": "western_europe"
+    },
+    "kuala lumpur": {
+      "lat": 3.139,
+      "lon": 101.6869,
+      "country": "malaysia",
+      "region": "southeast_asia"
+    },
+    "bamako": {
+      "lat": 12.6392,
+      "lon": -8.0029,
+      "country": "mali",
+      "region": "west_africa"
+    },
+    "mexico city": {
+      "lat": 19.4326,
+      "lon": -99.1332,
+      "country": "mexico",
+      "region": "north_america"
+    },
+    "ciudad de méxico": {
+      "lat": 19.4326,
+      "lon": -99.1332,
+      "country": "mexico",
+      "region": "north_america"
+    },
+    "guadalajara": {
+      "lat": 20.6597,
+      "lon": -103.3496,
+      "country": "mexico",
+      "region": "north_america"
+    },
+    "monterrey": {
+      "lat": 25.6866,
+      "lon": -100.3161,
+      "country": "mexico",
+      "region": "north_america"
+    },
+    "chisinau": {
+      "lat": 47.0105,
+      "lon": 28.8638,
+      "country": "moldova",
+      "region": "eastern_europe"
+    },
+    "casablanca": {
+      "lat": 33.5731,
+      "lon": -7.5898,
+      "country": "morocco",
+      "region": "north_africa"
+    },
+    "rabat": {
+      "lat": 34.0209,
+      "lon": -6.8416,
+      "country": "morocco",
+      "region": "north_africa"
+    },
+    "yangon": {
+      "lat": 16.8409,
+      "lon": 96.1735,
+      "country": "myanmar",
+      "region": "southeast_asia"
+    },
+    "kathmandu": {
+      "lat": 27.7172,
+      "lon": 85.324,
+      "country": "nepal",
+      "region": "south_asia"
+    },
+    "amsterdam": {
+      "lat": 52.3676,
+      "lon": 4.9041,
+      "country": "netherlands",
+      "region": "western_europe"
+    },
+    "rotterdam": {
+      "lat": 51.9225,
+      "lon": 4.4792,
+      "country": "netherlands",
+      "region": "western_europe"
+    },
+    "auckland": {
+      "lat": -36.8485,
+      "lon": 174.7633,
+      "country": "new zealand",
+      "region": "oceania"
+    },
+    "wellington": {
+      "lat": -41.2865,
+      "lon": 174.7762,
+      "country": "new zealand",
+      "region": "oceania"
+    },
+    "abuja": {
+      "lat": 9.0579,
+      "lon": 7.4951,
+      "country": "nigeria",
+      "region": "west_africa"
+    },
+    "lagos": {
+      "lat": 6.5244,
+      "lon": 3.3792,
+      "country": "nigeria",
+      "region": "west_africa"
+    },
+    "oslo": {
+      "lat": 59.9139,
+      "lon": 10.7522,
+      "country": "norway",
+      "region": "northern_europe"
+    },
+    "muscat": {
+      "lat": 23.5859,
+      "lon": 58.4059,
+      "country": "oman",
+      "region": "western_asia"
+    },
+    "islamabad": {
+      "lat": 33.6844,
+      "lon": 73.0479,
+      "country": "pakistan",
+      "region": "south_asia"
+    },
+    "karachi": {
+      "lat": 24.8607,
+      "lon": 67.0011,
+      "country": "pakistan",
+      "region": "south_asia"
+    },
+    "lahore": {
+      "lat": 31.5204,
+      "lon": 74.3587,
+      "country": "pakistan",
+      "region": "south_asia"
+    },
+    "ramallah": {
+      "lat": 31.9073,
+      "lon": 35.2044,
+      "country": "palestine",
+      "region": "western_asia"
+    },
+    "panama city": {
+      "lat": 8.9824,
+      "lon": -79.5199,
+      "country": "panama",
+      "region": "central_america"
+    },
+    "port moresby": {
+      "lat": -9.4438,
+      "lon": 147.1803,
+      "country": "papua new guinea",
+      "region": "oceania"
+    },
+    "lima": {
+      "lat": -12.0464,
+      "lon": -77.0428,
+      "country": "peru",
+      "region": "south_america"
+    },
+    "manila": {
+      "lat": 14.5995,
+      "lon": 120.9842,
+      "country": "philippines",
+      "region": "southeast_asia"
+    },
+    "warsaw": {
+      "lat": 52.2297,
+      "lon": 21.0122,
+      "country": "poland",
+      "region": "central_europe"
+    },
+    "warszawa": {
+      "lat": 52.2297,
+      "lon": 21.0122,
+      "country": "poland",
+      "region": "central_europe"
+    },
+    "lisbon": {
+      "lat": 38.7223,
+      "lon": -9.1393,
+      "country": "portugal",
+      "region": "southern_europe"
+    },
+    "lisboa": {
+      "lat": 38.7223,
+      "lon": -9.1393,
+      "country": "portugal",
+      "region": "southern_europe"
+    },
+    "porto": {
+      "lat": 41.1579,
+      "lon": -8.6291,
+      "country": "portugal",
+      "region": "southern_europe"
+    },
+    "doha": {
+      "lat": 25.2854,
+      "lon": 51.531,
+      "country": "qatar",
+      "region": "western_asia"
+    },
+    "bucharest": {
+      "lat": 44.4268,
+      "lon": 26.1025,
+      "country": "romania",
+      "region": "southeastern_europe"
+    },
+    "bucurești": {
+      "lat": 44.4268,
+      "lon": 26.1025,
+      "country": "romania",
+      "region": "southeastern_europe"
+    },
+    "cluj": {
+      "lat": 46.7712,
+      "lon": 23.6236,
+      "country": "romania",
+      "region": "southeastern_europe"
+    },
+    "cluj-napoca": {
+      "lat": 46.7712,
+      "lon": 23.6236,
+      "country": "romania",
+      "region": "southeastern_europe"
+    },
+    "moscow": {
+      "lat": 55.7558,
+      "lon": 37.6173,
+      "country": "russia",
+      "region": "eastern_europe"
+    },
+    "saint petersburg": {
+      "lat": 59.9311,
+      "lon": 30.3609,
+      "country": "russia",
+      "region": "eastern_europe"
+    },
+    "sankt petersburg": {
+      "lat": 59.9311,
+      "lon": 30.3609,
+      "country": "russia",
+      "region": "eastern_europe"
+    },
+    "kigali": {
+      "lat": -1.9441,
+      "lon": 30.0619,
+      "country": "rwanda",
+      "region": "east_africa"
+    },
+    "riyadh": {
+      "lat": 24.7136,
+      "lon": 46.6753,
+      "country": "saudi arabia",
+      "region": "western_asia"
+    },
+    "jeddah": {
+      "lat": 21.4858,
+      "lon": 39.1925,
+      "country": "saudi arabia",
+      "region": "western_asia"
+    },
+    "dakar": {
+      "lat": 14.7167,
+      "lon": -17.4677,
+      "country": "senegal",
+      "region": "west_africa"
+    },
+    "belgrade": {
+      "lat": 44.7866,
+      "lon": 20.4489,
+      "country": "serbia",
+      "region": "southeastern_europe"
+    },
+    "beograd": {
+      "lat": 44.7866,
+      "lon": 20.4489,
+      "country": "serbia",
+      "region": "southeastern_europe"
+    },
+    "novi sad": {
+      "lat": 45.2671,
+      "lon": 19.8335,
+      "country": "serbia",
+      "region": "southeastern_europe"
+    },
+    "nis": {
+      "lat": 43.3209,
+      "lon": 21.8958,
+      "country": "serbia",
+      "region": "southeastern_europe"
+    },
+    "niš": {
+      "lat": 43.3209,
+      "lon": 21.8958,
+      "country": "serbia",
+      "region": "southeastern_europe"
+    },
+    "singapore": {
+      "lat": 1.3521,
+      "lon": 103.8198,
+      "country": "singapore",
+      "region": "southeast_asia"
+    },
+    "bratislava": {
+      "lat": 48.1486,
+      "lon": 17.1077,
+      "country": "slovakia",
+      "region": "central_europe"
+    },
+    "ljubljana": {
+      "lat": 46.0569,
+      "lon": 14.5058,
+      "country": "slovenia",
+      "region": "central_europe"
+    },
+    "mogadishu": {
+      "lat": 2.0469,
+      "lon": 45.3182,
+      "country": "somalia",
+      "region": "east_africa"
+    },
+    "cape town": {
+      "lat": -33.9249,
+      "lon": 18.4241,
+      "country": "south africa",
+      "region": "southern_africa"
+    },
+    "johannesburg": {
+      "lat": -26.2041,
+      "lon": 28.0473,
+      "country": "south africa",
+      "region": "southern_africa"
+    },
+    "pretoria": {
+      "lat": -25.7479,
+      "lon": 28.2293,
+      "country": "south africa",
+      "region": "southern_africa"
+    },
+    "seoul": {
+      "lat": 37.5665,
+      "lon": 126.978,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "busan": {
+      "lat": 35.1796,
+      "lon": 129.0756,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "juba": {
+      "lat": 4.8594,
+      "lon": 31.5713,
+      "country": "south sudan",
+      "region": "east_africa"
+    },
+    "madrid": {
+      "lat": 40.4168,
+      "lon": -3.7038,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "barcelona": {
+      "lat": 41.3851,
+      "lon": 2.1734,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "valencia": {
+      "lat": 39.4699,
+      "lon": -0.3763,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "seville": {
+      "lat": 37.3891,
+      "lon": -5.9845,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "sevilla": {
+      "lat": 37.3891,
+      "lon": -5.9845,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "colombo": {
+      "lat": 6.9271,
+      "lon": 79.8612,
+      "country": "sri lanka",
+      "region": "south_asia"
+    },
+    "khartoum": {
+      "lat": 15.5007,
+      "lon": 32.5599,
+      "country": "sudan",
+      "region": "east_africa"
+    },
+    "stockholm": {
+      "lat": 59.3293,
+      "lon": 18.0686,
+      "country": "sweden",
+      "region": "northern_europe"
+    },
+    "gothenburg": {
+      "lat": 57.7089,
+      "lon": 11.9746,
+      "country": "sweden",
+      "region": "northern_europe"
+    },
+    "göteborg": {
+      "lat": 57.7089,
+      "lon": 11.9746,
+      "country": "sweden",
+      "region": "northern_europe"
+    },
+    "zurich": {
+      "lat": 47.3769,
+      "lon": 8.5417,
+      "country": "switzerland",
+      "region": "central_europe"
+    },
+    "zürich": {
+      "lat": 47.3769,
+      "lon": 8.5417,
+      "country": "switzerland",
+      "region": "central_europe"
+    },
+    "geneva": {
+      "lat": 46.2044,
+      "lon": 6.1432,
+      "country": "switzerland",
+      "region": "central_europe"
+    },
+    "genève": {
+      "lat": 46.2044,
+      "lon": 6.1432,
+      "country": "switzerland",
+      "region": "central_europe"
+    },
+    "bern": {
+      "lat": 46.9481,
+      "lon": 7.4474,
+      "country": "switzerland",
+      "region": "central_europe"
+    },
+    "damascus": {
+      "lat": 33.5138,
+      "lon": 36.2765,
+      "country": "syria",
+      "region": "western_asia"
+    },
+    "aleppo": {
+      "lat": 36.2021,
+      "lon": 37.1343,
+      "country": "syria",
+      "region": "western_asia"
+    },
+    "taipei": {
+      "lat": 25.033,
+      "lon": 121.5654,
+      "country": "taiwan",
+      "region": "east_asia"
+    },
+    "dar es salaam": {
+      "lat": -6.7924,
+      "lon": 39.2083,
+      "country": "tanzania",
+      "region": "east_africa"
+    },
+    "bangkok": {
+      "lat": 13.7563,
+      "lon": 100.5018,
+      "country": "thailand",
+      "region": "southeast_asia"
+    },
+    "ankara": {
+      "lat": 39.9334,
+      "lon": 32.8597,
+      "country": "turkey",
+      "region": "western_asia"
+    },
+    "istanbul": {
+      "lat": 41.0082,
+      "lon": 28.9784,
+      "country": "turkey",
+      "region": "western_asia"
+    },
+    "kampala": {
+      "lat": 0.3476,
+      "lon": 32.5825,
+      "country": "uganda",
+      "region": "east_africa"
+    },
+    "kyiv": {
+      "lat": 50.4501,
+      "lon": 30.5234,
+      "country": "ukraine",
+      "region": "eastern_europe"
+    },
+    "kiev": {
+      "lat": 50.4501,
+      "lon": 30.5234,
+      "country": "ukraine",
+      "region": "eastern_europe"
+    },
+    "kharkiv": {
+      "lat": 49.9935,
+      "lon": 36.2304,
+      "country": "ukraine",
+      "region": "eastern_europe"
+    },
+    "odesa": {
+      "lat": 46.4825,
+      "lon": 30.7233,
+      "country": "ukraine",
+      "region": "eastern_europe"
+    },
+    "lviv": {
+      "lat": 49.8397,
+      "lon": 24.0297,
+      "country": "ukraine",
+      "region": "eastern_europe"
+    },
+    "dubai": {
+      "lat": 25.2048,
+      "lon": 55.2708,
+      "country": "united arab emirates",
+      "region": "western_asia"
+    },
+    "abu dhabi": {
+      "lat": 24.4539,
+      "lon": 54.3773,
+      "country": "united arab emirates",
+      "region": "western_asia"
+    },
+    "london": {
+      "lat": 51.5074,
+      "lon": -0.1278,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "manchester": {
+      "lat": 53.4808,
+      "lon": -2.2426,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "birmingham": {
+      "lat": 52.4862,
+      "lon": -1.8904,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "glasgow": {
+      "lat": 55.8642,
+      "lon": -4.2518,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "edinburgh": {
+      "lat": 55.9533,
+      "lon": -3.1883,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "liverpool": {
+      "lat": 53.4084,
+      "lon": -2.9916,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "bristol": {
+      "lat": 51.4545,
+      "lon": -2.5879,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "leeds": {
+      "lat": 53.8008,
+      "lon": -1.5491,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "cardiff": {
+      "lat": 51.4816,
+      "lon": -3.1791,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "belfast": {
+      "lat": 54.5973,
+      "lon": -5.9301,
+      "country": "united kingdom",
+      "region": "western_europe"
+    },
+    "new york": {
+      "lat": 40.7128,
+      "lon": -74.006,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "new york city": {
+      "lat": 40.7128,
+      "lon": -74.006,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "nyc": {
+      "lat": 40.7128,
+      "lon": -74.006,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "los angeles": {
+      "lat": 34.0522,
+      "lon": -118.2437,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "chicago": {
+      "lat": 41.8781,
+      "lon": -87.6298,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "houston": {
+      "lat": 29.7604,
+      "lon": -95.3698,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "phoenix": {
+      "lat": 33.4484,
+      "lon": -112.074,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "philadelphia": {
+      "lat": 39.9526,
+      "lon": -75.1652,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "san antonio": {
+      "lat": 29.4241,
+      "lon": -98.4936,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "san diego": {
+      "lat": 32.7157,
+      "lon": -117.1611,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "dallas": {
+      "lat": 32.7767,
+      "lon": -96.797,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "san francisco": {
+      "lat": 37.7749,
+      "lon": -122.4194,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "austin": {
+      "lat": 30.2672,
+      "lon": -97.7431,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "seattle": {
+      "lat": 47.6062,
+      "lon": -122.3321,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "denver": {
+      "lat": 39.7392,
+      "lon": -104.9903,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "washington": {
+      "lat": 38.9072,
+      "lon": -77.0369,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "washington dc": {
+      "lat": 38.9072,
+      "lon": -77.0369,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "boston": {
+      "lat": 42.3601,
+      "lon": -71.0589,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "miami": {
+      "lat": 25.7617,
+      "lon": -80.1918,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "atlanta": {
+      "lat": 33.749,
+      "lon": -84.388,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "las vegas": {
+      "lat": 36.1699,
+      "lon": -115.1398,
+      "country": "united states",
+      "region": "north_america"
+    },
+    "montevideo": {
+      "lat": -34.9011,
+      "lon": -56.1645,
+      "country": "uruguay",
+      "region": "south_america"
+    },
+    "tashkent": {
+      "lat": 41.2995,
+      "lon": 69.2401,
+      "country": "uzbekistan",
+      "region": "central_asia"
+    },
+    "caracas": {
+      "lat": 10.4806,
+      "lon": -66.9036,
+      "country": "venezuela",
+      "region": "south_america"
+    },
+    "hanoi": {
+      "lat": 21.0285,
+      "lon": 105.8542,
+      "country": "vietnam",
+      "region": "southeast_asia"
+    },
+    "ho chi minh": {
+      "lat": 10.8231,
+      "lon": 106.6297,
+      "country": "vietnam",
+      "region": "southeast_asia"
+    },
+    "ho chi minh city": {
+      "lat": 10.8231,
+      "lon": 106.6297,
+      "country": "vietnam",
+      "region": "southeast_asia"
+    },
+    "saigon": {
+      "lat": 10.8231,
+      "lon": 106.6297,
+      "country": "vietnam",
+      "region": "southeast_asia"
+    },
+    "sanaa": {
+      "lat": 15.3694,
+      "lon": 44.191,
+      "country": "yemen",
+      "region": "western_asia"
+    },
+    "lusaka": {
+      "lat": -15.3875,
+      "lon": 28.3228,
+      "country": "zambia",
+      "region": "southern_africa"
+    },
+    "harare": {
+      "lat": -17.8292,
+      "lon": 31.0522,
+      "country": "zimbabwe",
+      "region": "southern_africa"
+    },
+    "chiang mai": {
+      "lat": 18.7883,
+      "lon": 98.9853,
+      "country": "thailand",
+      "region": "southeast_asia"
+    },
+    "pattaya": {
+      "lat": 12.9236,
+      "lon": 100.8825,
+      "country": "thailand",
+      "region": "southeast_asia"
+    },
+    "dodoma": {
+      "lat": -6.163,
+      "lon": 35.7516,
+      "country": "tanzania",
+      "region": "east_africa"
+    },
+    "arusha": {
+      "lat": -3.3869,
+      "lon": 36.683,
+      "country": "tanzania",
+      "region": "east_africa"
+    },
+    "samarkand": {
+      "lat": 39.627,
+      "lon": 66.975,
+      "country": "uzbekistan",
+      "region": "central_asia"
+    },
+    "bukhara": {
+      "lat": 39.7747,
+      "lon": 64.4286,
+      "country": "uzbekistan",
+      "region": "central_asia"
+    },
+    "maracaibo": {
+      "lat": 10.6316,
+      "lon": -71.64,
+      "country": "venezuela",
+      "region": "south_america"
+    },
+    "valencia venezuela": {
+      "lat": 10.1621,
+      "lon": -68.0077,
+      "country": "venezuela",
+      "region": "south_america"
+    },
+    "aden": {
+      "lat": 12.7797,
+      "lon": 45.0365,
+      "country": "yemen",
+      "region": "western_asia"
+    },
+    "taiz": {
+      "lat": 13.5795,
+      "lon": 44.0207,
+      "country": "yemen",
+      "region": "western_asia"
+    },
+    "livingstone": {
+      "lat": -17.8419,
+      "lon": 25.8544,
+      "country": "zambia",
+      "region": "southern_africa"
+    },
+    "ndola": {
+      "lat": -12.9587,
+      "lon": 28.6366,
+      "country": "zambia",
+      "region": "southern_africa"
+    },
+    "bulawayo": {
+      "lat": -20.1594,
+      "lon": 28.5842,
+      "country": "zimbabwe",
+      "region": "southern_africa"
+    },
+    "gweru": {
+      "lat": -19.45,
+      "lon": 29.8147,
+      "country": "zimbabwe",
+      "region": "southern_africa"
+    },
+    "taichung": {
+      "lat": 24.1477,
+      "lon": 120.6736,
+      "country": "taiwan",
+      "region": "east_asia"
+    },
+    "kaohsiung": {
+      "lat": 22.6273,
+      "lon": 120.3014,
+      "country": "taiwan",
+      "region": "east_asia"
+    },
+    "ghent": {
+      "lat": 51.05,
+      "lon": 3.7167,
+      "country": "belgium",
+      "region": "western_europe"
+    },
+    "gent": {
+      "lat": 51.05,
+      "lon": 3.7167,
+      "country": "belgium",
+      "region": "western_europe"
+    },
+    "liege": {
+      "lat": 50.6292,
+      "lon": 5.5796,
+      "country": "belgium",
+      "region": "western_europe"
+    },
+    "bordeaux": {
+      "lat": 44.8378,
+      "lon": -0.5792,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "montpellier": {
+      "lat": 43.6108,
+      "lon": 3.8767,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "rennes": {
+      "lat": 48.1173,
+      "lon": -1.6778,
+      "country": "france",
+      "region": "western_europe"
+    },
+    "düsseldorf": {
+      "lat": 51.2277,
+      "lon": 6.7735,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "dusseldorf": {
+      "lat": 51.2277,
+      "lon": 6.7735,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "dresden": {
+      "lat": 51.0504,
+      "lon": 13.7373,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "hannover": {
+      "lat": 52.3759,
+      "lon": 9.732,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "hanover": {
+      "lat": 52.3759,
+      "lon": 9.732,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "nuremberg": {
+      "lat": 49.4521,
+      "lon": 11.0767,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "nürnberg": {
+      "lat": 49.4521,
+      "lon": 11.0767,
+      "country": "germany",
+      "region": "western_europe"
+    },
+    "catania": {
+      "lat": 37.5079,
+      "lon": 15.083,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "bari": {
+      "lat": 41.1171,
+      "lon": 16.8719,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "verona": {
+      "lat": 45.4384,
+      "lon": 10.9916,
+      "country": "italy",
+      "region": "southern_europe"
+    },
+    "zaragoza": {
+      "lat": 41.6488,
+      "lon": -0.8891,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "malaga": {
+      "lat": 36.7213,
+      "lon": -4.4214,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "málaga": {
+      "lat": 36.7213,
+      "lon": -4.4214,
+      "country": "spain",
+      "region": "southern_europe"
+    },
+    "braga": {
+      "lat": 41.5518,
+      "lon": -8.4229,
+      "country": "portugal",
+      "region": "southern_europe"
+    },
+    "coimbra": {
+      "lat": 40.2033,
+      "lon": -8.4103,
+      "country": "portugal",
+      "region": "southern_europe"
+    },
+    "eindhoven": {
+      "lat": 51.4416,
+      "lon": 5.4697,
+      "country": "netherlands",
+      "region": "western_europe"
+    },
+    "tilburg": {
+      "lat": 51.5555,
+      "lon": 5.0913,
+      "country": "netherlands",
+      "region": "western_europe"
+    },
+    "groningen": {
+      "lat": 53.2194,
+      "lon": 6.5665,
+      "country": "netherlands",
+      "region": "western_europe"
+    },
+    "bergen": {
+      "lat": 60.3913,
+      "lon": 5.3221,
+      "country": "norway",
+      "region": "northern_europe"
+    },
+    "trondheim": {
+      "lat": 63.4305,
+      "lon": 10.3951,
+      "country": "norway",
+      "region": "northern_europe"
+    },
+    "stavanger": {
+      "lat": 58.97,
+      "lon": 5.7331,
+      "country": "norway",
+      "region": "northern_europe"
+    },
+    "malmö": {
+      "lat": 55.6049,
+      "lon": 13.0038,
+      "country": "sweden",
+      "region": "northern_europe"
+    },
+    "malmo": {
+      "lat": 55.6049,
+      "lon": 13.0038,
+      "country": "sweden",
+      "region": "northern_europe"
+    },
+    "uppsala": {
+      "lat": 59.8586,
+      "lon": 17.6389,
+      "country": "sweden",
+      "region": "northern_europe"
+    },
+    "aarhus": {
+      "lat": 56.1629,
+      "lon": 10.2039,
+      "country": "denmark",
+      "region": "northern_europe"
+    },
+    "aalborg": {
+      "lat": 57.0488,
+      "lon": 9.9217,
+      "country": "denmark",
+      "region": "northern_europe"
+    },
+    "odense": {
+      "lat": 55.4038,
+      "lon": 10.4024,
+      "country": "denmark",
+      "region": "northern_europe"
+    },
+    "tampere": {
+      "lat": 61.4991,
+      "lon": 23.7871,
+      "country": "finland",
+      "region": "northern_europe"
+    },
+    "turku": {
+      "lat": 60.4518,
+      "lon": 22.2666,
+      "country": "finland",
+      "region": "northern_europe"
+    },
+    "oulu": {
+      "lat": 65.0121,
+      "lon": 25.4651,
+      "country": "finland",
+      "region": "northern_europe"
+    },
+    "bâle": {
+      "lat": 47.5596,
+      "lon": 7.5886,
+      "country": "switzerland",
+      "region": "western_europe"
+    },
+    "lausanne": {
+      "lat": 46.5197,
+      "lon": 6.6323,
+      "country": "switzerland",
+      "region": "western_europe"
+    },
+    "lucerne": {
+      "lat": 47.0502,
+      "lon": 8.3093,
+      "country": "switzerland",
+      "region": "western_europe"
+    },
+    "luzern": {
+      "lat": 47.0502,
+      "lon": 8.3093,
+      "country": "switzerland",
+      "region": "western_europe"
+    },
+    "fukuoka": {
+      "lat": 33.5904,
+      "lon": 130.4017,
+      "country": "japan",
+      "region": "east_asia"
+    },
+    "sendai": {
+      "lat": 38.2682,
+      "lon": 140.8694,
+      "country": "japan",
+      "region": "east_asia"
+    },
+    "incheon": {
+      "lat": 37.4563,
+      "lon": 126.7052,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "daegu": {
+      "lat": 35.8714,
+      "lon": 128.6014,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "daejeon": {
+      "lat": 36.3504,
+      "lon": 127.3845,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "gwangju": {
+      "lat": 35.1595,
+      "lon": 126.8526,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "ulsan": {
+      "lat": 35.5384,
+      "lon": 129.3114,
+      "country": "south korea",
+      "region": "east_asia"
+    },
+    "surat": {
+      "lat": 21.1702,
+      "lon": 72.8311,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "thane": {
+      "lat": 19.2183,
+      "lon": 72.9781,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "bhopal": {
+      "lat": 23.2599,
+      "lon": 77.4126,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "visakhapatnam": {
+      "lat": 17.6868,
+      "lon": 83.2185,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "patna": {
+      "lat": 25.5941,
+      "lon": 85.1376,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "vadodara": {
+      "lat": 22.3072,
+      "lon": 73.1812,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "ghaziabad": {
+      "lat": 28.6692,
+      "lon": 77.4538,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "ludhiana": {
+      "lat": 30.901,
+      "lon": 75.8573,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "agra": {
+      "lat": 27.1767,
+      "lon": 78.0081,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "nashik": {
+      "lat": 19.9975,
+      "lon": 73.7898,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "faridabad": {
+      "lat": 28.4089,
+      "lon": 77.3178,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "meerut": {
+      "lat": 28.9845,
+      "lon": 77.7064,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "rajkot": {
+      "lat": 22.3039,
+      "lon": 70.8022,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "kalyan": {
+      "lat": 19.2437,
+      "lon": 73.1355,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "vasai": {
+      "lat": 19.4911,
+      "lon": 72.8054,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "varanasi": {
+      "lat": 25.3176,
+      "lon": 82.9739,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "amritsar": {
+      "lat": 31.634,
+      "lon": 74.8723,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "aurangabad": {
+      "lat": 19.8762,
+      "lon": 75.3433,
+      "country": "india",
+      "region": "south_asia"
+    },
+    "kinshasa": {
+      "lat": -4.4419,
+      "lon": 15.2663,
+      "country": "democratic republic of congo",
+      "region": "central_africa"
+    },
+    "lubumbashi": {
+      "lat": -11.6604,
+      "lon": 27.4794,
+      "country": "democratic republic of congo",
+      "region": "central_africa"
+    },
+    "brazzaville": {
+      "lat": -4.2634,
+      "lon": 15.2429,
+      "country": "congo",
+      "region": "central_africa"
+    },
+    "abidjan": {
+      "lat": 5.36,
+      "lon": -4.0083,
+      "country": "ivory coast",
+      "region": "west_africa"
+    },
+    "yamoussoukro": {
+      "lat": 6.8276,
+      "lon": -5.2893,
+      "country": "ivory coast",
+      "region": "west_africa"
+    },
+    "accra": {
+      "lat": 5.6037,
+      "lon": -0.187,
+      "country": "ghana",
+      "region": "west_africa"
+    },
+    "kumasi": {
+      "lat": 6.6884,
+      "lon": -1.6244,
+      "country": "ghana",
+      "region": "west_africa"
+    },
+    "ouagadougou": {
+      "lat": 12.3714,
+      "lon": -1.5197,
+      "country": "burkina faso",
+      "region": "west_africa"
+    },
+    "tunis": {
+      "lat": 36.8065,
+      "lon": 10.1815,
+      "country": "tunisia",
+      "region": "north_africa"
+    },
+    "sfax": {
+      "lat": 34.7405,
+      "lon": 10.7603,
+      "country": "tunisia",
+      "region": "north_africa"
+    },
+    "tripoli": {
+      "lat": 32.8872,
+      "lon": 13.1913,
+      "country": "libya",
+      "region": "north_africa"
+    },
+    "benghazi": {
+      "lat": 32.1165,
+      "lon": 20.0686,
+      "country": "libya",
+      "region": "north_africa"
+    },
+    "fez": {
+      "lat": 34.0331,
+      "lon": -5.0003,
+      "country": "morocco",
+      "region": "north_africa"
+    },
+    "marrakech": {
+      "lat": 31.6295,
+      "lon": -7.9811,
+      "country": "morocco",
+      "region": "north_africa"
+    },
+    "marrakesh": {
+      "lat": 31.6295,
+      "lon": -7.9811,
+      "country": "morocco",
+      "region": "north_africa"
+    },
+    "tangier": {
+      "lat": 35.7595,
+      "lon": -5.834,
+      "country": "morocco",
+      "region": "north_africa"
+    },
+    "tanger": {
+      "lat": 35.7595,
+      "lon": -5.834,
+      "country": "morocco",
+      "region": "north_africa"
+    }
   },
   "regions": {
-    "europe": ["europe", "european"],
-    "asia": ["asia", "asian"],
-    "africa": ["africa", "african"],
-    "north america": ["north america", "north american"],
-    "south america": ["south america", "south american"],
-    "middle east": ["middle east", "mideast"],
-    "central america": ["central america"],
-    "oceania": ["oceania", "pacific islands"],
-    "caribbean": ["caribbean"],
-    "southeast asia": ["southeast asia", "sea"],
-    "central asia": ["central asia"],
-    "eastern europe": ["eastern europe"],
-    "western europe": ["western europe"],
-    "northern europe": ["northern europe", "scandinavia", "nordic"],
-    "southern europe": ["southern europe"],
-    "sub-saharan africa": ["sub-saharan africa"],
-    "north africa": ["north africa", "maghreb"],
-    "east africa": ["east africa"],
-    "west africa": ["west africa"],
-    "southern africa": ["southern africa"]
+    "europe": [
+      "europe",
+      "european"
+    ],
+    "asia": [
+      "asia",
+      "asian"
+    ],
+    "africa": [
+      "africa",
+      "african"
+    ],
+    "north america": [
+      "north america",
+      "north american"
+    ],
+    "south america": [
+      "south america",
+      "south american"
+    ],
+    "middle east": [
+      "middle east",
+      "mideast"
+    ],
+    "central america": [
+      "central america"
+    ],
+    "oceania": [
+      "oceania",
+      "pacific islands"
+    ],
+    "caribbean": [
+      "caribbean"
+    ],
+    "southeast asia": [
+      "southeast asia",
+      "sea"
+    ],
+    "central asia": [
+      "central asia"
+    ],
+    "eastern europe": [
+      "eastern europe"
+    ],
+    "western europe": [
+      "western europe"
+    ],
+    "northern europe": [
+      "northern europe",
+      "scandinavia",
+      "nordic"
+    ],
+    "southern europe": [
+      "southern europe"
+    ],
+    "sub-saharan africa": [
+      "sub-saharan africa"
+    ],
+    "north africa": [
+      "north africa",
+      "maghreb"
+    ],
+    "east africa": [
+      "east africa"
+    ],
+    "west africa": [
+      "west africa"
+    ],
+    "southern africa": [
+      "southern africa"
+    ]
   }
 }
