@@ -141,25 +141,27 @@ def _bucket_daily_counts(incidents: List[Dict[str, Any]], days: int = 28) -> Lis
 
 # --------------------------- severity & context terms ---------------------------
 
-SEVERE_TERMS = [
-    # kinetic / physical
-    "ied","vbied","suicide","suicide bomber","explosion","multiple explosions","mass shooting",
-    "kidnap","kidnapping","armed","gunfire","shooting","stabbing","grenade","assassination",
-    "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage","car bomb","truck bomb","arson",
-    "shelling","mortar","drone strike","airstrike","air strike","artillery","bombing","roadside bomb","improvised explosive",
-    # cyber
-    "ransomware","breach","data leak","data leakage","data breach","zero-day","zero day","cve-","credential stuffing","ddos","wiper","malware",
-    # spacing/oddities
-    "i e d","v b i e d",
-]
-
-MOBILITY_TERMS = [
-    "airport","border","highway","rail","metro","bridge","port","road closure","detour","traffic suspended","service suspended","runway","airspace","notam","ground stop"
-]
-
-INFRA_TERMS = [
-    "substation","grid","pipeline","telecom","fiber","power outage","blackout","water plant","dam","subsea cable","transformer","refinery","substation fire","transformer fire"
-]
+# ---------------------- Import keywords from centralized source ----------------------
+try:
+    from keywords_loader import SEVERE_TERMS, MOBILITY_TERMS, INFRA_TERMS
+except ImportError:
+    # Fallback keywords if keywords_loader is not available
+    SEVERE_TERMS = [
+        "ied","vbied","suicide","suicide bomber","explosion","multiple explosions","mass shooting",
+        "kidnap","kidnapping","armed","gunfire","shooting","stabbing","grenade","assassination",
+        "curfew","checkpoint","evacuate","emergency","fatal","killed","hostage","car bomb","truck bomb","arson",
+        "shelling","mortar","drone strike","airstrike","air strike","artillery","bombing","roadside bomb","improvised explosive",
+        "ransomware","breach","data leak","data leakage","data breach","zero-day","zero day","cve-","credential stuffing","ddos","wiper","malware",
+        "i e d","v b i e d",
+    ]
+    
+    MOBILITY_TERMS = [
+        "airport","border","highway","rail","metro","bridge","port","road closure","detour","traffic suspended","service suspended","runway","airspace","notam","ground stop"
+    ]
+    
+    INFRA_TERMS = [
+        "substation","grid","pipeline","telecom","fiber","power outage","blackout","water plant","dam","subsea cable","transformer","refinery","substation fire","transformer fire"
+    ]
 
 # --------------------------- scoring core ---------------------------
 

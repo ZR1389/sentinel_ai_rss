@@ -583,14 +583,32 @@ FILTER_KEYWORDS_FALLBACK = [
 ]
 
 def _load_keywords() -> Tuple[List[str], str]:
+    """Load keywords from centralized keywords_loader with fallback options."""
     source_mode = (os.getenv("KEYWORDS_SOURCE", "merge") or "merge").lower()
-    use_json = source_mode in ("merge", "json_only")
-    use_risk = source_mode in ("merge", "risk_only")
+    use_centralized = source_mode in ("merge", "centralized", "keywords_loader")
+    use_json = source_mode in ("merge", "json_only") and not use_centralized
+    use_risk = source_mode in ("merge", "risk_only") and not use_centralized
 
     kws: List[str] = []
     seen: set[str] = set()
 
-    if use_json:
+    # Primary: Use centralized keywords_loader
+    if use_centralized:
+        try:
+            from keywords_loader import get_all_keywords
+            all_keywords = get_all_keywords()
+            for k in all_keywords:
+                kk = _normalize(str(k))
+                if kk and kk not in seen:
+                    seen.add(kk); kws.append(kk)
+            logger.info("Using centralized keywords_loader with %d keywords", len(kws))
+        except Exception as e:
+            logger.warning("keywords_loader not available (%s), falling back to JSON/risk_shared", e)
+            use_json = True
+            use_risk = True
+
+    # Fallback 1: Load from JSON file directly
+    if use_json and not kws:
         path = os.getenv("THREAT_KEYWORDS_PATH", os.path.join("config", "threat_keywords.json"))
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -622,7 +640,8 @@ def _load_keywords() -> Tuple[List[str], str]:
         except Exception as e:
             logger.info("threat_keywords.json not loaded (%s); continuing", e)
 
-    if use_risk:
+    # Fallback 2: Load from risk_shared directly
+    if use_risk and not kws:
         try:
             from risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
             for lst in list(CATEGORY_KEYWORDS.values()) + list(DOMAIN_KEYWORDS.values()):
@@ -633,6 +652,7 @@ def _load_keywords() -> Tuple[List[str], str]:
         except Exception:
             pass
 
+    # Final fallback
     if not kws:
         kws = [_normalize(k) for k in FILTER_KEYWORDS_FALLBACK]
 
@@ -1757,22 +1777,35 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
     
     text_lower = text.lower()
     
-    # Load threat keywords
+    # Use centralized keywords loader
     try:
-        keywords_path = os.path.join(os.path.dirname(__file__), "config", "threat_keywords.json")
-        with open(keywords_path, "r", encoding="utf-8") as f:
-            threat_keywords = json.load(f)
+        from keywords_loader import get_all_keywords
+        all_keywords = get_all_keywords()
         
-        # Check against each category
-        for category, keywords in threat_keywords.items():
-            for keyword in keywords:
-                if keyword.lower() in text_lower:
-                    return True, keyword
+        # Check against all keywords
+        for keyword in all_keywords:
+            if keyword.lower() in text_lower:
+                return True, keyword
                     
     except Exception as e:
-        logger.debug(f"Keyword filter check failed: {e}")
+        logger.debug(f"Centralized keyword check failed, using fallback: {e}")
+        # Fallback: try loading JSON directly
+        try:
+            keywords_path = os.path.join(os.path.dirname(__file__), "config", "threat_keywords.json")
+            with open(keywords_path, "r", encoding="utf-8") as f:
+                threat_keywords = json.load(f)
+            
+            # Check against each category
+            for category, keywords in threat_keywords.items():
+                if isinstance(keywords, list):
+                    for keyword in keywords:
+                        if keyword.lower() in text_lower:
+                            return True, keyword
+                        
+        except Exception as e2:
+            logger.debug(f"JSON keyword fallback also failed: {e2}")
     
-    # Fallback basic keywords
+    # Final fallback basic keywords
     basic_keywords = ["attack", "threat", "security", "breach", "incident", "alert", "warning", "emergency"]
     for keyword in basic_keywords:
         if keyword in text_lower:

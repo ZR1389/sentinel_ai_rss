@@ -343,7 +343,8 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "subcategory","domains","incident_count_30d","recent_count_7d","baseline_avg_7d",
         "baseline_ratio","trend_direction","anomaly_flag","future_risk_probability",
         "reports_analyzed","sources","cluster_id",
-        "latitude","longitude","location_method","location_confidence","location_sharing"
+        "latitude","longitude","location_method","location_confidence","location_sharing",
+        "embedding"
     ]
 
     def _json(v):
@@ -388,8 +389,23 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         baseline_avg_7d    = _coerce_numeric(a.get("baseline_avg_7d"), 0, 0, None)
 
         baseline_ratio = _coerce_numeric(a.get("baseline_ratio"), 1.0, 0, None)
-
         trend_direction = a.get("trend_direction") or "stable"
+        
+        # Handle pgvector-compatible embedding data
+        embedding = a.get("embedding")
+        pgvector_embedding = None
+        
+        if embedding and isinstance(embedding, list):
+            # Convert to PostgreSQL REAL[] array format
+            # Ensure exactly 1536 dimensions for OpenAI embeddings
+            if len(embedding) == 1536:
+                pgvector_embedding = embedding  # Will be handled by psycopg2 as array
+            else:
+                # Pad or truncate to 1536 dimensions
+                if len(embedding) < 1536:
+                    pgvector_embedding = embedding + [0.0] * (1536 - len(embedding))
+                else:
+                    pgvector_embedding = embedding[:1536]
 
         return (
             aid,
@@ -445,6 +461,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("location_method") or "unknown",
             a.get("location_confidence") or "medium", 
             bool(a.get("location_sharing", True)),
+            pgvector_embedding,   # REAL[1536] pgvector-compatible array
         )
 
     rows = [_coerce_row(a) for a in alerts]
@@ -510,7 +527,8 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         longitude = EXCLUDED.longitude,
         location_method = EXCLUDED.location_method,
         location_confidence = EXCLUDED.location_confidence,
-        location_sharing = EXCLUDED.location_sharing
+        location_sharing = EXCLUDED.location_sharing,
+        embedding = EXCLUDED.embedding
     """
     try:
         with _get_db_connection() as conn:
@@ -832,3 +850,119 @@ def save_region_trend(
         ))
     except Exception as e:
         logger.info("save_region_trend skipped (table may not exist): %s", e)
+
+# ---------------------------------------------------------------------
+# Standalone Embedding Functions
+# ---------------------------------------------------------------------
+
+def store_alert_embedding(alert_uuid: str, embedding: List[float]) -> bool:
+    """
+    Store embedding for a single alert using the current REAL[1536] vector system.
+    
+    Args:
+        alert_uuid: UUID of the alert to store embedding for
+        embedding: Embedding vector (list of 1536 floats)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Validate embedding format
+        if not embedding or not isinstance(embedding, list):
+            logger.warning(f"Invalid embedding format for alert {alert_uuid}")
+            return False
+            
+        # Ensure exactly 1536 dimensions for OpenAI embeddings
+        pgvector_embedding = None
+        if len(embedding) == 1536:
+            pgvector_embedding = embedding
+        elif len(embedding) < 1536:
+            # Pad with zeros if too short
+            pgvector_embedding = embedding + [0.0] * (1536 - len(embedding))
+        else:
+            # Truncate if too long
+            pgvector_embedding = embedding[:1536]
+            
+        # Update the alert with the embedding
+        query = """
+            UPDATE alerts 
+            SET embedding = %s 
+            WHERE uuid = %s
+        """
+        
+        result = execute(query, (pgvector_embedding, alert_uuid))
+        return result is not None
+        
+    except Exception as e:
+        logger.error(f"Error storing embedding for alert {alert_uuid}: {e}")
+        return False
+
+
+def upsert_alert_embedding(alert_uuid: str, embedding: List[float]) -> bool:
+    """
+    Upsert embedding for an alert (insert alert if it doesn't exist).
+    
+    Args:
+        alert_uuid: UUID of the alert
+        embedding: Embedding vector (list of 1536 floats)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Validate embedding format  
+        if not embedding or not isinstance(embedding, list):
+            logger.warning(f"Invalid embedding format for alert {alert_uuid}")
+            return False
+            
+        # Ensure exactly 1536 dimensions
+        pgvector_embedding = None
+        if len(embedding) == 1536:
+            pgvector_embedding = embedding
+        elif len(embedding) < 1536:
+            pgvector_embedding = embedding + [0.0] * (1536 - len(embedding))
+        else:
+            pgvector_embedding = embedding[:1536]
+            
+        # Insert or update with embedding
+        query = """
+            INSERT INTO alerts (uuid, embedding, created_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (uuid) DO UPDATE SET
+                embedding = EXCLUDED.embedding,
+                updated_at = NOW()
+        """
+        
+        result = execute(query, (alert_uuid, pgvector_embedding))
+        return result is not None
+        
+    except Exception as e:
+        logger.error(f"Error upserting embedding for alert {alert_uuid}: {e}")
+        return False
+
+
+def get_alert_embedding(alert_uuid: str) -> Optional[List[float]]:
+    """
+    Retrieve embedding for a specific alert.
+    
+    Args:
+        alert_uuid: UUID of the alert
+        
+    Returns:
+        Embedding vector as list of floats, or None if not found
+    """
+    try:
+        query = """
+            SELECT embedding 
+            FROM alerts 
+            WHERE uuid = %s AND embedding IS NOT NULL
+        """
+        
+        result = fetch_one(query, (alert_uuid,))
+        if result and result[0]:
+            return list(result[0])  # Convert array to list
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error retrieving embedding for alert {alert_uuid}: {e}")
+        return None

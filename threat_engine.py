@@ -48,6 +48,14 @@ except Exception:
 try:
     from prompts import THREAT_SUMMARIZE_SYSTEM_PROMPT
 except Exception:
+    THREAT_SUMMARIZE_SYSTEM_PROMPT = None
+
+try:
+    from vector_dedup import VectorDeduplicator
+    from risk_shared import get_embedding as get_managed_embedding
+except Exception:
+    VectorDeduplicator = None
+    get_managed_embedding = None
     THREAT_SUMMARIZE_SYSTEM_PROMPT = (
         "You are a concise threat analyst. Summarize salient facts, location, "
         "impact to people/operations/mobility, and immediate guidance in 3–5 bullets."
@@ -389,12 +397,15 @@ def _safe_cosine(a, b):
     denom = (np.linalg.norm(a) * np.linalg.norm(b)) or 1.0
     return float(np.dot(a, b) / denom)
 
-def get_embedding(text: str, client: OpenAI | None):
+def get_embedding(text: str, client=None):
     """
-    Defensive embedding:
-    - If real embeddings available, you can enable here.
-    - Default: stable hashed pseudo-embedding (no external calls).
+    Legacy embedding function - redirects to managed embedding system.
+    Kept for backward compatibility.
     """
+    if get_managed_embedding is not None:
+        return get_managed_embedding(text, client)
+    
+    # Fallback to hash-based pseudo-embedding if managed system unavailable
     try:
         # Example (disabled by default):
         # resp = client.embeddings.create(model="text-embedding-3-small", input=text[:8192])
@@ -418,24 +429,21 @@ def alert_hash(alert: dict) -> str:
 
 def deduplicate_alerts(
     alerts: list[dict],
-    existing_alerts: list[dict],
-    openai_client: OpenAI | None = None,
+    existing_alerts: list[dict] = None,
+    openai_client=None,
     sim_threshold: float = SEMANTIC_DEDUP_THRESHOLD,
     enable_semantic: bool = ENABLE_SEMANTIC_DEDUP,
 ):
+    """
+    Deduplicate alerts using hash-based and vector-based similarity.
+    Uses direct pgvector database queries for efficient semantic deduplication.
+    """
+    if not alerts:
+        return []
+    
+    # Hash-based deduplication first (fast exact/near-exact matches)
     known_hashes = {alert_hash(a): a for a in (existing_alerts or [])}
     deduped_alerts = []
-    known_embeddings = []
-
-    if enable_semantic and openai_client and existing_alerts:
-        try:
-            known_embeddings = [
-                get_embedding((a.get("title","")+" "+a.get("summary",""))[:4096], openai_client)
-                for a in existing_alerts
-            ]
-        except Exception as e:
-            logger.warning(f"Semantic dedup init failed, falling back to lexical only: {e}")
-            enable_semantic = False
 
     for alert in alerts or []:
         h = alert_hash(alert)
@@ -447,14 +455,56 @@ def deduplicate_alerts(
                     existing[field] = alert.get(field, "")
             continue
 
-        if enable_semantic and openai_client and known_embeddings:
+        # Vector-based semantic deduplication
+        if enable_semantic and openai_client:
             try:
-                emb = get_embedding((alert.get("title","")+" "+alert.get("summary",""))[:4096], openai_client)
-                if any(_safe_cosine(emb, kemb) > sim_threshold for kemb in known_embeddings):
-                    continue
-                known_embeddings.append(emb)
+                text = f"{alert.get('title','')} {alert.get('summary','')}"[:4096]
+                
+                # Use the quota-managed embedding system
+                from risk_shared import embedding_manager
+                emb = embedding_manager.get_embedding_safe(text, openai_client)
+                
+                # Check vector DB for similarity using pgvector-compatible queries
+                if emb:
+                    try:
+                        # pgvector-compatible approach using REAL[] arrays
+                        from db_utils import fetch_one
+                        row = fetch_one(
+                            "SELECT uuid, 1 - (embedding <=> %s::REAL[]) as similarity FROM alerts WHERE embedding IS NOT NULL AND 1 - (embedding <=> %s::REAL[]) > %s ORDER BY embedding <=> %s::REAL[] LIMIT 1",
+                            (emb, emb, sim_threshold, emb)
+                        )
+                        
+                        if row and len(row) >= 2:
+                            similarity = float(row[1])
+                            duplicate_uuid = row[0]
+                            logger.info(f"Semantic duplicate found: {alert.get('uuid')} ~ {duplicate_uuid} (sim: {similarity:.2f})")
+                            continue  # Skip duplicate
+                        
+                        # Add embedding to alert for persistence by save_alerts_to_db()
+                        alert["embedding"] = emb
+                        
+                    except Exception as e:
+                        logger.warning(f"pgvector query failed, trying fallback: {e}")
+                        
+                        # Fallback to JSONB approach if needed
+                        import json
+                        embedding_json = json.dumps(emb)
+                        magnitude = (sum(x * x for x in emb) ** 0.5)
+                        row = fetch_one(
+                            "SELECT alert_uuid, similarity FROM find_similar_alerts_fast(%s::JSONB, %s, %s, 1, 0.1)",
+                            (embedding_json, magnitude, sim_threshold)
+                        )
+                        
+                        if row and len(row) >= 2:
+                            similarity = float(row[1])
+                            duplicate_uuid = row[0]
+                            logger.info(f"Semantic duplicate found (fallback): {alert.get('uuid')} ~ {duplicate_uuid} (sim: {similarity:.2f})")
+                            continue  # Skip duplicate
+                        
+                        alert["embedding"] = emb
+                    
             except Exception as e:
-                logger.warning(f"Semantic dedup per-item failed, using lexical only: {e}")
+                logger.warning(f"Semantic dedup failed for alert, using hash-only: {e}")
 
         deduped_alerts.append(alert)
         known_hashes[h] = alert

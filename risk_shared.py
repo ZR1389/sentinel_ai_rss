@@ -29,93 +29,30 @@ except Exception as e:
     def unidecode(s: str) -> str:  # no-op fallback
         return s
 
-# ---------------------- Canonical taxonomies ----------------------
-CATEGORY_KEYWORDS: Dict[str, List[str]] = {
-    "Crime": [
-        "robbery","assault","shooting","stabbing","murder","burglary","theft","carjacking","homicide","looting",
-        # add a few common crime verbs/nouns
-        "kidnap","kidnapping","abduction","arson","home invasion"
-    ],
-    "Terrorism": [
-        "ied","vbied","suicide bomber","terrorist","bomb","explosion","martyrdom",
-        # expanded kinetic/munitions
-        "blast","grenade","improvised explosive","car bomb","truck bomb","shelling","mortar","drone strike","airstrike","air strike","artillery"
-    ],
-    "Civil Unrest": [
-        "protest","riot","demonstration","march","sit-in","clash","looting","roadblock","strike"
-    ],
-    "Cyber": [
-        "ransomware","phishing","malware","breach","ddos","credential","data leak","data leakage",
-        "zero-day","zero day","cve","exploit","backdoor","credential stuffing","wiper","data breach"
-    ],
-    "Infrastructure": [
-        "substation","pipeline","power outage","grid","transformer","telecom","fiber","water plant","facility","sabotage","blackout",
-        "subsea cable","dam","bridge","transformer fire"
-    ],
-    "Environmental": [
-        "earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide","tornado","cyclone"
-    ],
-    "Epidemic": [
-        "epidemic","pandemic","outbreak","cholera","dengue","covid","ebola","avian flu"
-    ],
-    "Other": []
-}
-
-SUBCATEGORY_MAP: Dict[str, Dict[str, str]] = {
-    "Crime": {
-        "robbery":"Armed Robbery","assault":"Aggravated Assault","shooting":"Targeted Shooting",
-        "stabbing":"Knife Attack","burglary":"Burglary","carjacking":"Carjacking","looting":"Looting",
-        "kidnap":"Kidnap","kidnapping":"Kidnap"
-    },
-    "Terrorism": {
-        "ied":"IED Attack","vbied":"VBIED","suicide bomber":"Suicide Attack","bomb":"Bombing","explosion":"Bombing",
-        "grenade":"Grenade Attack","drone strike":"Drone Strike","airstrike":"Airstrike","air strike":"Airstrike"
-    },
-    "Civil Unrest": {
-        "protest":"Protest","riot":"Riot","looting":"Looting","strike":"Strike/Industrial Action",
-        "roadblock":"Road Blockade","clash":"Police–Protester Clash"
-    },
-    "Cyber": {
-        "ransomware":"Ransomware","phishing":"Phishing","breach":"Data Breach","ddos":"DDoS",
-        "credential":"Account Takeover","zero-day":"Zero-Day Exploit","zero day":"Zero-Day Exploit",
-        "cve":"Vulnerability Exploitation","credential stuffing":"Credential Stuffing","wiper":"Wiper Malware",
-        "data leak":"Data Leak","data leakage":"Data Leak"
-    },
-    "Infrastructure": {
-        "pipeline":"Pipeline Incident","substation":"Substation Sabotage","grid":"Grid Disruption",
-        "power outage":"Power Outage","telecom":"Telecom Outage","water plant":"Water Utility Incident",
-        "facility":"Facility Incident","blackout":"Power Outage","subsea cable":"Subsea Cable Disruption",
-        "dam":"Dam Incident","bridge":"Bridge Closure/Incident","transformer":"Transformer Incident"
-    },
-    "Environmental": {
-        "flood":"Flooding","hurricane":"Hurricane/Typhoon","earthquake":"Earthquake",
-        "wildfire":"Wildfire","storm":"Severe Storm","landslide":"Landslide","heatwave":"Heatwave",
-    },
-    "Epidemic": {
-        "cholera":"Cholera","dengue":"Dengue","covid":"COVID-19","ebola":"Ebola","avian flu":"Avian Influenza","outbreak":"Disease Outbreak",
-    },
-}
-
-DOMAIN_KEYWORDS: Dict[str, List[str]] = {
-    "travel_mobility": ["travel","route","road","highway","checkpoint","curfew","airport","border","port","rail","metro","detour","closure","traffic","mobility","bridge","service suspended"],
-    "cyber_it": ["cyber","hacker","phishing","ransomware","malware","data breach","ddos","credential","mfa","passkey","vpn","exploit","zero-day","zero day","cve","edr","credential stuffing","wiper"],
-    "digital_privacy_surveillance": ["surveillance","counter-surveillance","device check","imsi","stingray","tracking","tail","biometric","unlock","spyware","pegasus","finfisher","watchlist"],
-    "physical_safety": ["kidnap","abduction","theft","assault","shooting","stabbing","robbery","looting","attack","murder","grenade","arson"],
-    "civil_unrest": ["protest","riot","demonstration","clash","strike","roadblock","sit-in","march"],
-    "kfr_extortion": ["kidnap","kidnapping","kfr","ransom","extortion","hostage"],
-    "infrastructure_utilities": ["infrastructure","power","grid","substation","pipeline","telecom","fiber","facility","sabotage","water","blackout","subsea cable","transformer","dam"],
-    "environmental_hazards": ["earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide","tornado","cyclone"],
-    "public_health_epidemic": ["epidemic","pandemic","outbreak","cholera","dengue","covid","ebola","avian flu"],
-    "ot_ics": ["scada","ics","plc","ot","industrial control","hmi"],
-    "info_ops_disinfo": ["misinformation","disinformation","propaganda","info ops","psyop"],
-    "legal_regulatory": ["visa","immigration","border control","curfew","checkpoint order","permit","license","ban","restriction"],
-    "business_continuity_supply": ["supply chain","logistics","port congestion","warehouse","shortage","inventory"],
-    "insider_threat": ["insider","employee","privileged access","badge","tailgating"],
-    "residential_premises": ["residential","home invasion","burglary","apartment","compound"],
-    "emergency_medical": ["casualty","injured","fatalities","triage","medical","ambulance"],
-    "counter_surveillance": ["surveillance","tail","followed","sdr","sd r","surveillance detection"],
-    "terrorism": ["ied","vbied","suicide bomber","terrorist","bomb","explosion","drone strike","airstrike","air strike","grenade","blast","mortar","artillery"]
-}
+# ---------------------- Import keywords from centralized source ----------------------
+try:
+    from keywords_loader import (
+        CATEGORY_KEYWORDS, SUBCATEGORY_MAP, DOMAIN_KEYWORDS,
+        get_all_keywords, get_keywords_by_category, get_keywords_by_domain
+    )
+except ImportError:
+    # Fallback to basic keywords if keywords_loader is not available
+    CATEGORY_KEYWORDS: Dict[str, List[str]] = {
+        "Crime": ["robbery","assault","shooting","stabbing","murder","burglary","theft","carjacking","homicide","looting","kidnap","kidnapping","abduction","arson","home invasion"],
+        "Terrorism": ["ied","vbied","suicide bomber","terrorist","bomb","explosion","martyrdom","blast","grenade","improvised explosive","car bomb","truck bomb","shelling","mortar","drone strike","airstrike","air strike","artillery"],
+        "Civil Unrest": ["protest","riot","demonstration","march","sit-in","clash","looting","roadblock","strike"],
+        "Cyber": ["ransomware","phishing","malware","breach","ddos","credential","data leak","data leakage","zero-day","zero day","cve","exploit","backdoor","credential stuffing","wiper","data breach"],
+        "Infrastructure": ["substation","pipeline","power outage","grid","transformer","telecom","fiber","water plant","facility","sabotage","blackout","subsea cable","dam","bridge","transformer fire"],
+        "Environmental": ["earthquake","flood","hurricane","storm","wildfire","heatwave","landslide","mudslide","tornado","cyclone"],
+        "Epidemic": ["epidemic","pandemic","outbreak","cholera","dengue","covid","ebola","avian flu"],
+        "Other": []
+    }
+    SUBCATEGORY_MAP: Dict[str, Dict[str, str]] = {}
+    DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+        "travel_mobility": ["travel","route","road","highway","checkpoint","curfew","airport","border","port","rail","metro"],
+        "physical_safety": ["kidnap","abduction","theft","assault","shooting","stabbing","robbery","looting"],
+        "cyber_it": ["cyber","hacker","phishing","ransomware","malware","data breach","ddos"]
+    }
 
 # ---------------------- Text normalization ----------------------
 def _normalize(text: str) -> str:
