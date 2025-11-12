@@ -12,26 +12,107 @@ All other modules should import from here to maintain consistency.
 
 import json
 import os
-from typing import Dict, List
+import logging
+from typing import Dict, List, Any
 
-# Load the base keyword data from threat_keywords.json
+# Setup logger for keywords validation
+logger = logging.getLogger(__name__)
+
+def validate_keywords(data: Any) -> None:
+    """
+    Validate threat keywords data structure and content.
+    
+    Args:
+        data: The loaded JSON data to validate
+        
+    Raises:
+        ValueError: If data structure is invalid
+    """
+    if not isinstance(data, dict):
+        raise ValueError("Keywords data must be a dictionary")
+    
+    # Validate basic keywords array
+    if "keywords" not in data:
+        raise ValueError("Missing required 'keywords' field")
+    
+    keywords = data["keywords"]
+    if not isinstance(keywords, list):
+        raise ValueError("'keywords' field must be a list")
+    
+    if len(keywords) == 0:
+        logger.warning("Keywords list is empty")
+    
+    for i, keyword in enumerate(keywords):
+        if not isinstance(keyword, str):
+            raise ValueError(f"Keyword at index {i} must be a string, got {type(keyword)}")
+        if not keyword.strip():
+            raise ValueError(f"Keyword at index {i} is empty or whitespace")
+    
+    # Validate translated keywords if present
+    if "translated" in data:
+        translated = data["translated"]
+        if not isinstance(translated, dict):
+            raise ValueError("'translated' field must be a dictionary")
+        
+        for category, translations in translated.items():
+            if not isinstance(translations, dict):
+                raise ValueError(f"Translation category '{category}' must be a dictionary")
+            
+            for lang_code, terms in translations.items():
+                if not isinstance(terms, list):
+                    raise ValueError(f"Translation terms for {category}.{lang_code} must be a list")
+                
+                for j, term in enumerate(terms):
+                    if not isinstance(term, str):
+                        raise ValueError(f"Translation term at {category}.{lang_code}[{j}] must be a string")
+                    if not term.strip():
+                        raise ValueError(f"Translation term at {category}.{lang_code}[{j}] is empty")
+    
+    # Validate conditional keywords if present
+    if "conditional" in data:
+        conditional = data["conditional"]
+        if not isinstance(conditional, dict):
+            raise ValueError("'conditional' field must be a dictionary")
+    
+    logger.info(f"Keywords validation passed: {len(keywords)} base keywords, "
+                f"{len(data.get('translated', {}))} translation categories")
+
 def _load_keyword_data() -> Dict:
-    """Load keyword data from the JSON file with proper path resolution."""
+    """
+    Load and validate keyword data from threat_keywords.json.
+    
+    Returns:
+        Dict: Validated keyword data
+    """
     # Try different possible paths
     possible_paths = [
         "config/threat_keywords.json",
-        "threat_keywords.json",
+        "threat_keywords.json", 
         os.path.join(os.path.dirname(__file__), "config/threat_keywords.json"),
         os.path.join(os.path.dirname(__file__), "threat_keywords.json")
     ]
     
     for path in possible_paths:
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    validate_keywords(data)
+                    logger.info(f"Successfully loaded and validated keywords from: {path}")
+                    return data
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in {path}: {e}")
+                continue
+            except ValueError as e:
+                logger.error(f"Keywords validation failed for {path}: {e}")
+                continue
+            except Exception as e:
+                logger.error(f"Failed to load keywords from {path}: {e}")
+                continue
     
-    # Fallback empty structure if file not found
-    print(f"Warning: threat_keywords.json not found in any of these locations: {possible_paths}")
+    # Fallback empty structure if file not found or all failed
+    logger.warning(f"threat_keywords.json not found or invalid in locations: {possible_paths}")
+    logger.warning("Using fallback empty keyword structure")
     return {"keywords": [], "conditional": {"broad_terms": [], "impact_terms": []}, "translated": {}}
 
 KEYWORD_DATA = _load_keyword_data()
