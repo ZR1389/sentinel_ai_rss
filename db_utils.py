@@ -63,6 +63,32 @@ def close_connection_pool():
         finally:
             _connection_pool = None
 
+def _coerce_numeric(value, default, min_val=None, max_val=None):
+    """
+    Safely coerce to numeric with bounds checking.
+    
+    Args:
+        value: Input value to coerce
+        default: Default value if coercion fails or value is None
+        min_val: Minimum allowed value (optional)
+        max_val: Maximum allowed value (optional)
+    
+    Returns:
+        Numeric value within bounds or default
+    """
+    try:
+        num = float(value) if value is not None else default
+        # Handle NaN values by using default
+        if num != num:  # NaN check (NaN != NaN is True)
+            num = default
+        if min_val is not None:
+            num = max(min_val, num)
+        if max_val is not None:
+            num = min(max_val, num)
+        return num
+    except (ValueError, TypeError):
+        return default
+
 def _conn():
     """Get connection from pool."""
     try:
@@ -222,8 +248,8 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             Json(tags),                           # jsonb
             a.get("language") or "en",
             a.get("ingested_at") or datetime.utcnow(),
-            a.get("latitude"),
-            a.get("longitude"),
+            _coerce_numeric(a.get("latitude"), None, -90, 90),   # latitude: -90 to 90
+            _coerce_numeric(a.get("longitude"), None, -180, 180), # longitude: -180 to 180
             a.get("source_tag"),
             a.get("source_kind"),
             sp,
@@ -356,14 +382,12 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         is_anomaly   = bool(a.get("is_anomaly") or a.get("anomaly_flag") or False)
         anomaly_flag = bool(a.get("anomaly_flag") or False)
 
-        # Safe defaults
-        incident_count_30d = a.get("incident_count_30d", 0) or 0
-        recent_count_7d    = a.get("recent_count_7d", 0) or 0
-        baseline_avg_7d    = a.get("baseline_avg_7d", 0) or 0
+        # Safe defaults with numeric coercion
+        incident_count_30d = _coerce_numeric(a.get("incident_count_30d"), 0, 0, None)
+        recent_count_7d    = _coerce_numeric(a.get("recent_count_7d"), 0, 0, None)
+        baseline_avg_7d    = _coerce_numeric(a.get("baseline_avg_7d"), 0, 0, None)
 
-        baseline_ratio = a.get("baseline_ratio")
-        if baseline_ratio is None:
-            baseline_ratio = 1.0
+        baseline_ratio = _coerce_numeric(a.get("baseline_ratio"), 1.0, 0, None)
 
         trend_direction = a.get("trend_direction") or "stable"
 
@@ -380,11 +404,11 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("country"),
             a.get("city"),
             a.get("category") or a.get("type"),
-            a.get("category_confidence") or a.get("type_confidence"),
+            _coerce_numeric(a.get("category_confidence") or a.get("type_confidence"), 0.5, 0, 1),
             a.get("threat_level") or a.get("label"),
             a.get("threat_label") or a.get("label"),
-            a.get("score"),
-            a.get("confidence"),
+            _coerce_numeric(a.get("score"), 0, 0, 100),  # score: 0-100
+            _coerce_numeric(a.get("confidence"), 0.5, 0, 1),  # confidence: 0-1
             a.get("reasoning"),
             a.get("review_flag"),
             a.get("review_notes"),
@@ -395,9 +419,9 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("legal_risk"),
             a.get("cyber_ot_risk"),
             a.get("environmental_epidemic_risk"),
-            a.get("keyword_weight"),
+            _coerce_numeric(a.get("keyword_weight"), 0, 0, None),
             tags,                 # alerts.tags is text[]
-            a.get("trend_score"),
+            _coerce_numeric(a.get("trend_score"), 0, 0, 100),
             a.get("trend_score_msg"),
             bool(is_anomaly),
             ewi,                  # text[]
@@ -412,12 +436,12 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             baseline_ratio,
             trend_direction,
             bool(anomaly_flag),
-            a.get("future_risk_probability"),
+            _coerce_numeric(a.get("future_risk_probability"), 0.25, 0, 1),  # probability: 0-1
             a.get("reports_analyzed"),
             _json(sources),       # jsonb
             a.get("cluster_id"),
-            a.get("latitude"),
-            a.get("longitude"),
+            _coerce_numeric(a.get("latitude"), None, -90, 90),   # latitude: -90 to 90
+            _coerce_numeric(a.get("longitude"), None, -180, 180), # longitude: -180 to 180
             a.get("location_method") or "unknown",
             a.get("location_confidence") or "medium", 
             bool(a.get("location_sharing", True)),
@@ -803,7 +827,8 @@ def save_region_trend(
             updated_at = NOW()
         """
         execute(sql, (
-            region, city, trend_window_start, trend_window_end, int(incident_count), categories or []
+            region, city, trend_window_start, trend_window_end, 
+            _coerce_numeric(incident_count, 0, 0, None), categories or []
         ))
     except Exception as e:
         logger.info("save_region_trend skipped (table may not exist): %s", e)
