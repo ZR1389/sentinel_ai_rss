@@ -222,6 +222,81 @@ def check_environment_health() -> Dict[str, Any]:
         "git_commit": os.getenv("RAILWAY_GIT_COMMIT_SHA", "unknown")[:8] if os.getenv("RAILWAY_GIT_COMMIT_SHA") else "unknown"
     }
 
+def check_alert_pipeline_health() -> Dict[str, Any]:
+    """Check alert processing pipeline health."""
+    try:
+        from db_utils import fetch_one
+        
+        # Check if we have recent alerts
+        try:
+            result = fetch_one("""
+                SELECT COUNT(*) FROM alerts 
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+            """)
+            recent_alerts = result[0] if result else 0
+        except Exception:
+            recent_alerts = 0
+        
+        # Check total alert count
+        try:
+            result = fetch_one("SELECT COUNT(*) FROM alerts")
+            total_alerts = result[0] if result else 0
+        except Exception:
+            total_alerts = 0
+            
+        return {
+            "total_alerts": total_alerts,
+            "recent_alerts_24h": recent_alerts,
+            "pipeline_active": total_alerts > 0,
+            "error": None
+        }
+        
+    except Exception as e:
+        return {
+            "total_alerts": 0,
+            "recent_alerts_24h": 0,
+            "pipeline_active": False,
+            "error": str(e)
+        }
+
+def check_llm_ping() -> Dict[str, Any]:
+    """Lightweight LLM ping test (actual API call with timeout)."""
+    try:
+        from xai_client import XAI_API_KEY, grok_chat
+        
+        if not XAI_API_KEY:
+            return {"ping_successful": False, "error": "XAI_API_KEY not set"}
+            
+        # Very lightweight test message
+        test_msg = [{"role": "user", "content": "ping"}]
+        
+        try:
+            result = grok_chat(test_msg, timeout=5)
+            return {
+                "ping_successful": bool(result),
+                "response_received": True,
+                "error": None
+            }
+        except Exception as api_error:
+            return {
+                "ping_successful": False,
+                "response_received": False,
+                "error": str(api_error)
+            }
+            
+    except ImportError:
+        return {
+            "ping_successful": False,
+            "response_received": False,
+            "error": "XAI client not available"
+        }
+    except Exception as e:
+        return {
+            "ping_successful": False,
+            "response_received": False,
+            "error": str(e)
+        }
+
 def perform_health_check() -> Dict[str, Any]:
     """Perform comprehensive health check and return status."""
     timestamp = datetime.utcnow().isoformat() + "Z"
@@ -254,6 +329,16 @@ def perform_health_check() -> Dict[str, Any]:
     if not vector_check["system_ready"]:
         issues.append(f"Vector deduplication system not ready: {vector_check['error']}")
     
+    # Alert pipeline check
+    alert_pipeline_check = check_alert_pipeline_health()
+    if not alert_pipeline_check["pipeline_active"]:
+        issues.append("Alert processing pipeline not active or no recent alerts")
+    
+    # LLM ping check
+    llm_ping_check = check_llm_ping()
+    if not llm_ping_check["ping_successful"]:
+        issues.append(f"LLM ping test failed: {llm_ping_check['error']}")
+    
     # Overall status
     status = "healthy" if not issues else "unhealthy"
     
@@ -269,7 +354,9 @@ def perform_health_check() -> Dict[str, Any]:
             "llm": llm_check,
             "cache": cache_check,
             "vector_system": vector_check,
-            "environment": env_check
+            "environment": env_check,
+            "alert_pipeline": alert_pipeline_check,
+            "llm_ping": llm_ping_check
         }
     }
 
