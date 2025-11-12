@@ -23,13 +23,14 @@ RUN python -m venv $VIRTUAL_ENV && \
     $VIRTUAL_ENV/bin/pip install --upgrade pip setuptools wheel && \
     $VIRTUAL_ENV/bin/pip install -r requirements.txt
 
-# Install xai-sdk from xAI's index
-RUN $VIRTUAL_ENV/bin/pip install xai-sdk --extra-index-url=https://pypi.xai.io/simple
+# Install xai-sdk from xAI's index (with fallback)
+RUN $VIRTUAL_ENV/bin/pip install xai-sdk --extra-index-url=https://pypi.xai.io/simple || \
+    echo "Warning: xai-sdk installation failed, continuing without it"
 
 # Copy application code
 COPY . .
 
 EXPOSE 8080
 
-# Use shell form to allow environment variable expansion
-CMD gunicorn main:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2
+# Use Railway's provided PORT with fallback
+CMD ["sh", "-c", "gunicorn main:app --bind 0.0.0.0:${PORT:-8080} --timeout 300 --workers 2"]
