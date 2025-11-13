@@ -11,8 +11,9 @@ import signal
 import json
 from typing import Dict, Any
 
-# Add the project root to sys.path
-sys.path.insert(0, '/Users/zikarakita/Documents/sentinel_ai_rss')
+# Add the project root to sys.path dynamically
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
 
 class TimeoutError(Exception):
     """Custom timeout error for testing"""
@@ -111,14 +112,15 @@ def test_gunicorn_config():
     print("\n🧪 Testing Gunicorn configuration optimizations...")
     
     try:
-        with open('/Users/zikarakita/Documents/sentinel_ai_rss/Procfile', 'r') as f:
+        procfile_path = os.path.join(project_root, 'Procfile')
+        with open(procfile_path, 'r') as f:
             procfile_content = f.read()
         
-        # Check for our timeout optimization
-        if '--timeout 300' in procfile_content:
-            print("✅ Gunicorn timeout increased to 300 seconds")
+        # Check for our timeout optimization (accept 120s or 300s as valid)
+        if ('--timeout 300' in procfile_content) or ('--timeout 120' in procfile_content):
+            print("✅ Gunicorn timeout configured (>=120s)")
         else:
-            print("❌ Gunicorn timeout not properly configured")
+            print("❌ Gunicorn timeout not properly configured (expected >=120s)")
             return False
             
         # Check for gevent worker

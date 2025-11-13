@@ -8,8 +8,15 @@ import os
 import sys
 import json
 
-# Add current directory to path to import advisor
-sys.path.insert(0, '/Users/zikarakita/Documents/sentinel_ai_rss')
+# Ensure project root on path and disable real LLM calls for deterministic tests
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, project_root)
+
+# Force advisor to skip real LLM calls and use deterministic fallback
+os.environ.setdefault("ADVISOR_PROVIDER_PRIMARY", "none")
+os.environ.setdefault("ADVISOR_PROVIDER_SECONDARY", "none")
+os.environ.setdefault("ADVISOR_PROVIDER_TERTIARY", "none")
+os.environ.setdefault("ADVISOR_PROVIDER_QUATERNARY", "none")
 
 try:
     from advisor import _validate_location_match, generate_advice

@@ -1,6 +1,7 @@
 import os
 import signal
 import logging
+import threading
 from contextlib import contextmanager
 from xai_sdk import Client
 from xai_sdk.chat import user, system
@@ -16,17 +17,30 @@ TEMPERATURE = CONFIG.llm.xai_temperature
 
 @contextmanager
 def _timeout(seconds: int):
-    """Force-timeout wrapper for blocking calls using SIGALRM"""
+    """Force-timeout wrapper for blocking calls using SIGALRM (main thread only).
+    Falls back to no alarm when not in main thread to avoid runtime errors.
+    """
+    if threading.current_thread() is not threading.main_thread() or seconds <= 0:
+        # No-op timeout context outside main thread
+        yield
+        return
+
     def timeout_handler(signum, frame):
         raise TimeoutError(f"LLM call exceeded {seconds}s")
-    
-    # Set the signal handler
+
+    # Set the signal handler (main thread only)
+    prev_handler = signal.getsignal(signal.SIGALRM)
     signal.signal(signal.SIGALRM, timeout_handler)
     signal.alarm(seconds)
     try:
         yield
     finally:
         signal.alarm(0)  # Cancel the alarm
+        # Restore previous handler to be safe
+        try:
+            signal.signal(signal.SIGALRM, prev_handler)
+        except Exception:
+            pass
 
 @rate_limited("xai")
 def grok_chat(messages, model=XAI_MODEL, temperature=TEMPERATURE, timeout=15):

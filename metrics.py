@@ -84,24 +84,35 @@ class EnhancedMetricsCollector:
         try:
             self.db_path = "metrics.db"
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self.conn.execute("""
+            self.conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS metrics_samples (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     value REAL NOT NULL,
                     timestamp TEXT NOT NULL,
                     tags TEXT,
-                    metric_type TEXT,
-                    INDEX(name, timestamp)
+                    metric_type TEXT
                 )
-            """)
-            self.conn.execute("""
+                """
+            )
+            # Create index separately for SQLite compatibility
+            try:
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_metrics_samples_name_ts ON metrics_samples(name, timestamp)"
+                )
+            except Exception:
+                pass
+
+            self.conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS performance_baselines (
                     metric_name TEXT PRIMARY KEY,
                     baseline_value REAL NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-            """)
+                """
+            )
             self.conn.commit()
         except Exception as e:
             logger.warning(f"Failed to initialize metrics storage: {e}")

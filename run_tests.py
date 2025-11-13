@@ -41,9 +41,14 @@ def run_test_category(category_name, test_path):
         
         try:
             # Change to project root for relative imports
+            # Set PYTHONPATH to ensure imports work correctly
+            env = os.environ.copy()
+            env['PYTHONPATH'] = str(project_root)
+            
             result = subprocess.run(
                 [python_exe, str(test_file)],
                 cwd=project_root,
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=120  # 2 minute timeout per test

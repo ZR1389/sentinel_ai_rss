@@ -5,8 +5,12 @@ Shows how the enhanced patterns handle various spacing issues and formatting pro
 """
 
 import sys
+import os
 import re
-sys.path.append('/Users/zikarakita/Documents/sentinel_ai_rss')
+
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
 
 def test_header_patterns():
     """Test the improved header patterns against various formatting scenarios."""

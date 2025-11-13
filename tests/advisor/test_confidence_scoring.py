@@ -12,7 +12,8 @@ import json
 from datetime import datetime
 
 # Add project root to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
 
 # Import the function we're testing
 try:

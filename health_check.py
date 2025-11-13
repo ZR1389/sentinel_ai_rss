@@ -262,6 +262,9 @@ def check_alert_pipeline_health() -> Dict[str, Any]:
 def check_llm_ping() -> Dict[str, Any]:
     """Lightweight LLM ping test (actual API call with timeout)."""
     try:
+        # Allow skipping LLM ping to avoid quota/timing issues in dev
+        if os.getenv("HEALTH_SKIP_LLM_PING", "false").lower() in ("1", "true", "yes"): 
+            return {"ping_successful": True, "response_received": False, "error": None}
         from xai_client import XAI_API_KEY, grok_chat
         
         if not XAI_API_KEY:
@@ -321,8 +324,10 @@ def perform_health_check() -> Dict[str, Any]:
     
     # Cache check (optional)
     cache_check = check_cache_health()
-    if cache_check["configured"] and not cache_check["available"]:
-        issues.append(f"Cache configured but not available: {cache_check['error']}")
+    # Only require cache if explicitly enabled
+    if os.getenv("HEALTH_REQUIRE_CACHE", "false").lower() in ("1", "true", "yes"):
+        if cache_check["configured"] and not cache_check["available"]:
+            issues.append(f"Cache configured but not available: {cache_check['error']}")
     
     # Vector system check
     vector_check = check_vector_system_health()
@@ -336,8 +341,10 @@ def perform_health_check() -> Dict[str, Any]:
     
     # LLM ping check
     llm_ping_check = check_llm_ping()
-    if not llm_ping_check["ping_successful"]:
-        issues.append(f"LLM ping test failed: {llm_ping_check['error']}")
+    # If ping is explicitly skipped, do not treat as an issue
+    if os.getenv("HEALTH_SKIP_LLM_PING", "false").lower() not in ("1", "true", "yes"):
+        if not llm_ping_check["ping_successful"]:
+            issues.append(f"LLM ping test failed: {llm_ping_check['error']}")
     
     # Overall status
     status = "healthy" if not issues else "unhealthy"

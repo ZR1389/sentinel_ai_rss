@@ -1,8 +1,15 @@
 
 # main.py — Sentinel AI App API (JWT-guarded) • v2025-08-13
 from __future__ import annotations
+import os
 from dotenv import load_dotenv
-load_dotenv()
+
+# Load .env.dev if present (for local dev), otherwise fall back to .env
+if os.path.exists('.env.dev'):
+    load_dotenv('.env.dev', override=True)
+else:
+    load_dotenv()
+
 # Notes:
 # - Only /chat counts toward plan usage, and only AFTER a successful advisory.
 # - /rss/run and /engine/run are backend ops and are NOT metered.

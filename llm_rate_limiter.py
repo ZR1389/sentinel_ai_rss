@@ -361,6 +361,10 @@ class EnhancedCircuitBreaker:
                 "state_transitions": list(self.state_transitions)[-5:],  # Last 5 transitions
             }
 
+# Backward-compatibility alias for older tests/imports
+class CircuitBreaker(EnhancedCircuitBreaker):
+    pass
+
 # Enhanced circuit breakers with comprehensive monitoring
 openai_circuit = EnhancedCircuitBreaker(name="openai", failure_threshold=5, recovery_timeout=300)
 xai_circuit = EnhancedCircuitBreaker(name="xai", failure_threshold=3, recovery_timeout=180)

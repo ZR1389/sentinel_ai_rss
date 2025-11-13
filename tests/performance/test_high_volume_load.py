@@ -11,7 +11,9 @@ from collections import defaultdict
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
 
 from llm_rate_limiter import (
     get_all_rate_limit_stats, 
@@ -171,6 +173,8 @@ class HighVolumeLoadTest:
         print(f"\n🔧 RATE LIMITING STATUS:")
         rate_stats = get_all_rate_limit_stats()
         for service, stats in rate_stats.items():
+            if not isinstance(stats, dict):
+                continue  # Skip non-service keys like timestamps
             remaining_pct = (stats["remaining_tokens"] / stats["capacity"]) * 100
             print(f"  {service.upper():>8}: {stats['requests_last_minute']:>3} req/min, "
                   f"{remaining_pct:>5.1f}% tokens remaining")
@@ -179,6 +183,8 @@ class HighVolumeLoadTest:
         print(f"\n⚡ CIRCUIT BREAKER STATUS:")
         cb_stats = get_all_circuit_breaker_stats()
         for service, stats in cb_stats.items():
+            if not isinstance(stats, dict):
+                continue  # Skip non-service keys like timestamps
             state_emoji = "🟢" if stats["state"] == "closed" else "🔴"
             print(f"  {service.upper():>8}: {state_emoji} {stats['state'].upper()} "
                   f"(failures: {stats['failure_count']})")

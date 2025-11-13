@@ -11,6 +11,12 @@ from advisor import render_advisory
 
 def test_llm_constraints_injection():
     """Test that LLM constraints are properly injected based on location validation"""
+    # Force advisor to skip real LLM calls and use deterministic fallback
+    # by setting unknown providers that the router won't invoke.
+    os.environ.setdefault("ADVISOR_PROVIDER_PRIMARY", "none")
+    os.environ.setdefault("ADVISOR_PROVIDER_SECONDARY", "none")
+    os.environ.setdefault("ADVISOR_PROVIDER_TERTIARY", "none")
+    os.environ.setdefault("ADVISOR_PROVIDER_QUATERNARY", "none")
     
     print("=== Testing LLM Constraints Injection for Location Rules ===\n")
     
@@ -154,6 +160,11 @@ def test_constraints_data_structure():
 
 if __name__ == "__main__":
     print("Testing Enhanced LLM Constraints for Location Rules Enforcement\n")
+    # Ensure deterministic fallback in direct-run mode too
+    os.environ.setdefault("ADVISOR_PROVIDER_PRIMARY", "none")
+    os.environ.setdefault("ADVISOR_PROVIDER_SECONDARY", "none")
+    os.environ.setdefault("ADVISOR_PROVIDER_TERTIARY", "none")
+    os.environ.setdefault("ADVISOR_PROVIDER_QUATERNARY", "none")
     
     # First test the constraints data structure
     test_constraints_data_structure()

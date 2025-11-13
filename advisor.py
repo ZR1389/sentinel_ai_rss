@@ -1311,17 +1311,13 @@ def _fallback_advisory(alert: Dict[str, Any], trend_line: str, input_data: Dict[
     lines.append("FORECAST —")
     lines.append(f"• Direction: {alert.get('trend_direction','stable')} | Next review: {next_review} | Early warnings: {', '.join(ewi) if ewi else 'none'}")
 
-    # Replace verbose EXPLANATION with concise version
+    # Replace verbose EXPLANATION with concise version (max 2 lines)
     explanation_lines = [
         f"• {trend_line[:150]}...",  # Truncate to prevent rambling
         "• Confidence adjusted for location precision and source reliability."
     ]
-    
-    if location_score < 30:
-        explanation_lines.append(f"• ⚠️ Low location match score ({location_score}/100) due to geographic data mismatch.")
-    
-    if not is_valid:
-        explanation_lines.append(f"• ⚠️ Insufficient incident data (incident_count_30d < 5).")
+    # Note: Any warnings about location/data are presented in dedicated sections
+    # (GEOGRAPHIC VALIDATION — / DATA PROVENANCE —) to keep EXPLANATION concise.
     
     lines.append("EXPLANATION —")
     lines.extend(explanation_lines)
