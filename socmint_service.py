@@ -2,7 +2,7 @@
 from apify_client import ApifyClient
 import os
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 class SocmintService:
     def save_socmint_data(self, user_id, platform, username, data):
@@ -24,15 +24,9 @@ class SocmintService:
         if not token:
             raise RuntimeError("APIFY_API_TOKEN not set")
         self.client = ApifyClient(token)
-        # Allow actor overrides via env for flexibility / rotation
+        # Actor overrides via env
         self.instagram_actor = os.getenv('APIFY_INSTAGRAM_ACTOR', 'apify/instagram-profile-scraper')
-        # Provide a fallback chain for LinkedIn where official actors periodically break
-        # Ordered list; first that returns data wins.
-        self.linkedin_actor_chain: List[str] = [
-            os.getenv('APIFY_LINKEDIN_ACTOR', 'apify/linkedin-profile-scraper'),
-            'apify/linkedin-profile-scraper-lite',            # hypothetical lighter variant
-            'jupri/linkdin-scraper',                          # community actor (name often misspelled intentionally)
-        ]
+        self.twitter_actor = os.getenv('APIFY_TWITTER_ACTOR', 'apify/twitter-scraper')
 
     def _run_actor(self, actor_id: str, run_input: Dict[str, Any]) -> Dict[str, Any]:
         """Helper: run an actor and return {'success': bool, 'run': run, 'items': [...], 'error': str?}"""
@@ -87,42 +81,37 @@ class SocmintService:
         except Exception as e:
             return {"success": False, "platform": "instagram", "username": username, "error": str(e)}
     
-    def scrape_linkedin_profile(self, profile_url: str) -> Dict[str, Any]:
-        """
-        Scrape LinkedIn profile
-        profile_url: Full LinkedIn profile URL
-        """
+    def run_twitter_scraper(self, username: str, tweets_desired: int = 20) -> Dict[str, Any]:
+        """Scrape X/Twitter profile and recent tweets"""
+        actor_id = self.twitter_actor
+        run_input = {
+            "handles": [username],
+            "tweetsDesired": tweets_desired,
+            "addUserInfo": True,
+            "includeReplies": False,
+            "includeRetweets": False,
+            "start": f"https://twitter.com/{username}",
+        }
         try:
-            run_input = {"profileUrls": [profile_url]}
-            last_error: Optional[str] = None
-            items: List[Dict[str, Any]] = []
-            used_actor: Optional[str] = None
-            for actor_id in self.linkedin_actor_chain:
-                result = self._run_actor(actor_id, run_input)
-                if result.get("success"):
-                    items = result["items"]
-                    used_actor = actor_id
-                    break
-                last_error = result.get("error")
-            if items:
-                profile = items[0]
-                return {
-                    "success": True,
-                    "platform": "linkedin",
-                    "actor_used": used_actor,
-                    "data": {
-                        "name": profile.get("name"),
-                        "headline": profile.get("headline"),
-                        "location": profile.get("location"),
-                        "connections": profile.get("connectionsCount"),
-                        "current_company": profile.get("positions", [{}])[0].get("companyName") if profile.get("positions") else None,
-                        "positions": profile.get("positions", [])[:3],  # Last 3 jobs
-                        "education": profile.get("education", []),
-                        "skills": profile.get("skills", [])[:10],
-                        "profile_url": profile_url,
-                        "scraped_at": datetime.utcnow().isoformat()
-                    }
+            run = self.client.actor(actor_id).call(run_input=run_input)
+            dataset_id = run.get("defaultDatasetId")
+            if not dataset_id:
+                return {"success": False, "platform": "twitter", "error": "No dataset id returned"}
+            items = self.client.dataset(dataset_id).list_items().get("items", [])
+            if not items:
+                return {"success": False, "platform": "twitter", "error": "No data returned"}
+            # First item usually contains tweet with embedded user info under 'user'
+            profile = items[0].get("user", {})
+            return {
+                "success": True,
+                "platform": "twitter",
+                "username": username,
+                "data": {
+                    "profile": profile,
+                    "tweets": items[:tweets_desired],
+                    "scraped_at": datetime.utcnow().isoformat(),
+                    "actor_used": actor_id,
                 }
-            return {"success": False, "platform": "linkedin", "error": last_error or "No data returned"}
+            }
         except Exception as e:
-            return {"success": False, "platform": "linkedin", "error": str(e)}
+            return {"success": False, "platform": "twitter", "username": username, "error": str(e)}

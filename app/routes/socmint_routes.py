@@ -19,19 +19,13 @@ def get_instagram_profile(username):
     else:
         return jsonify(result), 400
 
-@socmint_bp.route('/socmint/linkedin', methods=['POST'])
+@socmint_bp.route('/socmint/twitter/<username>', methods=['GET'])
 @login_required
-def get_linkedin_profile():
-    """Scrape LinkedIn profile - requires full URL in body"""
-    data = request.get_json()
-    profile_url = data.get('profile_url')
-    
-    if not profile_url:
-        return jsonify({"error": "profile_url required"}), 400
-    
-    result = socmint_service.scrape_linkedin_profile(profile_url)
-    
-    if result['success']:
-        return jsonify(result), 200
-    else:
-        return jsonify(result), 400
+def get_twitter_profile(username):
+    """Scrape Twitter (X) profile and recent tweets. Optional query param tweets_desired."""
+    try:
+        tweets_desired = int(request.args.get('tweets_desired', '20'))
+    except ValueError:
+        return jsonify({"error": "tweets_desired must be an integer"}), 400
+    result = socmint_service.run_twitter_scraper(username, tweets_desired=tweets_desired)
+    return jsonify(result), (200 if result.get('success') else 400)
