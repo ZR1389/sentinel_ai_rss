@@ -59,6 +59,10 @@ except ImportError:
             logger.info(f"Database operation: {kwargs}")
     metrics = MockMetrics()
 
+# Debug prints to show working directory and files
+logger.info('Current working directory: %s', os.getcwd())
+logger.info('Files in directory: %s', os.listdir('.'))
+
 def cleanup_old_alerts():
     """Delete alerts older than retention period"""
     # Use direct environment access for Railway cron compatibility
