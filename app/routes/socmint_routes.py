@@ -10,7 +10,7 @@ socmint_service = SocmintService()
 
 @socmint_bp.route('/socmint/instagram/<username>', methods=['GET'])
 @login_required
-def get_instagram_profile(current_user, username):
+def get_instagram_profile(username):
     """Scrape Instagram profile"""
     result = socmint_service.scrape_instagram_profile(username)
     
@@ -21,7 +21,7 @@ def get_instagram_profile(current_user, username):
 
 @socmint_bp.route('/socmint/linkedin', methods=['POST'])
 @login_required
-def get_linkedin_profile(current_user):
+def get_linkedin_profile():
     """Scrape LinkedIn profile - requires full URL in body"""
     data = request.get_json()
     profile_url = data.get('profile_url')
