@@ -9,10 +9,10 @@ from config import CONFIG
 
 logger = logging.getLogger("xai_client")
 
-XAI_API_KEY = CONFIG.llm.grok_api_key
+XAI_API_KEY = CONFIG.llm.xai_api_key
 XAI_API_HOST = "api.x.ai"
-GROK_MODEL = CONFIG.llm.grok_model
-TEMPERATURE = CONFIG.llm.grok_temperature
+XAI_MODEL = CONFIG.llm.xai_model
+TEMPERATURE = CONFIG.llm.xai_temperature
 
 @contextmanager
 def _timeout(seconds: int):
@@ -29,7 +29,7 @@ def _timeout(seconds: int):
         signal.alarm(0)  # Cancel the alarm
 
 @rate_limited("xai")
-def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, timeout=15):
+def grok_chat(messages, model=XAI_MODEL, temperature=TEMPERATURE, timeout=15):
     """
     Grok chat completion with **enforced** timeout support.
     Uses SIGALRM to prevent indefinite blocking.

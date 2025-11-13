@@ -66,11 +66,11 @@ def suggest_config_mapping(env_var):
         
         # LLM
         'OPENAI_API_KEY': 'CONFIG.llm.openai_api_key',
-        'GROK_API_KEY': 'CONFIG.llm.grok_api_key',
+        'XAI_API_KEY': 'CONFIG.llm.xai_api_key',
         'DEEPSEEK_API_KEY': 'CONFIG.llm.deepseek_api_key',
         'MOONSHOT_API_KEY': 'CONFIG.llm.moonshot_api_key',
-        'GROK_MODEL': 'CONFIG.llm.grok_model',
-        'GROK_TEMPERATURE': 'CONFIG.llm.grok_temperature',
+        'XAI_MODEL': 'CONFIG.llm.xai_model',
+        'XAI_TEMPERATURE': 'CONFIG.llm.xai_temperature',
         'ADVISOR_TEMPERATURE': 'CONFIG.llm.advisor_temperature',
         
         # Email

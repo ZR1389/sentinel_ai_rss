@@ -1,4 +1,8 @@
+
 # main.py — Sentinel AI App API (JWT-guarded) • v2025-08-13
+from __future__ import annotations
+from dotenv import load_dotenv
+load_dotenv()
 # Notes:
 # - Only /chat counts toward plan usage, and only AFTER a successful advisory.
 # - /rss/run and /engine/run are backend ops and are NOT metered.
@@ -7,7 +11,6 @@
 # - Auth/verification endpoints added and left unmetered.
 # - Profile endpoints added: /profile/me (GET), /profile/update (POST).
 
-from __future__ import annotations
 import os
 import logging
 import traceback
@@ -28,12 +31,19 @@ except Exception:
     Limiter = None
     get_remote_address = None
 
+
 from map_api import map_api
 from webpush_endpoints import webpush_bp
+try:
+    from app.routes.socmint_routes import socmint_bp
+except ImportError:
+    from socmint_routes import socmint_bp
+
 
 app = Flask(__name__)
 app.register_blueprint(map_api)
 app.register_blueprint(webpush_bp)
+app.register_blueprint(socmint_bp, url_prefix='/api')
 
 # ---------- Global Error Handlers ----------
 @app.errorhandler(500)
@@ -1862,6 +1872,11 @@ def batch_enrich_alerts():
         logger.error(f"Batch endpoint error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+# -------------------------------------------------------------------
+# Local development entrypoint
+# -------------------------------------------------------------------
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    import os
+    print("[Sentinel AI] Starting local development server...")
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)

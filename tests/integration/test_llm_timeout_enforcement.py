@@ -73,7 +73,7 @@ def test_grok_chat_timeout():
             return False
     
     # Test 2: Mock a hanging SDK call that should timeout
-    with patch.dict('os.environ', {'GROK_API_KEY': 'test-key'}):
+    with patch.dict('os.environ', {'XAI_API_KEY': 'test-key'}):
         with patch('xai_client.Client') as mock_client:
             # Create a mock that hangs
             mock_instance = MagicMock()
@@ -108,7 +108,7 @@ def test_normal_grok_chat_operation():
     from xai_client import grok_chat
     
     # Test with mock that returns quickly
-    with patch.dict('os.environ', {'GROK_API_KEY': 'test-key'}):
+    with patch.dict('os.environ', {'XAI_API_KEY': 'test-key'}):
         with patch('xai_client.Client') as mock_client:
             # Create a mock that returns quickly
             mock_instance = MagicMock()
@@ -137,7 +137,7 @@ def test_exception_handling():
     from xai_client import grok_chat
     
     # Test exception in SDK
-    with patch.dict('os.environ', {'GROK_API_KEY': 'test-key'}):
+    with patch.dict('os.environ', {'XAI_API_KEY': 'test-key'}):
         with patch('xai_client.Client') as mock_client:
             # Make Client constructor raise an exception
             mock_client.side_effect = Exception("Test SDK error")

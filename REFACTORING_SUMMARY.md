@@ -68,7 +68,7 @@ run_tests.py                          # Main test runner
 ### Core API Keys
 ```bash
 OPENAI_API_KEY=...           # Primary LLM
-GROK_API_KEY=...            # xAI Grok
+XAI_API_KEY=...            # xAI Grok
 DEEPSEEK_API_KEY=...        # DeepSeek AI
 MOONSHOT_API_KEY=...        # Moonshot AI
 ```

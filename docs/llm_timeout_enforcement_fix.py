@@ -17,7 +17,7 @@ ROOT CAUSE:
 -----------
 Original xai_client.py implementation:
 ```python
-def grok_chat(messages, model=GROK_MODEL, temperature=TEMPERATURE, timeout=15):
+def grok_chat(messages, model=XAI_MODEL, temperature=TEMPERATURE, timeout=15):
     # Note: xai_sdk may not support timeout parameter directly
     # This is a best-effort timeout hint  # ← FALSE! SDK ignores timeout completely
     client = Client(api_host=XAI_API_HOST, api_key=XAI_API_KEY)

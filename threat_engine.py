@@ -345,9 +345,10 @@ def _atomic_write_json(path, data):
 
 load_dotenv()
 
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # used by deepseek_client.py
-GROK_API_KEY = os.getenv("GROK_API_KEY")          # used by xai_client.py
+XAI_API_KEY = os.getenv("XAI_API_KEY")          # used by xai_client.py
 DATABASE_URL = os.getenv("DATABASE_URL")
 RAILWAY_ENV = os.getenv("RAILWAY_ENVIRONMENT")
 
@@ -359,7 +360,7 @@ ENGINE_MAX_WORKERS = int(os.getenv("ENGINE_MAX_WORKERS", "5"))
 ENABLE_SEMANTIC_DEDUP = str(os.getenv("ENGINE_SEMANTIC_DEDUP", "true")).lower() in ("1","true","yes","y")
 SEMANTIC_DEDUP_THRESHOLD = float(os.getenv("SEMANTIC_DEDUP_THRESHOLD", "0.9"))
 TEMPERATURE = float(os.getenv("THREAT_ENGINE_TEMPERATURE", "0.4"))
-GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini")  # hint for your xai client; not enforced here
+XAI_MODEL = os.getenv("XAI_MODEL", "grok-3-mini")  # hint for your xai client; not enforced here
 
 # Configuration for enrichment pipeline
 USE_MODULAR_ENRICHMENT = os.getenv("USE_MODULAR_ENRICHMENT", "true").lower() == "true"

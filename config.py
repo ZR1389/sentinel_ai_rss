@@ -44,16 +44,15 @@ class DatabaseConfig:
 class LLMConfig:
     """LLM provider configuration."""
     # API Keys
+    xai_api_key: str = os.getenv("XAI_API_KEY", "")
+    xai_temperature: float = _getenv_float("XAI_TEMPERATURE", 0.2)
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    grok_api_key: str = os.getenv("GROK_API_KEY", "")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     moonshot_api_key: str = os.getenv("MOONSHOT_API_KEY", "")
-    
     # Models
-    grok_model: str = os.getenv("GROK_MODEL", "grok-3-mini")
+    xai_model: str = os.getenv("XAI_MODEL", "grok-3-mini")
     moonshot_model: str = os.getenv("MOONSHOT_MODEL", "moonshot-v1-128k")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    
     # Timeouts
     deepseek_timeout: float = _getenv_float("DEEPSEEK_TIMEOUT", 10)
     grok_timeout: float = _getenv_float("GROK_TIMEOUT", 15)

@@ -93,7 +93,7 @@ def test_fallback_behavior():
     # Show current API key status
     print("\n🔑 API Key Status:")
     providers = [
-        ("GROK", "GROK_API_KEY"),
+        ("XAI", "XAI_API_KEY"),
         ("OPENAI", "OPENAI_API_KEY"),
         ("MOONSHOT", "MOONSHOT_API_KEY"), 
         ("DEEPSEEK", "DEEPSEEK_API_KEY")
