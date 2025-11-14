@@ -640,6 +640,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "baseline_ratio","trend_direction","anomaly_flag","future_risk_probability",
         "reports_analyzed","sources","cluster_id",
         "latitude","longitude","location_method","location_confidence","location_sharing",
+        "source_kind","source_tag","threat_score_components",
         "embedding"
     ]
 
@@ -757,6 +758,9 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
             a.get("location_method") or "unknown",
             a.get("location_confidence") or "medium", 
             bool(a.get("location_sharing", True)),
+            a.get("source_kind") or ('intelligence' if str(aid).startswith('acled:') else 'rss'),
+            a.get("source_tag") or '',
+            _json(a.get("threat_score_components")),  # JSONB
             pgvector_embedding,   # REAL[1536] pgvector-compatible array
         )
 
@@ -824,6 +828,9 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         location_method = EXCLUDED.location_method,
         location_confidence = EXCLUDED.location_confidence,
         location_sharing = EXCLUDED.location_sharing,
+        source_kind = EXCLUDED.source_kind,
+        source_tag = EXCLUDED.source_tag,
+        threat_score_components = EXCLUDED.threat_score_components,
         embedding = EXCLUDED.embedding
     """
     try:

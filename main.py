@@ -1560,7 +1560,9 @@ def alerts_list():
           threat_level, score, confidence,
           reasoning, forecast,
           tags, early_warning_indicators,
-          threat_score_components
+          threat_score_components,
+          source_kind, source_tag,
+          latitude, longitude
         FROM alerts
         ORDER BY published DESC NULLS LAST
         LIMIT %s
@@ -1704,7 +1706,11 @@ def alerts_latest():
           anomaly_flag,
           domains,
           tags,
-          threat_score_components
+          threat_score_components,
+          source_kind,
+          source_tag,
+          latitude,
+          longitude
         FROM alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST

@@ -973,6 +973,15 @@ def summarize_single_alert(alert: dict) -> dict:
         alert["relevance_flags"] = relevance_flags(full_text)
     except Exception:
         alert["relevance_flags"] = []
+    
+    # Preserve source metadata from raw_alerts for frontend filtering
+    # source_kind: "intelligence" (ACLED), "rss" (RSS feeds)
+    # source_tag: additional categorization like "country:Nigeria"
+    if 'source_kind' not in alert or not alert.get('source_kind'):
+        # Infer from UUID if not present
+        alert['source_kind'] = 'intelligence' if alert.get('uuid', '').startswith('acled:') else 'rss'
+    if 'source_tag' not in alert:
+        alert['source_tag'] = alert.get('source_tag', '')
 
     # Threat scoring (consumes kw_match if present from rss_processor)
     threat_score_data = assess_threat_level(
@@ -1018,7 +1027,10 @@ def summarize_single_alert(alert: dict) -> dict:
                 'socmint_weighted': socmint_weighted,
                 'socmint_weight': 0.3,
             }
-            alert['threat_score'] = _clamp_score(base_score + socmint_weighted)
+            # Update both internal threat_score and database score field
+            final_score = _clamp_score(base_score + socmint_weighted)
+            alert['threat_score'] = final_score
+            alert['score'] = final_score  # Ensure score field is set for database
     except Exception as e:
         logger.warning(f"[ThreatEngine][SOCMINT Score Augment Error] {e}")
 
