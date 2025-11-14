@@ -192,3 +192,20 @@ def reset_metrics():
     except Exception as e:
         logger.error(f"Metrics reset failed: {e}")
         return jsonify({"error": "Internal server error"}), 500
+
+# Dashboard endpoint
+@socmint_bp.route('/dashboard', methods=['GET'])
+@auth_utils.login_required
+def get_dashboard():
+    """Aggregated SOCMINT operational dashboard metrics.
+
+    Example:
+        GET /api/socmint/dashboard
+    Returns platform stats, totals, recent errors, insights.
+    """
+    try:
+        data = apify_service.get_dashboard_metrics()
+        return jsonify({"status": "success", "dashboard": data}), 200
+    except Exception as e:
+        logger.error(f"Dashboard retrieval failed: {e}")
+        return jsonify({"status": "error", "error": "Internal server error"}), 500
