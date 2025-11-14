@@ -50,7 +50,7 @@ except ImportError:
 app = Flask(__name__)
 app.register_blueprint(map_api)
 app.register_blueprint(webpush_bp)
-app.register_blueprint(socmint_bp, url_prefix='/api')
+app.register_blueprint(socmint_bp, url_prefix='/api/socmint')
 
 # ---------- Global Error Handlers ----------
 @app.errorhandler(500)
@@ -346,6 +346,10 @@ CHAT_RATE = os.getenv("CHAT_RATE", "10 per minute;200 per day")
 SEARCH_RATE = os.getenv("SEARCH_RATE", "20 per minute;500 per hour")
 BATCH_ENRICH_RATE = os.getenv("BATCH_ENRICH_RATE", "5 per minute;100 per hour")
 CHAT_QUERY_MAX_CHARS = int(os.getenv("CHAT_QUERY_MAX_CHARS", "5000"))
+
+# SOCMINT rates (platform-specific)
+SOCMINT_INSTAGRAM_RATE = os.getenv("SOCMINT_INSTAGRAM_RATE", "30 per minute")
+SOCMINT_FACEBOOK_RATE = os.getenv("SOCMINT_FACEBOOK_RATE", "10 per minute")  # Stricter due to block risk
 
 # ---------- Conditional limiter decorator ----------
 def conditional_limit(rate: str):
@@ -1504,7 +1508,8 @@ def alerts_list():
           category, subcategory,
           threat_level, score, confidence,
           reasoning, forecast,
-          tags, early_warning_indicators
+          tags, early_warning_indicators,
+          threat_score_components
         FROM alerts
         ORDER BY published DESC NULLS LAST
         LIMIT %s
@@ -1647,7 +1652,8 @@ def alerts_latest():
           trend_direction,
           anomaly_flag,
           domains,
-          tags
+          tags,
+          threat_score_components
         FROM alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST
@@ -1660,6 +1666,68 @@ def alerts_latest():
         return _build_cors_response(jsonify({"ok": True, "items": rows}))
     except Exception as e:
         logger.error("alerts_latest error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+# ---------- Alert Scoring Details ----------
+@app.route("/alerts/<alert_uuid>/scoring", methods=["GET"])
+@login_required
+def alert_scoring_details(alert_uuid):
+    """
+    Get detailed threat scoring breakdown for a specific alert.
+    Returns threat_score_components with SOCMINT and other scoring factors.
+    
+    Example: GET /alerts/abc-123/scoring
+    """
+    if require_paid_feature is None:
+        return _build_cors_response(make_response(jsonify({"error": "Plan gate unavailable"}), 503))
+    email = get_logged_in_email()
+    ok, msg = require_paid_feature(email)
+    if not ok:
+        return _build_cors_response(make_response(jsonify({"error": msg}), 403))
+
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
+    q = """
+        SELECT
+          uuid,
+          title,
+          score,
+          threat_level,
+          threat_label,
+          confidence,
+          threat_score_components,
+          category,
+          published
+        FROM alerts
+        WHERE uuid = %s
+    """
+
+    try:
+        row = fetch_one(q, (alert_uuid,))
+        if not row:
+            return _build_cors_response(make_response(jsonify({"error": "Alert not found"}), 404))
+        
+        # Convert row tuple to dict if needed
+        if isinstance(row, tuple):
+            keys = ['uuid', 'title', 'score', 'threat_level', 'threat_label', 
+                   'confidence', 'threat_score_components', 'category', 'published']
+            result = dict(zip(keys, row))
+        else:
+            result = dict(row)
+        
+        # Parse threat_score_components if it's a string
+        components = result.get('threat_score_components')
+        if isinstance(components, str):
+            import json
+            try:
+                result['threat_score_components'] = json.loads(components)
+            except Exception:
+                pass
+        
+        return _build_cors_response(jsonify({"ok": True, "alert": result}))
+    except Exception as e:
+        logger.error("alert_scoring_details error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
 # ---------- Alert Feedback ----------

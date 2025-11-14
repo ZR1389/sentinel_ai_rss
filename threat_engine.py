@@ -13,7 +13,7 @@ import hashlib
 import threading
 import fcntl
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -102,6 +102,112 @@ from threat_scorer import (
 from llm_router import route_llm, route_llm_search
 
 # -------- Centralized Confidence Scoring --------
+
+def _clamp_score(val: float, min_val: float = 0.0, max_val: float = 100.0) -> float:
+    try:
+        return max(min_val, min(max_val, float(val)))
+    except Exception:
+        return 0.0
+
+def _parse_timestamp(ts) -> Optional[datetime]:
+    """Best-effort timestamp parser for SOCMINT post timestamps."""
+    try:
+        if ts is None:
+            return None
+        if isinstance(ts, (int, float)):
+            return datetime.fromtimestamp(ts)
+        if isinstance(ts, str):
+            s = ts.strip()
+            if s.endswith('Z'):
+                s = s.replace('Z', '+00:00')
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                # Fallback common formats
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        return datetime.strptime(s, fmt)
+                    except Exception:
+                        continue
+        return None
+    except Exception:
+        return None
+
+def is_recent(ts, days: int = 7) -> bool:
+    dt = _parse_timestamp(ts)
+    if not dt:
+        return False
+    try:
+        # Normalize timezone-aware datetimes to naive UTC for safe subtraction
+        if getattr(dt, 'tzinfo', None) is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        now_utc = datetime.utcnow()
+        return (now_utc - dt).days <= int(days)
+    except Exception:
+        return False
+
+def contains_ioc(text: str) -> bool:
+    """Lightweight IOC detector for post text: IPs, domains, CVEs, hashes, emails."""
+    if not text:
+        return False
+    import re
+    patterns = [
+        r"\b(?:\d{1,3}\.){3}\d{1,3}\b",                 # IPv4
+        r"\bCVE-\d{4}-\d{4,7}\b",                        # CVE
+        r"\b[a-f0-9]{32}\b",                              # MD5
+        r"\b[a-f0-9]{64}\b",                              # SHA-256
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",  # Email
+        r"\b[a-z0-9][-a-z0-9]{1,61}[a-z0-9]\.(com|net|org|io|ru|cn|xyz|info|biz|co|uk|de|jp|fr|in|it|es)\b",
+    ]
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+def calculate_socmint_score(socmint_data: dict) -> float:
+    """Compute a 0-100 score from SOCMINT profile/posts per provided rubric."""
+    try:
+        score = 0.0
+        if not isinstance(socmint_data, dict):
+            return 0.0
+        # Instagram returns 'profile', Facebook returns 'page_info' – normalize
+        profile = socmint_data.get('profile') or socmint_data.get('page_info') or {}
+        posts = socmint_data.get('posts') or []
+
+        # Follower count threshold (loud actors = higher risk)
+        followers = (
+            profile.get('followersCount')
+            or profile.get('followers')
+            or profile.get('likes')
+            or 0
+        )
+        try:
+            followers = int(followers or 0)
+        except Exception:
+            followers = 0
+        if followers > 100000:
+            score += 15
+        elif followers > 10000:
+            score += 10
+        elif followers > 1000:
+            score += 5
+
+        # Verified status (verified actors less likely to be imposters)
+        if bool(profile.get('verified')):
+            score -= 10
+
+        # Recent activity (stale accounts are lower priority)
+        last_post_date = posts[0].get('timestamp') if posts and isinstance(posts[0], dict) else None
+        if last_post_date and is_recent(last_post_date, days=7):
+            score += 10
+
+        # IOC mention frequency in posts
+        try:
+            ioc_count = sum(1 for p in posts if contains_ioc((p or {}).get('text', '')))
+        except Exception:
+            ioc_count = 0
+        score += min(ioc_count * 5, 20)  # Cap at 20
+
+        return _clamp_score(score, 0.0, 100.0)
+    except Exception:
+        return 0.0
 
 def compute_confidence(
     alert: dict,
@@ -894,6 +1000,27 @@ def summarize_single_alert(alert: dict) -> dict:
     except Exception as e:
         logger.warning(f"[ThreatEngine][ConfidenceError] {e}")
         alert["overall_confidence"] = 0.5
+
+    # Augment threat score with SOCMINT signal (30% weight)
+    try:
+        osint_list = (alert.get('enrichments') or {}).get('osint') or []
+        socmint_raw_scores = []
+        for entry in osint_list:
+            data = (entry or {}).get('data') or {}
+            socmint_raw_scores.append(calculate_socmint_score(data))
+        if socmint_raw_scores:
+            socmint_best = max(socmint_raw_scores)
+            socmint_weighted = round(socmint_best * 0.3, 2)
+            base_score = float(alert.get('threat_score', 0) or 0)
+            alert['threat_score_components'] = {
+                **(alert.get('threat_score_components') or {}),
+                'socmint_raw': socmint_best,
+                'socmint_weighted': socmint_weighted,
+                'socmint_weight': 0.3,
+            }
+            alert['threat_score'] = _clamp_score(base_score + socmint_weighted)
+    except Exception as e:
+        logger.warning(f"[ThreatEngine][SOCMINT Score Augment Error] {e}")
 
     # risk_shared analytics (best-effort)
     try: 

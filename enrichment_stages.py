@@ -109,7 +109,7 @@ class ThreatScoringStage(EnrichmentStage):
         super().__init__("threat_scoring")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import assess_threat_level
+        from threat_engine import assess_threat_level, calculate_socmint_score, _clamp_score
         
         threat_score_data = assess_threat_level(
             alert_text=context.full_text,
@@ -125,6 +125,27 @@ class ThreatScoringStage(EnrichmentStage):
         # Merge score outputs
         for k, v in threat_score_data.items():
             alert[k] = v
+        
+        # Augment threat score with SOCMINT signal (30% weight)
+        try:
+            osint_list = (alert.get('enrichments') or {}).get('osint') or []
+            socmint_raw_scores = []
+            for entry in osint_list:
+                data = (entry or {}).get('data') or {}
+                socmint_raw_scores.append(calculate_socmint_score(data))
+            if socmint_raw_scores:
+                socmint_best = max(socmint_raw_scores)
+                socmint_weighted = round(socmint_best * 0.3, 2)
+                base_score = float(alert.get('threat_score', 0) or 0)
+                alert['threat_score_components'] = {
+                    **(alert.get('threat_score_components') or {}),
+                    'socmint_raw': socmint_best,
+                    'socmint_weighted': socmint_weighted,
+                    'socmint_weight': 0.3,
+                }
+                alert['threat_score'] = _clamp_score(base_score + socmint_weighted)
+        except Exception as e:
+            self.logger.warning("socmint_score_augment_failed", error=str(e))
         
         return alert
 
@@ -419,6 +440,35 @@ class MetadataEnrichmentStage(EnrichmentStage):
         
         return alert
 
+class SocmintEnrichmentStage(EnrichmentStage):
+    """Extract social media IOCs and enrich with SOCMINT data."""
+    
+    def __init__(self):
+        super().__init__("socmint_enrichment")
+    
+    def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
+        try:
+            from ioc_extractor import extract_social_media_iocs, enrich_alert_with_socmint
+            
+            # Extract social media handles/URLs from alert text
+            iocs = extract_social_media_iocs(context.full_text)
+            
+            if iocs:
+                self.logger.info("social_media_iocs_found",
+                               alert_uuid=context.alert_uuid,
+                               ioc_count=len(iocs),
+                               platforms=[ioc['platform'] for ioc in iocs])
+                
+                # Enrich with SOCMINT data
+                alert = enrich_alert_with_socmint(alert, iocs)
+            
+        except Exception as e:
+            self.logger.error("socmint_enrichment_failed",
+                            alert_uuid=context.alert_uuid,
+                            error=str(e))
+        
+        return alert
+
 class RegionTrendStage(EnrichmentStage):
     """Save region trend data (non-critical)."""
     
@@ -465,6 +515,7 @@ class EnrichmentPipeline:
         return [
             LocationEnhancementStage(),
             RelevanceFilterStage(),
+            SocmintEnrichmentStage(),  # Extract and enrich social media IOCs
             ThreatScoringStage(),
             ConfidenceCalculationStage(),
             RiskAnalysisStage(),

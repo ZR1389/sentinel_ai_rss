@@ -87,6 +87,7 @@ def main():
         ("LLM Routing", "tests/llm"),
         ("Geographic", "tests/geographic"),
         ("Performance", "tests/performance"),
+        ("SOCMINT", "tests/socmint"),
     ]
     
     results = {}
