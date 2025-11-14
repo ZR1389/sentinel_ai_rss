@@ -176,6 +176,57 @@ def manual_retention_cleanup():
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }), 500)
 
+@app.route("/admin/acled/run", methods=["POST"])
+def trigger_acled_collection():
+    """Manually trigger ACLED intelligence collection (admin only).
+    
+    Query params:
+        countries: Comma-separated list (default: from env)
+        days_back: Number of days to fetch (default: 1, max: 7)
+    
+    Example:
+        POST /admin/acled/run?countries=Nigeria,Kenya&days_back=3
+        Header: X-API-Key: your_admin_key
+    """
+    try:
+        # Admin auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        # Parse optional parameters
+        countries_param = request.args.get("countries")
+        days_back = min(int(request.args.get("days_back", 1)), 7)  # Max 7 days
+        
+        countries = None
+        if countries_param:
+            countries = [c.strip() for c in countries_param.split(",") if c.strip()]
+        
+        # Run ACLED collector
+        from acled_collector import run_acled_collector
+        result = run_acled_collector(countries=countries, days_back=days_back)
+        
+        return jsonify({
+            "status": "success" if result.get("success") else "error",
+            "events_fetched": result.get("events_fetched", 0),
+            "events_inserted": result.get("events_inserted", 0),
+            "duration_seconds": result.get("duration_seconds", 0),
+            "countries": countries or "default",
+            "days_back": days_back,
+            "error": result.get("error"),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        })
+        
+    except Exception as e:
+        logger.error(f"ACLED manual trigger failed: {e}", exc_info=True)
+        return make_response(jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }), 500)
+
 # ---------- Imports: plan / advisor / engines ----------
 try:
     from plan_utils import (

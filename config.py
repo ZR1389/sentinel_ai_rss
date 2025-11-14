@@ -159,6 +159,24 @@ class WebPushConfig:
 
 
 @dataclass(frozen=True)
+class ACLEDConfig:
+    """ACLED intelligence source configuration."""
+    acled_email: str = os.getenv("ACLED_EMAIL", "")
+    acled_password: str = os.getenv("ACLED_PASSWORD", "")
+    enabled: bool = _getenv_bool("ACLED_ENABLED", True)
+    default_countries: str = os.getenv(
+        "ACLED_DEFAULT_COUNTRIES",
+        "Nigeria,Somalia,Democratic Republic of Congo,South Sudan,Ethiopia,Mali,Burkina Faso"
+    )
+    days_back: int = _getenv_int("ACLED_DAYS_BACK", 1)
+    timeout_seconds: int = _getenv_int("ACLED_TIMEOUT", 60)
+    
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.acled_email and self.acled_password)
+
+
+@dataclass(frozen=True)
 class ApplicationConfig:
     """Main application configuration."""
     env: str = os.getenv("ENV", "development")
@@ -306,6 +324,7 @@ class Config:
     app: ApplicationConfig = field(default_factory=ApplicationConfig)
     rss: RSSConfig = field(default_factory=RSSConfig)
     batch_processing: BatchProcessingConfig = field(default_factory=BatchProcessingConfig)
+    acled: ACLEDConfig = field(default_factory=ACLEDConfig)
     
     def validate(self):
         """Validate the complete configuration."""
@@ -317,6 +336,12 @@ class Config:
         
         # Validate batch processing config
         self.batch_processing.__post_init__()
+        
+        # Warn if ACLED enabled but not configured
+        if self.acled.enabled and not self.acled.is_configured:
+            import sys
+            print("Warning: ACLED_ENABLED=true but ACLED_EMAIL/ACLED_PASSWORD not set")
+            print("ACLED collector will be disabled until credentials are provided")
 
 
 # Global config instance - no fallbacks, everything centralized
