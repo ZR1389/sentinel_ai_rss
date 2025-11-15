@@ -69,6 +69,17 @@ try:
 except Exception as e:
     pass
 
+# Start GDELT polling thread if enabled
+if os.getenv('GDELT_ENABLED', 'false').lower() == 'true':
+    try:
+        from gdelt_ingest import start_gdelt_polling
+        start_gdelt_polling()
+        logger.info("✓ GDELT polling started")
+    except Exception as e:
+        logger.warning(f"[main] GDELT polling not started: {e}")
+else:
+    logger.info("[main] GDELT polling disabled (GDELT_ENABLED not set)")
+
 # Apply socmint rate limits post-registration to avoid circular import issues
 if 'Limiter' in globals() and Limiter and get_remote_address:
     try:
@@ -2112,6 +2123,73 @@ def monitoring_trends():
     except Exception as e:
         logger.error(f"/api/monitoring/trends error: {e}")
         return _build_cors_response(make_response(jsonify({"error": "Trends unavailable"}), 500))
+
+# ---------- GDELT Ingestion Admin Endpoint ----------
+@app.route("/admin/gdelt/ingest", methods=["POST", "OPTIONS"])
+def admin_gdelt_ingest():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    # Simple API key gate (reuse existing X-API-Key scheme if present)
+    api_key = request.headers.get("X-API-Key")
+    expected = os.getenv("ADMIN_API_KEY") or os.getenv("API_KEY")
+    if expected and api_key != expected:
+        return _build_cors_response(make_response(jsonify({"error": "Unauthorized"}), 401))
+    try:
+        from gdelt_ingest import manual_trigger
+        result = manual_trigger()
+        return _build_cors_response(jsonify({"ok": True, **result}))
+    except Exception as e:
+        logger.error(f"/admin/gdelt/ingest error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "GDELT ingest failed"}), 500))
+
+@app.route("/admin/gdelt/health", methods=["GET", "OPTIONS"])
+def gdelt_health():
+    """Check GDELT ingestion status"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import _get_db_connection
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Get last successful ingest time from gdelt_state
+            cur.execute(
+                "SELECT value FROM gdelt_state WHERE key = 'last_export_file'"
+            )
+            last_state = cur.fetchone()
+            
+            # Get latest metrics entry
+            cur.execute(
+                "SELECT timestamp FROM gdelt_metrics ORDER BY timestamp DESC LIMIT 1"
+            )
+            last_ingest = cur.fetchone()
+            
+            # Get event count (last 24h)
+            cur.execute(
+                "SELECT COUNT(*) FROM gdelt_events WHERE created_at > NOW() - INTERVAL '24 hours'"
+            )
+            count_24h = cur.fetchone()[0]
+        
+        # Check if polling is stale (no ingest in 30min)
+        is_stale = False
+        if last_ingest:
+            last_time = last_ingest[0]
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
+            is_stale = (now - last_time).total_seconds() > 1800
+        
+        return _build_cors_response(jsonify({
+            'status': 'stale' if is_stale else 'healthy',
+            'last_ingest': last_ingest[0].isoformat() if last_ingest else None,
+            'last_file': last_state[0] if last_state else None,
+            'events_24h': count_24h,
+            'polling_enabled': os.getenv('GDELT_ENABLED') == 'true'
+        }))
+    except Exception as e:
+        logger.error(f"/admin/gdelt/health error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Health check failed"}), 500))
 
 @app.route("/admin/monitoring/snapshot", methods=["POST"])  # admin-only manual snapshot
 def monitoring_snapshot_admin():
