@@ -144,6 +144,12 @@ def health_check():
     try:
         from health_check import perform_health_check
         health_data = perform_health_check()
+        # Attach public base URL for easy discovery (env or request-derived)
+        try:
+            base_url = (CONFIG.app.public_base_url or request.url_root).rstrip("/")
+            health_data["base_url"] = base_url
+        except Exception:
+            pass
         status_code = 200  # Always return 200 for Railway compatibility
         return make_response(jsonify(health_data), status_code)
     except Exception as e:

@@ -184,6 +184,7 @@ class ApplicationConfig:
     allowed_origins: str = os.getenv("ALLOWED_ORIGINS", "https://zikarisk.com,https://www.zikarisk.com,https://app.zikarisk.com")
     default_plan: str = os.getenv("DEFAULT_PLAN", "FREE")
     paid_plans: str = os.getenv("PAID_PLANS", "PRO,ENTERPRISE")
+    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "")
     
     # Cache and monitoring
     redis_url: str = os.getenv("REDIS_URL", "")
