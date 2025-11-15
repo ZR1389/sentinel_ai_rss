@@ -57,6 +57,11 @@ try:
 except ImportError:
     from socmint_routes import socmint_bp, set_socmint_limiter
 
+# Initialize logging early (before any logger usage)
+from logging_config import get_logger, get_metrics_logger, setup_logging
+setup_logging("sentinel-api")
+logger = get_logger("sentinel.main")
+metrics = get_metrics_logger("sentinel.main")
 
 app = Flask(__name__)
 app.register_blueprint(map_api)
@@ -101,13 +106,7 @@ def handle_500_error(e):
                 traceback=traceback.format_exc())
     return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
-# ---------- Logging ----------
-from logging_config import get_logger, get_metrics_logger, setup_logging
-setup_logging("sentinel-api")
-logger = get_logger("sentinel.main")
-metrics = get_metrics_logger("sentinel.main")
-
-# Input validation
+# ---------- Input validation ----------
 from validation import validate_alert_batch, validate_enrichment_data
 
 # ---------- CORS (more restrictive default) ----------
