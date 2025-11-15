@@ -2154,42 +2154,115 @@ def gdelt_health():
         with _get_db_connection() as conn:
             cur = conn.cursor()
             
-            # Get last successful ingest time from gdelt_state
+            # Get last successful ingest file
             cur.execute(
                 "SELECT value FROM gdelt_state WHERE key = 'last_export_file'"
             )
-            last_state = cur.fetchone()
-            
-            # Get latest metrics entry
-            cur.execute(
-                "SELECT timestamp FROM gdelt_metrics ORDER BY timestamp DESC LIMIT 1"
-            )
-            last_ingest = cur.fetchone()
+            last_file = cur.fetchone()
             
             # Get event count (last 24h)
             cur.execute(
-                "SELECT COUNT(*) FROM gdelt_events WHERE created_at > NOW() - INTERVAL '24 hours'"
+                "SELECT COUNT(*) FROM gdelt_events WHERE sql_date >= %s",
+                ((datetime.utcnow() - timedelta(hours=24)).strftime('%Y%m%d'),)
             )
             count_24h = cur.fetchone()[0]
+            
+            # Get last metric with details
+            cur.execute(
+                "SELECT timestamp, events_inserted, ingestion_duration_sec FROM gdelt_metrics ORDER BY timestamp DESC LIMIT 1"
+            )
+            last_metric = cur.fetchone()
         
         # Check if polling is stale (no ingest in 30min)
         is_stale = False
-        if last_ingest:
-            last_time = last_ingest[0]
+        if last_metric:
+            last_time = last_metric[0]
             from datetime import timezone
             now = datetime.now(timezone.utc)
-            is_stale = (now - last_time).total_seconds() > 1800
+            is_stale = (now - last_time).total_seconds() > 1800  # 30 min
         
         return _build_cors_response(jsonify({
             'status': 'stale' if is_stale else 'healthy',
-            'last_ingest': last_ingest[0].isoformat() if last_ingest else None,
-            'last_file': last_state[0] if last_state else None,
+            'last_file': last_file[0] if last_file else None,
             'events_24h': count_24h,
+            'last_ingest': {
+                'timestamp': last_metric[0].isoformat() if last_metric else None,
+                'events_inserted': last_metric[1] if last_metric else 0,
+                'duration_sec': float(last_metric[2]) if last_metric else 0
+            },
             'polling_enabled': os.getenv('GDELT_ENABLED') == 'true'
         }))
     except Exception as e:
         logger.error(f"/admin/gdelt/health error: {e}")
         return _build_cors_response(make_response(jsonify({"error": "Health check failed"}), 500))
+
+# ---------- GDELT Query API Endpoints ----------
+@app.route("/api/threats/location", methods=["POST", "OPTIONS"])
+def threats_near_location():
+    """Get GDELT threats near coordinates"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        data = request.json
+        
+        from gdelt_query import GDELTQuery
+        threats = GDELTQuery.get_threats_near_location(
+            lat=data['lat'],
+            lon=data['lon'],
+            radius_km=data.get('radius_km', 50),
+            days=data.get('days', 7)
+        )
+        
+        return _build_cors_response(jsonify({
+            'source': 'GDELT',
+            'count': len(threats),
+            'threats': threats
+        }))
+    except Exception as e:
+        logger.error(f"/api/threats/location error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+@app.route("/api/threats/country/<country_code>", methods=["GET", "OPTIONS"])
+def country_threat_summary(country_code):
+    """Get GDELT threat summary for country"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        days = request.args.get('days', 30, type=int)
+        
+        from gdelt_query import GDELTQuery
+        summary = GDELTQuery.get_country_summary(country_code.upper(), days)
+        
+        if not summary:
+            return _build_cors_response(jsonify({'error': 'No threat data for country'}), 404)
+        
+        return _build_cors_response(jsonify(summary))
+    except Exception as e:
+        logger.error(f"/api/threats/country/{country_code} error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+@app.route("/api/threats/trending", methods=["GET", "OPTIONS"])
+def trending_threats():
+    """Get most-covered GDELT threats"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        days = request.args.get('days', 7, type=int)
+        
+        from gdelt_query import GDELTQuery
+        threats = GDELTQuery.get_trending_threats(days)
+        
+        return _build_cors_response(jsonify({
+            'source': 'GDELT',
+            'count': len(threats),
+            'threats': threats
+        }))
+    except Exception as e:
+        logger.error(f"/api/threats/trending error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
 @app.route("/admin/monitoring/snapshot", methods=["POST"])  # admin-only manual snapshot
 def monitoring_snapshot_admin():
