@@ -1030,6 +1030,84 @@ def fetch_alerts_from_db_strict_geo(
                     
             return rows
 
+def fetch_alerts_by_location_fuzzy(
+    city: Optional[str] = None,
+    country: Optional[str] = None,
+    region: Optional[str] = None,
+    limit: int = 20
+) -> List[Dict[str, Any]]:
+    """
+    Fuzzy location query for alerts when exact matching returns no results.
+    Strategy:
+      - If country provided, try pycountry fuzzy to normalize
+      - If city provided, try city_utils.fuzzy_match_city for canonical form
+      - Use ILIKE with wildcards for broader match on city/country
+    """
+    try:
+        # Optional helpers
+        try:
+            import pycountry  # type: ignore
+        except Exception:
+            pycountry = None  # type: ignore
+        try:
+            from city_utils import fuzzy_match_city as _fuzzy_city
+        except Exception:
+            _fuzzy_city = None  # type: ignore
+
+        norm_country = country
+        if country and pycountry is not None:
+            try:
+                m = pycountry.countries.search_fuzzy(country)
+                if m:
+                    norm_country = m[0].name
+            except Exception:
+                pass
+
+        norm_city = city
+        if city and _fuzzy_city is not None:
+            try:
+                cand = _fuzzy_city(city)
+                if cand:
+                    norm_city = cand
+            except Exception:
+                pass
+
+        where = []
+        params: List[Any] = []
+
+        if norm_country:
+            where.append("country ILIKE %s")
+            params.append(f"%{norm_country}%")
+        elif region:
+            where.append("(country ILIKE %s OR region ILIKE %s)")
+            params.extend([f"%{region}%", f"%{region}%"]) 
+
+        if norm_city:
+            where.append("city ILIKE %s")
+            params.append(f"%{norm_city}%")
+
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        q = f"""
+          SELECT uuid, title, summary, gpt_summary, link, source, published,
+                 region, country, city, category, threat_level, threat_label,
+                 score, confidence, trend_direction,
+                 latitude, longitude, location_confidence
+          FROM alerts
+          {where_sql}
+          ORDER BY published DESC NULLS LAST
+          LIMIT %s
+        """
+        params.append(limit)
+
+        with _get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(q, tuple(params))
+                rows = cur.fetchall()
+                return rows or []
+    except Exception as e:
+        logger.warning("fetch_alerts_by_location_fuzzy failed: %s", e)
+        return []
+
 # ---------------------------------------------------------------------
 # User profile helpers (for chat/advisor and /profile endpoints)
 # ---------------------------------------------------------------------

@@ -83,6 +83,9 @@ def route_llm(messages, temperature=0.4, usage_counts=None, task_type="general")
         if summary:
             return summary, model_name
 
+    # Ensure 'none' key exists before incrementing
+    if "none" not in usage_counts:
+        usage_counts["none"] = 0
     usage_counts["none"] += 1
     return "", "none"
 
@@ -161,6 +164,9 @@ def route_llm_search(query, context="", usage_counts=None):
     except Exception as e:
         logger.error(f"[LLM Search Router][{fallback_provider} error] {e}")
     
+    # Ensure 'none' key exists before incrementing
+    if "none" not in usage_counts:
+        usage_counts["none"] = 0
     usage_counts["none"] += 1
     return "Search temporarily unavailable", "none"
 
@@ -169,7 +175,10 @@ def route_llm_batch(alerts_batch, usage_counts=None):
     Specialized routing for batch processing multiple alerts in 128k context.
     Uses paid providers first: Moonshot → OpenAI → Grok → DeepSeek.
     """
-    usage_counts = usage_counts or {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
+    if usage_counts is None:
+        usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "moonshot": 0, "none": 0}
+    elif "none" not in usage_counts:
+        usage_counts["none"] = 0
     
     batch_provider = os.getenv("LLM_PRIMARY_ENRICHMENT", "grok").lower()
     
@@ -224,5 +233,8 @@ def route_llm_batch(alerts_batch, usage_counts=None):
     except Exception as e:
         logger.error(f"[LLM Batch Router][{batch_provider} error] {e}")
     
+    # Ensure 'none' key exists before incrementing
+    if "none" not in usage_counts:
+        usage_counts["none"] = 0
     usage_counts["none"] += 1
     return "Batch processing temporarily unavailable", "none"

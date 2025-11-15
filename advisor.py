@@ -102,7 +102,7 @@ logging.basicConfig(level=logging.INFO)
 TEMPERATURE = CONFIG.llm.advisor_temperature
 
 # ---------- Model usage tracking ----------
-_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0}
+_model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0, "none": 0}
 
 # ---------- Domain priority ----------
 DOMAIN_PRIORITY = [
@@ -1034,7 +1034,7 @@ def get_llm_routing_stats():
 def reset_llm_routing_stats():
     """Reset LLM routing statistics (useful for testing or periodic monitoring)"""
     global _model_usage_counts
-    _model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0, "handle_query_fallback": 0}
+    _model_usage_counts = {"deepseek": 0, "openai": 0, "grok": 0, "fallback": 0, "handle_query_fallback": 0, "none": 0}
     logger.info("[Advisor] LLM routing statistics reset")
 
 def log_llm_routing_summary():
@@ -1106,6 +1106,66 @@ def render_advisory(alert: Dict[str, Any], user_message: str, profile_data: Opti
         "location_mismatch_detected": location_match_score < 30,
         "data_quality_concerns": not data_statistically_valid or location_match_score < 50
     }
+
+    # Hard-stop gates: avoid wrong-location or low-signal advisories
+    try:
+        eff_match = float(input_data.get("location_match_score", 0) or 0)
+        geo_match = input_data.get("geographic_match_score")
+        if geo_match is not None:
+            try:
+                eff_match = min(eff_match, float(geo_match))
+            except (TypeError, ValueError):
+                pass
+        final_conf = input_data.get("confidence")
+        try:
+            final_conf = float(final_conf) if final_conf is not None else float(alert.get("confidence", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            final_conf = 0.5
+        is_valid = bool(input_data.get("data_statistically_valid", False))
+
+        # Build reasons list
+        reasons: List[str] = []
+        if eff_match < 30:
+            reasons.append("severe location mismatch")
+        if not is_valid:
+            reasons.append("insufficient data volume")
+        if final_conf < 0.40:
+            reasons.append(f"low confidence ({int(round(final_conf*100))}%)")
+
+        # If mismatch is severe, or confidence too low, block advisory
+        if eff_match < 30 or (final_conf < 0.40 or not is_valid):
+            matched_name = input_data.get("location_matched_name") or ", ".join(
+                [
+                    str(alert.get("city") or ""),
+                    str(alert.get("region") or ""),
+                    str(alert.get("country") or ""),
+                ]
+            ).strip(", ") or "Unknown"
+            query_loc = (profile_data or {}).get("location") if isinstance(profile_data, dict) else None
+            query_display = (query_loc or (user_message or "")).strip()
+            if len(query_display) > 120:
+                query_display = query_display[:117] + "..."
+
+            notice_lines: List[str] = []
+            notice_lines.append("NO INTELLIGENCE AVAILABLE —")
+            if reasons:
+                notice_lines.append(f"- Reason: {', '.join(reasons)}")
+            if query_display:
+                notice_lines.append(f"- Query: {query_display}")
+            if matched_name:
+                notice_lines.append(f"- Data location: {matched_name}")
+            # Light, safe suggestions
+            notice_lines.append("- Suggested next steps: refine location or broaden radius/timeframe; request human review if needed.")
+
+            # Add a compact provenance block
+            prov_lines: List[str] = ["\nDATA PROVENANCE —"]
+            prov_lines.append(f"- Location Match Score: {int(round(eff_match))}/100")
+            prov_lines.append(f"- Statistically Valid: {'yes' if is_valid else 'no'}")
+            prov_lines.append(f"- Confidence: {int(round(final_conf*100))}%")
+
+            return "\n".join(notice_lines + prov_lines)
+    except Exception as _gate_err:
+        logger.error(f"[Advisor] Gate evaluation error (continuing to render): {_gate_err}")
 
     # Predictive tone nudges from future_risk_probability
     p_future = input_data.get("future_risk_probability")

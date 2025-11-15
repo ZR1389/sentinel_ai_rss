@@ -581,6 +581,24 @@ def handle_user_query(
         except Exception as e:
             log.warning("get_usage failed: %s", e)
 
+    # Extract location intent from the natural-language query if no explicit region provided
+    extracted_city = None
+    extracted_country = None
+    try:
+        if not region:
+            from location_extractor import extract_location_from_query
+            loc = extract_location_from_query(query)
+            extracted_city = (loc or {}).get("city")
+            extracted_country = (loc or {}).get("country")
+            # Seed region with the most specific stable token to reuse existing geo logic
+            if extracted_city:
+                region = extracted_city
+            elif extracted_country:
+                region = extracted_country
+            log.info("Location extracted from query: city=%s country=%s method=%s", extracted_city, extracted_country, (loc or {}).get("method"))
+    except Exception as e:
+        log.warning("Location extraction failed: %s", e)
+
     # Normalize region/category
     region = _normalize_value(region, None)
     threat_type = _normalize_value(threat_type, None)
@@ -637,6 +655,12 @@ def handle_user_query(
             geo_params = enhance_geographic_query(region)
             country_param = geo_params.get("country")
             city_param = geo_params.get("city")
+
+            # If we extracted explicit location from the query, prefer it
+            if extracted_country and not country_param:
+                country_param = extracted_country
+            if extracted_city and not city_param:
+                city_param = extracted_city
             region_param = geo_params.get("region")
             
             # Defensive validation of resolved parameters
@@ -890,83 +914,58 @@ def handle_user_query(
             log.warning("Error calculating alerts_stale heuristic: %s", e)
             alerts_stale = False
 
-    # ----------- SMARTER NO-DATA / NO ALERTS GUARD -----------
+    # ----------- FUZZY FALLBACK BEFORE NO-DATA GUARD -----------
+    if not db_alerts:
+        try:
+            from db_utils import fetch_alerts_by_location_fuzzy
+        except Exception:
+            fetch_alerts_by_location_fuzzy = None  # type: ignore
+
+        if fetch_alerts_by_location_fuzzy and (extracted_city or extracted_country or region):
+            try:
+                log.info("Attempting fuzzy location fallback: city=%s country=%s region=%s", extracted_city, extracted_country, region)
+                db_alerts = fetch_alerts_by_location_fuzzy(
+                    city=extracted_city,
+                    country=extracted_country,
+                    region=region,
+                    limit=int(os.getenv("CHAT_ALERTS_LIMIT", "20")),
+                ) or []
+                if db_alerts:
+                    log.info("Fuzzy fallback succeeded with %d alert(s)", len(db_alerts))
+            except Exception as e:
+                log.warning("Fuzzy fallback failed: %s", e)
+
+    # ----------- STRICT NO-DATA GUARD (no LLM on empty geo result) -----------
     if not db_alerts:
         log.info("No alerts found for query='%s', region='%s', threat_type='%s' | user=%s", query, region, threat_type, _short_id(email))
-        # Always call advisor (LLM) for best-effort situational summary even if no alerts in DB,
-        # but protect with a timeout using a future. If the advisor times out and ASYNC_FALLBACK is enabled,
-        # accept and queue a background job to finish processing and persist the result.
-        advisor_kwargs = {
-            "email": email,
+        requested_loc = {
+            "city": extracted_city,
+            "country": extracted_country,
             "region": region,
-            "threat_type": threat_type,
-            "user_profile": user_profile,
-            "historical_alerts": historical_alerts,
         }
-        ADVISOR_TIMEOUT = int(os.getenv("ADVISOR_TIMEOUT", "45"))
-        ASYNC_FALLBACK = os.getenv("ASYNC_FALLBACK", "true").lower() in ("1", "true", "yes", "y")
-        try:
-            # run generate_advice(query, [], user_profile, **others) in a thread with timeout
-            advisor_extra = dict(advisor_kwargs)
-            user_prof = advisor_extra.pop("user_profile", None)
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(generate_advice, query, [], user_prof, **advisor_extra)
-                try:
-                    advisory_result = future.result(timeout=ADVISOR_TIMEOUT) or {}
-                    advisory_result["no_alerts_found"] = True
-                except FuturesTimeout:
-                    log.error("Advisor (no-data fallback) timed out after %ss", ADVISOR_TIMEOUT)
-                    usage_info["fallback_reason"] = "advisor_timeout"
-                    try:
-                        log_security_event(event_type="advice_generation_timeout", email=email, plan=plan_name, details=f"{ADVISOR_TIMEOUT}s timeout")
-                    except Exception:
-                        pass
-                    if ASYNC_FALLBACK:
-                        # spawn background job to finish processing and persist result
-                        bg_session = session_id
-                        start_background_job(bg_session, generate_advice, query, [], user_prof, **advisor_extra)
-                        reply_text = "Accepted for background processing. Poll for results with session_id."
-                        payload = {
-                            "accepted": True,
-                            "session_id": bg_session,
-                            "message": reply_text,
-                            "plan": plan_name,
-                            "quota": _build_quota_obj(email, plan_name),
-                        }
-                        set_cache(cache_key, payload)
-                        try:
-                            log_security_event(event_type="response_accepted_bg", email=email, plan=plan_name, details=f"bg_session={bg_session}")
-                        except Exception:
-                            pass
-                        return payload
-                    else:
-                        advisory_result = {"reply": "Request timed out. Please try a shorter or simpler query.", "timeout": True}
-        except Exception as e:
-            log.error("Advisor failed in no-alerts fallback: %s", e)
-            advisory_result = {"reply": f"System error generating advice: {e}"}
-            usage_info["fallback_reason"] = "advisor_error_no_alerts"
-            try:
-                log_security_event(event_type="advice_generation_failed", email=email, plan=plan_name, details=str(e))
-            except Exception:
-                pass
-
-        reply_text = advisory_result.get("reply", "No response generated.") if isinstance(advisory_result, dict) else str(advisory_result)
-        
-        quota_obj = _build_quota_obj(email, plan_name)
-        
+        reply_text = (
+            "### No Intelligence Available\n\n"
+            f"Query: {query}\n\n"
+            f"Requested Location: {requested_loc.get('city') or requested_loc.get('country') or requested_loc.get('region') or 'Unknown'}\n\n"
+            "We don't have recent alerts for this location.\n\n"
+            "What you can do:\n"
+            "1. Try a nearby major city (e.g., 'Belgrade' instead of suburb)\n"
+            "2. Broaden to country-level (e.g., 'Serbia')\n"
+            "3. Set monitoring and we’ll notify on new incidents\n"
+        )
         payload = {
             "reply": reply_text,
             "plan": plan_name,
-            "quota": quota_obj,
+            "quota": _build_quota_obj(email, plan_name),
             "alerts": [],
             "usage": usage_info,
             "session_id": session_id,
             "no_data": True,
-            "metadata": advisory_result if isinstance(advisory_result, dict) else {}
+            "metadata": {"requested_location": requested_loc},
         }
         set_cache(cache_key, payload)
         try:
-            log_security_event(event_type="response_sent", email=email, plan=plan_name, details=f"query={query[:120]}")
+            log_security_event(event_type="no_data_response", email=email, plan=plan_name, details=f"query={query[:120]}")
         except Exception:
             pass
         return payload
@@ -989,6 +988,42 @@ def handle_user_query(
     preprocessing_elapsed = advisor_start - db_start
     log.info("Preprocessing phase: %.3fs | user=%s", preprocessing_elapsed, _short_id(email))
     
+    # ----------- LOW CONFIDENCE HARD-STOP (avoid false confidence) -----------
+    try:
+        best_conf = 0.0
+        for a in db_alerts:
+            try:
+                c = float(a.get("confidence") or 0)
+            except (ValueError, TypeError):
+                c = 0.0
+            if c > best_conf:
+                best_conf = c
+        MIN_CONF = float(os.getenv("CHAT_MIN_CONFIDENCE", "0.40"))
+        if best_conf < MIN_CONF:
+            warn = (
+                "### Low Confidence — Advisory Withheld\n\n"
+                f"Top alert confidence: {int(best_conf*100)}% (min required {int(MIN_CONF*100)}%)\n\n"
+                "We don't have sufficient quality signals for a reliable advisory.\n\n"
+                "Try broadening the location (city → country) or query timeframe."
+            )
+            payload = {
+                "reply": warn,
+                "plan": plan_name,
+                "quota": _build_quota_obj(email, plan_name),
+                "alerts": [],
+                "usage": usage_info,
+                "session_id": session_id,
+                "low_confidence": True,
+            }
+            set_cache(cache_key, payload)
+            try:
+                log_security_event(event_type="low_confidence_block", email=email, plan=plan_name, details=f"best_conf={best_conf:.2f}")
+            except Exception:
+                pass
+            return payload
+    except Exception as e:
+        log.warning("Low-confidence guard failed open: %s", e)
+
     try:
         advisor_extra = dict(advisor_kwargs)
         user_prof = advisor_extra.pop("user_profile", None)
