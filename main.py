@@ -2263,6 +2263,292 @@ def trending_threats():
         logger.error(f"/api/threats/trending error: {e}")
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
+@app.route("/api/threats/assess", methods=["POST", "OPTIONS"])
+def assess_threats():
+    """Unified threat assessment combining all intelligence sources"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        data = request.json
+        
+        lat = data.get('lat')
+        lon = data.get('lon')
+        country_code = data.get('country_code')
+        radius_km = data.get('radius_km', 100)
+        days = data.get('days', 14)
+        
+        if lat is None or lon is None:
+            return _build_cors_response(jsonify({'error': 'lat and lon are required'}), 400)
+        
+        from threat_fusion import ThreatFusion
+        assessment = ThreatFusion.assess_location(
+            lat=float(lat),
+            lon=float(lon),
+            country_code=country_code,
+            radius_km=int(radius_km),
+            days=int(days)
+        )
+        
+        return _build_cors_response(jsonify(assessment))
+    except Exception as e:
+        logger.error(f"/api/threats/assess error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Assessment failed"}), 500))
+
+
+def _generate_llm_travel_advisory(assessment: dict, destination: str | None = None) -> str:
+    """Generate a tactical travel risk advisory using the LLM router.
+    Falls back to a concise, local summary if LLMs are unavailable.
+    """
+    try:
+        # Build a context-rich prompt from assessment
+        loc = assessment.get("location", {})
+        cs = assessment.get("country_summary") or {}
+        categories = assessment.get("threat_categories") or {}
+        top_threats = assessment.get("top_threats") or []
+
+        summary_lines = []
+        summary_lines.append(f"DESTINATION: {destination or 'Unknown'}")
+        summary_lines.append(f"COORDINATES: {loc.get('lat')}, {loc.get('lon')}")
+        summary_lines.append(f"ASSESSMENT PERIOD: Last {assessment.get('period_days', 14)} days")
+        summary_lines.append("")
+        summary_lines.append(f"OVERALL RISK LEVEL: {assessment.get('risk_level', 'UNKNOWN')}")
+        summary_lines.append("")
+        summary_lines.append("INTELLIGENCE SUMMARY:")
+        summary_lines.append(f"- Total threats identified: {assessment.get('total_threats', 0)}")
+        src = assessment.get('sources', {})
+        summary_lines.append(f"- GDELT events: {src.get('gdelt_events', 0)}")
+        summary_lines.append(f"- RSS alerts: {src.get('rss_alerts', 0)}")
+        summary_lines.append(f"- ACLED conflicts: {src.get('acled_events', 0)}")
+        summary_lines.append("")
+
+        if cs:
+            summary_lines.append(f"COUNTRY CONTEXT ({cs.get('country', loc.get('country', 'Unknown'))}):")
+            summary_lines.append(f"- Total events (30 days): {cs.get('total_events', 0)}")
+            if cs.get('avg_severity') is not None:
+                try:
+                    summary_lines.append(f"- Average severity: {float(cs.get('avg_severity')):.1f}/10")
+                except Exception:
+                    summary_lines.append(f"- Average severity: {cs.get('avg_severity')}/10")
+            if cs.get('worst_severity') is not None:
+                try:
+                    summary_lines.append(f"- Worst event severity: {float(cs.get('worst_severity')):.1f}/10")
+                except Exception:
+                    summary_lines.append(f"- Worst event severity: {cs.get('worst_severity')}/10")
+            if cs.get('unique_actors') is not None:
+                summary_lines.append(f"- Unique threat actors: {cs.get('unique_actors')}")
+            summary_lines.append("")
+
+        if categories:
+            summary_lines.append("THREAT BREAKDOWN BY TYPE:")
+            for category, items in categories.items():
+                summary_lines.append(f"- {category.replace('_',' ').title()}: {len(items)} events")
+            summary_lines.append("")
+
+        if top_threats:
+            summary_lines.append("TOP RECENT THREATS:")
+            for i, t in enumerate(top_threats[:5], 1):
+                actor1 = t.get('actor1', 'Unknown')
+                actor2 = t.get('actor2', 'Unknown')
+                country = t.get('country') or loc.get('country') or 'unknown location'
+                try:
+                    dist_km = float(t.get('distance_km', 0.0))
+                except Exception:
+                    dist_km = 0.0
+                try:
+                    sev = float(t.get('severity', 0.0))
+                except Exception:
+                    sev = 0.0
+                srcs = t.get('source', 'Unknown')
+                summary_lines.append(f"{i}. {actor1} vs {actor2} in {country} ({dist_km:.0f}km away, severity: {sev:.1f}/10)")
+                summary_lines.append(f"   Sources: {srcs}")
+            summary_lines.append("")
+
+        summary_lines.append(
+            "Generate a concise, operator-grade travel risk advisory with:\n\n"
+            "1. THREAT LEVEL: One-line summary\n"
+            "2. PRIMARY THREATS: Top 3 specific threats by likelihood/impact\n"
+            "3. GEOGRAPHIC RISK ZONES: Areas to avoid (be specific)\n"
+            "4. OPERATIONAL RECOMMENDATIONS:\n   - Pre-travel prep\n   - In-country security posture\n   - Emergency protocols\n"
+            "5. TIMELINE CONSIDERATIONS: Events/dates that increase risk\n\n"
+            "Keep it tactical, direct, and actionable. No fluff."
+        )
+
+        prompt = "\n".join(summary_lines)
+
+        # Call LLM via router (advisor task type)
+        try:
+            from llm_router import route_llm
+            messages = [
+                {"role": "system", "content": "You are a professional security analyst. Provide tactical, actionable travel risk advisories."},
+                {"role": "user", "content": prompt},
+            ]
+            advisory, model_name = route_llm(messages, temperature=0.3, task_type="advisor")
+            if advisory and advisory.strip():
+                return advisory.strip()
+        except Exception as e:
+            logger.warning(f"/api/travel-risk/assess LLM routing failed: {e}")
+
+        # Fallback: return compact local summary if LLM unavailable
+        fallback = [
+            f"Threat Level: {assessment.get('risk_level', 'UNKNOWN')}",
+            f"Threats nearby: {assessment.get('total_threats', 0)} in last {assessment.get('period_days', 14)} days",
+        ]
+        if assessment.get('recommendations'):
+            recs = assessment['recommendations'][:3]
+            fallback.append("Top recommendations:")
+            for r in recs:
+                fallback.append(f"- {r}")
+        return "\n".join(fallback)
+    except Exception as e:
+        logger.error(f"/api/travel-risk/assess advisory generation error: {e}")
+        return "Advisory generation failed. Review raw threat data."
+
+
+def _assessment_to_alert_for_advisor(assessment: dict, destination: str | None = None) -> dict:
+    """Convert ThreatFusion assessment into an advisor-friendly 'alert' dict.
+    This produces a single synthetic alert summarizing the local threat picture.
+    """
+    loc = assessment.get("location", {})
+    categories = assessment.get("threat_categories") or {}
+    top_threats = assessment.get("top_threats") or []
+
+    # Derive a concise title and summary
+    risk = assessment.get("risk_level", "UNKNOWN")
+    title = f"{destination or loc.get('country') or 'Destination'} — {risk} risk"
+
+    # Build a terse summary string
+    src = assessment.get("sources", {})
+    parts = [
+        f"{assessment.get('total_threats', 0)} local threats in last {assessment.get('period_days', 14)}d",
+        f"GDELT:{src.get('gdelt_events',0)} RSS:{src.get('rss_alerts',0)} ACLED:{src.get('acled_events',0)}",
+    ]
+    if categories:
+        cat_counts = ", ".join(f"{k}:{len(v)}" for k, v in categories.items() if v)
+        if cat_counts:
+            parts.append(cat_counts)
+    summary = " | ".join(parts)
+
+    # Choose primary category from categories with max events
+    primary_category = None
+    if categories:
+        primary_category = max(categories.items(), key=lambda kv: len(kv[1]) if isinstance(kv[1], list) else 0)[0]
+
+    # Build sources list from top_threats
+    src_list = []
+    seen = set()
+    for t in top_threats[:10]:
+        s = t.get('source')
+        if not s:
+            continue
+        # Split combined labels like "GDELT, RSS"
+        names = [x.strip() for x in str(s).split(',') if x.strip()]
+        for name in names:
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            src_list.append({"name": name})
+
+    # Score: scale from risk level
+    score_map = {"LOW": 0.25, "MODERATE": 0.5, "HIGH": 0.75, "SEVERE": 0.9}
+    score = score_map.get(str(risk).upper(), 0.5)
+
+    # Confidence: increase if multi-source verification present
+    conf = 0.5
+    try:
+        ver = int(assessment.get('verified_by_multiple_sources') or 0)
+        if ver >= 3:
+            conf = 0.8
+        elif ver >= 1:
+            conf = 0.65
+    except Exception:
+        pass
+
+    # Compose alert dict
+    alert = {
+        "title": title,
+        "summary": summary,
+        "city": None,  # unknown from assessment
+        "region": None,
+        "country": loc.get("country"),
+        "latitude": loc.get("lat"),
+        "longitude": loc.get("lon"),
+        "category": primary_category or "travel_mobility",
+        "subcategory": "Local risk picture",
+        "label": risk,
+        "score": score,
+        "confidence": conf,
+        "domains": [],  # allow advisor to infer if absent
+        "sources": src_list,
+        # Minimal trend payload
+        "incident_count_30d": assessment.get("total_threats", 0),
+        "recent_count_7d": None,
+        "baseline_avg_7d": None,
+        "baseline_ratio": 1.0,
+        "trend_direction": "stable",
+        "anomaly_flag": False,
+        "future_risk_probability": None,
+        # Early warnings / playbooks left empty; advisor fills defaults
+    }
+    return alert
+
+
+@app.route('/api/travel-risk/assess', methods=['POST', 'OPTIONS'])
+def travel_risk_assessment():
+    """Unified travel risk assessment plus LLM advisory for a destination."""
+    if request.method == 'OPTIONS':
+        return _build_cors_response(make_response("", 204))
+
+    try:
+        data = request.json or {}
+
+        # Validate inputs
+        if not ("lat" in data and "lon" in data):
+            return _build_cors_response(jsonify({'error': 'lat and lon required'}), 400)
+
+        destination = data.get('destination')
+        lat = float(data['lat'])
+        lon = float(data['lon'])
+        country_code = data.get('country_code')
+        radius_km = int(data.get('radius_km', 100))
+        days = int(data.get('days', 14))
+        output_format = str(data.get('format', 'structured')).lower()
+
+        # Run fusion analysis
+        from threat_fusion import ThreatFusion
+        assessment = ThreatFusion.assess_location(
+            lat=lat,
+            lon=lon,
+            country_code=country_code,
+            radius_km=radius_km,
+            days=days,
+        )
+
+        # Generate advisory: structured (advisor.py) or concise (LLM router)
+        advisory_text = ""
+        if output_format == "structured":
+            try:
+                alert = _assessment_to_alert_for_advisor(assessment, destination)
+                from advisor import render_advisory
+                profile = {"location": destination} if destination else {}
+                user_msg = destination or f"{lat},{lon}"
+                advisory_text = render_advisory(alert, user_msg, profile)
+            except Exception as e:
+                logger.warning(f"/api/travel-risk/assess structured advisor failed, falling back: {e}")
+                advisory_text = _generate_llm_travel_advisory(assessment, destination)
+        else:
+            advisory_text = _generate_llm_travel_advisory(assessment, destination)
+
+        return _build_cors_response(jsonify({
+            'assessment': assessment,
+            'advisory': advisory_text,
+            'format': output_format,
+        }))
+    except Exception as e:
+        logger.error(f"/api/travel-risk/assess error: {e}")
+        return _build_cors_response(make_response(jsonify({'error': 'Assessment or advisory failed'}), 500))
+
 @app.route("/admin/monitoring/snapshot", methods=["POST"])  # admin-only manual snapshot
 def monitoring_snapshot_admin():
     try:
