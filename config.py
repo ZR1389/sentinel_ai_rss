@@ -181,7 +181,7 @@ class ApplicationConfig:
     """Main application configuration."""
     env: str = os.getenv("ENV", "development")
     port: int = _getenv_int("PORT", 8080)
-    allowed_origins: str = os.getenv("ALLOWED_ORIGINS", "https://zikarisk.com,https://app.zikarisk.com")
+    allowed_origins: str = os.getenv("ALLOWED_ORIGINS", "https://zikarisk.com,https://www.zikarisk.com,https://app.zikarisk.com")
     default_plan: str = os.getenv("DEFAULT_PLAN", "FREE")
     paid_plans: str = os.getenv("PAID_PLANS", "PRO,ENTERPRISE")
     
