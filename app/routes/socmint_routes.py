@@ -1,22 +1,20 @@
 from flask import Blueprint, request, jsonify
 from socmint_service import SocmintService
 import auth_utils
-from functools import wraps
 import logging
 import urllib.parse
+import os
 from db_utils import fetch_one
 
 socmint_bp = Blueprint('socmint', __name__)
 apify_service = SocmintService()
 logger = logging.getLogger(__name__)
 
-# Try to import limiter for rate limiting
-try:
-    from main import limiter, SOCMINT_INSTAGRAM_RATE, SOCMINT_FACEBOOK_RATE
-except ImportError:
-    limiter = None
-    SOCMINT_INSTAGRAM_RATE = "30 per minute"
-    SOCMINT_FACEBOOK_RATE = "10 per minute"
+# Rate limit configuration now decoupled from main to avoid circular import.
+# Main application will inject the limiter via `set_socmint_limiter` after blueprint registration.
+SOCMINT_INSTAGRAM_RATE = os.getenv("SOCMINT_INSTAGRAM_RATE", "30 per minute")
+SOCMINT_FACEBOOK_RATE = os.getenv("SOCMINT_FACEBOOK_RATE", "10 per minute")
+_INJECTED_LIMITER = None  # set by set_socmint_limiter()
 
 # Instagram endpoint
 @socmint_bp.route('/instagram/<username>', methods=['GET'])
@@ -40,9 +38,7 @@ def get_instagram_profile(username):
         logger.error(f"SOCMINT: Instagram endpoint error: {str(e)}", exc_info=True)
         return jsonify(success=False, error="Server error"), 500
 
-# Apply rate limit to Instagram endpoint
-if limiter:
-    get_instagram_profile = limiter.limit(SOCMINT_INSTAGRAM_RATE)(get_instagram_profile)
+# Rate limits applied later via set_socmint_limiter()
 
 # Facebook endpoint
 @socmint_bp.route('/facebook', methods=['POST'])
@@ -72,9 +68,7 @@ def get_facebook_posts():
         logger.error(f"SOCMINT: Facebook endpoint error: {str(e)}", exc_info=True)
         return jsonify(success=False, error="Server error"), 500
 
-# Apply rate limit to Facebook endpoint (stricter due to block risk)
-if limiter:
-    get_facebook_posts = limiter.limit(SOCMINT_FACEBOOK_RATE)(get_facebook_posts)
+# Rate limits applied later via set_socmint_limiter()
 
 # Status check endpoint
 @socmint_bp.route('/status/<platform>/<path:identifier>', methods=['GET'])
@@ -119,3 +113,24 @@ def get_socmint_status(platform, identifier):
     except Exception as e:
         logger.error(f"Status check failed: {str(e)}", exc_info=True)
         return jsonify(success=False, error="Server error"), 500
+
+
+def set_socmint_limiter(limiter_obj):
+    """Inject flask-limiter instance after app & blueprint setup.
+
+    This avoids circular imports with main.py. Can be called safely multiple times.
+    """
+    global _INJECTED_LIMITER, get_instagram_profile, get_facebook_posts, get_socmint_status
+    if limiter_obj is None:
+        return
+    if _INJECTED_LIMITER is limiter_obj:
+        return  # already applied
+    _INJECTED_LIMITER = limiter_obj
+    try:
+        get_instagram_profile = limiter_obj.limit(SOCMINT_INSTAGRAM_RATE)(get_instagram_profile)
+        get_facebook_posts = limiter_obj.limit(SOCMINT_FACEBOOK_RATE)(get_facebook_posts)
+        # Generic status endpoint—slightly higher allowance
+        get_socmint_status = limiter_obj.limit("60 per minute")(get_socmint_status)
+        logger.info("[socmint_routes] Rate limits applied successfully")
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"[socmint_routes] Failed to apply rate limits: {e}")

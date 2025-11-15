@@ -84,4 +84,8 @@ Flask-Limiter>=3.12
 gevent>=25.9.1
 structlog>=24.0.0
 
+# Optional Redis support for admin rate limiter & future distributed queues
+redis>=5.0.0
+rq>=1.16.2
+
 # Note: FastAPI removed - using Flask app in main.py with health_check.py functions

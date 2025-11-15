@@ -27,6 +27,17 @@ import time
 from typing import Any, Dict, Optional, Callable
 from datetime import datetime
 from functools import wraps
+import time
+import uuid
+try:
+    from fallback_jobs import (
+        submit_fallback_job,
+        get_fallback_job_status,
+        list_fallback_jobs,
+        job_queue_enabled,
+    )
+except Exception:
+    submit_fallback_job = get_fallback_job_status = list_fallback_jobs = job_queue_enabled = None
 
 from flask import Flask, request, jsonify, make_response, g
 
@@ -42,15 +53,30 @@ except Exception:
 from map_api import map_api
 from webpush_endpoints import webpush_bp
 try:
-    from app.routes.socmint_routes import socmint_bp
+    from app.routes.socmint_routes import socmint_bp, set_socmint_limiter
 except ImportError:
-    from socmint_routes import socmint_bp
+    from socmint_routes import socmint_bp, set_socmint_limiter
 
 
 app = Flask(__name__)
 app.register_blueprint(map_api)
 app.register_blueprint(webpush_bp)
 app.register_blueprint(socmint_bp, url_prefix='/api/socmint')
+# Start trends snapshotter (background) if enabled
+try:
+    from metrics_trends import start_trends_snapshotter
+    start_trends_snapshotter()
+except Exception as e:
+    pass
+
+# Apply socmint rate limits post-registration to avoid circular import issues
+if 'Limiter' in globals() and Limiter and get_remote_address:
+    try:
+        # Initialize limiter if not already
+        limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"], storage_uri="memory://")
+        set_socmint_limiter(limiter)
+    except Exception as e:
+        logger.warning(f"[main] Could not initialize limiter or apply socmint limits: {e}")
 
 # ---------- Global Error Handlers ----------
 @app.errorhandler(500)
@@ -132,6 +158,33 @@ def health_quick():
 def ping():
     """Simple liveness probe."""
     return jsonify({"status": "ok", "message": "pong"})
+
+# ---------- Auth status (server-friendly) ----------
+@app.route("/auth/status", methods=["GET"])  # returns auth context from Bearer token
+def auth_status():
+    try:
+        from auth_utils import decode_token
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return _build_cors_response(make_response(jsonify({"error": "Unauthorized"}), 401))
+        token = auth.split(" ", 1)[1].strip()
+        payload = decode_token(token)
+        if not payload or payload.get("type") != "access":
+            return _build_cors_response(make_response(jsonify({"error": "Invalid or expired token"}), 401))
+
+        email = payload.get("user_email")
+        plan = payload.get("plan")
+        # Optional: usage — placeholder until metering store is added
+        usage = {}
+        return _build_cors_response(jsonify({
+            "email": email,
+            "plan": plan,
+            "email_verified": True,  # assume verified if access token exists in our flow
+            "usage": usage,
+        }))
+    except Exception as e:
+        logger.error(f"/auth/status error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Auth status failed"}), 500))
 
 # ---------- Retention Management Endpoints ----------
 @app.route("/admin/retention/status", methods=["GET"])
@@ -2003,6 +2056,454 @@ def batch_enrich_alerts():
     except Exception as e:
         logger.error(f"Batch endpoint error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
+# ---------- Monitoring Endpoints (Coverage / Metrics) ----------
+@app.route("/api/monitoring/coverage", methods=["GET"])  # lightweight, no auth for now
+def get_coverage_report():
+    try:
+        from coverage_monitor import get_coverage_monitor
+        monitor = get_coverage_monitor()
+        report = monitor.get_comprehensive_report()
+        return _build_cors_response(jsonify(report))
+    except Exception as e:
+        logger.error(f"/api/monitoring/coverage error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Monitoring unavailable"}), 500))
+
+
+@app.route("/api/monitoring/gaps", methods=["GET"])  # lightweight, no auth for now
+def get_coverage_gaps_endpoint():
+    try:
+        from coverage_monitor import get_coverage_monitor
+        monitor = get_coverage_monitor()
+        min_alerts = int(request.args.get("min_alerts_7d", 5))
+        max_age = int(request.args.get("max_age_hours", 24))
+        gaps = monitor.get_coverage_gaps(min_alerts_7d=min_alerts, max_age_hours=max_age)
+        return _build_cors_response(jsonify({
+            "gaps": gaps,
+            "count": len(gaps),
+            "parameters": {"min_alerts_7d": min_alerts, "max_age_hours": max_age},
+        }))
+    except Exception as e:
+        logger.error(f"/api/monitoring/gaps error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+
+@app.route("/api/monitoring/stats", methods=["GET"])  # lightweight, no auth for now
+def get_monitoring_stats():
+    try:
+        from coverage_monitor import get_coverage_monitor
+        monitor = get_coverage_monitor()
+        return _build_cors_response(jsonify({
+            "location_extraction": monitor.get_location_extraction_stats(),
+            "advisory_gating": monitor.get_advisory_gating_stats(),
+        }))
+    except Exception as e:
+        logger.error(f"/api/monitoring/stats error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+
+# ---------- Dashboard-Friendly Endpoints (compact JSON) ----------
+@app.route("/api/monitoring/dashboard/summary", methods=["GET", "OPTIONS"])  # compact payload for Next.js
+def monitoring_dashboard_summary():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    try:
+        from coverage_monitor import get_coverage_monitor
+        mon = get_coverage_monitor()
+        report = mon.get_comprehensive_report()
+        geo = report.get("geographic_coverage", {})
+        prov = geo.get("provenance", {})
+        return _build_cors_response(jsonify({
+            "timestamp": report.get("timestamp"),
+            "total_locations": geo.get("total_locations", 0),
+            "covered_locations": geo.get("covered_locations", 0),
+            "coverage_gaps": geo.get("coverage_gaps", 0),
+            "total_alerts_7d": prov.get("total_alerts_7d", 0),
+            "synthetic_alerts_7d": prov.get("synthetic_alerts_7d", 0),
+            "synthetic_ratio_7d": prov.get("synthetic_ratio_7d", 0),
+        }))
+    except Exception as e:
+        logger.error(f"/api/monitoring/dashboard/summary error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Summary unavailable"}), 500))
+
+
+@app.route("/api/monitoring/dashboard/top_gaps", methods=["GET", "OPTIONS"])  # compact list
+def monitoring_dashboard_top_gaps():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    try:
+        from coverage_monitor import get_coverage_monitor
+        mon = get_coverage_monitor()
+        limit = max(1, min(int(request.args.get("limit", 5)), 50))
+        gaps = mon.get_coverage_gaps(
+            min_alerts_7d=int(request.args.get("min_alerts_7d", 5)),
+            max_age_hours=int(request.args.get("max_age_hours", 24)),
+        )
+        # Already sorted ascending by alerts; slice
+        data = [{
+            "country": g.get("country"),
+            "region": g.get("region"),
+            "issues": g.get("issues"),
+            "alert_count_7d": g.get("alert_count_7d"),
+            "synthetic_count_7d": g.get("synthetic_count_7d"),
+            "synthetic_ratio_7d": g.get("synthetic_ratio_7d"),
+            "last_alert_age_hours": round(float(g.get("last_alert_age_hours", 0)), 2),
+            "confidence_avg": g.get("confidence_avg"),
+        } for g in gaps[:limit]]
+        return _build_cors_response(jsonify({"items": data, "count": len(data)}))
+    except Exception as e:
+        logger.error(f"/api/monitoring/dashboard/top_gaps error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Top gaps unavailable"}), 500))
+
+
+@app.route("/api/monitoring/dashboard/top_covered", methods=["GET", "OPTIONS"])  # compact list
+def monitoring_dashboard_top_covered():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    try:
+        from coverage_monitor import get_coverage_monitor
+        mon = get_coverage_monitor()
+        limit = max(1, min(int(request.args.get("limit", 5)), 50))
+        items = mon.get_covered_locations()[:limit]
+        return _build_cors_response(jsonify({"items": items, "count": len(items)}))
+    except Exception as e:
+        logger.error(f"/api/monitoring/dashboard/top_covered error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Top covered unavailable"}), 500))
+
+# ---------- Monitoring Trends Endpoints ----------
+@app.route("/api/monitoring/trends", methods=["GET"])
+def monitoring_trends():
+    try:
+        limit = max(1, min(int(request.args.get("limit", 168)), 2000))
+        from metrics_trends import fetch_trends
+        rows = fetch_trends(limit=limit)
+        return _build_cors_response(jsonify({"items": rows, "count": len(rows)}))
+    except Exception as e:
+        logger.error(f"/api/monitoring/trends error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Trends unavailable"}), 500))
+
+@app.route("/admin/monitoring/snapshot", methods=["POST"])  # admin-only manual snapshot
+def monitoring_snapshot_admin():
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return make_response(jsonify({"error": "Unauthorized - valid API key required"}), 401)
+        from metrics_trends import snapshot_coverage_trends, ensure_trends_table
+        ensure_trends_table()
+        row = snapshot_coverage_trends()
+        return jsonify({"ok": True, "snapshot": row})
+    except Exception as e:
+        logger.error(f"/admin/monitoring/snapshot error: {e}")
+        return make_response(jsonify({"error": "Snapshot failed"}), 500)
+
+# ---------- Admin: Trigger Real-Time Fallback (Phase 4) ----------
+@app.route("/admin/fallback/trigger", methods=["POST"])
+def trigger_realtime_fallback():
+    """Manually trigger Phase 4 real-time fallback cycle (admin only).
+
+    Header: X-API-Key: <ADMIN_API_KEY>
+    Optional query/body fields may be added in future (e.g., country filter).
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+
+        if not expected_key or api_key != expected_key:
+            # Do NOT echo CORS for admin; server-to-server only
+            return make_response(jsonify({"error": "Unauthorized - valid API key required"}), 401)
+
+        # Acting user context (for audit)
+        acting_email = request.headers.get("X-Acting-Email", "unknown@system")
+        acting_plan = request.headers.get("X-Acting-Plan", "UNKNOWN").upper()
+
+        from real_time_fallback import perform_realtime_fallback
+        # Filters via query or JSON body (country required, region optional)
+        body = {}
+        try:
+            body = request.get_json(silent=True) or {}
+        except Exception:
+            body = {}
+        country = (request.args.get("country") or body.get("country") or "").strip()
+        region = (request.args.get("region") or body.get("region") or "").strip() or None
+
+        # Input validation: country required
+        if not country:
+            return make_response(jsonify({"error": "country is required"}), 400)
+
+        # Normalize inputs
+        def _norm_country(c: str) -> str:
+            try:
+                import pycountry  # type: ignore
+                # Try fuzzy search
+                try:
+                    res = pycountry.countries.search_fuzzy(c)
+                    if res:
+                        return res[0].name
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return c.strip().title()
+
+        def _norm_region(r: str) -> str:
+            return (r or "").strip().title()
+
+        country_n = _norm_country(country)
+        region_n = _norm_region(region) if region else None
+
+        # Rate limit: optional Redis-backed sliding window, fallback to in-memory bucket
+        rl_key = f"{acting_email}:{country_n}:{region_n or 'ALL'}"
+        now = time.time()
+        window = float(os.getenv("ADMIN_FALLBACK_WINDOW_SEC", "60"))
+        limit = int(os.getenv("ADMIN_FALLBACK_RPM", "10"))  # requests per window per key
+        use_redis_rl = os.getenv("USE_REDIS_ADMIN_LIMITER", "false").lower() == "true"
+        redis_client = None
+        if use_redis_rl:
+            try:
+                import redis  # type: ignore
+                if not hasattr(trigger_realtime_fallback, "_redis_admin_client"):
+                    url = os.getenv("ADMIN_LIMITER_REDIS_URL") or os.getenv("REDIS_URL")
+                    trigger_realtime_fallback._redis_admin_client = redis.from_url(url) if url else None  # type: ignore
+                redis_client = getattr(trigger_realtime_fallback, "_redis_admin_client", None)
+            except Exception as e:
+                logger.warning(f"Admin redis limiter init failed: {e}")
+                redis_client = None
+        allowed = True
+        retry_in = 0
+        if redis_client:
+            try:
+                key = f"admin_rl:{rl_key}"
+                pipe = redis_client.pipeline()
+                cutoff = now - window
+                pipe.zremrangebyscore(key, 0, cutoff)
+                pipe.zcard(key)
+                current = pipe.execute()[1]
+                if current >= limit:
+                    allowed = False
+                    # fetch oldest to compute retry_in
+                    oldest = redis_client.zrange(key, 0, 0, withscores=True)
+                    if oldest:
+                        retry_in = int(window - (now - oldest[0][1]))
+                else:
+                    pipe = redis_client.pipeline()
+                    pipe.zadd(key, {str(now): now})
+                    pipe.expire(key, int(window))
+                    pipe.execute()
+            except Exception as e:
+                logger.warning(f"Redis limiter error, falling back to memory: {e}")
+                redis_client = None
+        if not redis_client and allowed:
+            if not hasattr(trigger_realtime_fallback, "_rate_buckets"):
+                trigger_realtime_fallback._rate_buckets = {}
+            buckets = trigger_realtime_fallback._rate_buckets  # type: ignore
+            ts_list = [t for t in buckets.get(rl_key, []) if now - t < window]
+            if len(ts_list) >= limit:
+                allowed = False
+                retry_in = int(window - (now - ts_list[0]))
+            else:
+                ts_list.append(now)
+                buckets[rl_key] = ts_list
+        if not allowed:
+            return make_response(jsonify({"error": "rate_limited", "retry_in_sec": retry_in}), 429)
+
+        corr_id = str(uuid.uuid4())
+        t0 = time.time()
+        attempts = perform_realtime_fallback(country=country_n, region=region_n)
+        latency_ms = int((time.time() - t0) * 1000)
+
+        # Audit log
+        try:
+            logger.info(
+                "admin_fallback_trigger",
+                extra={
+                    "corr_id": corr_id,
+                    "acting_email": acting_email,
+                    "acting_plan": acting_plan,
+                    "country": country_n,
+                    "region": region_n,
+                    "attempts": len(attempts),
+                    "latency_ms": latency_ms,
+                },
+            )
+        except Exception:
+            pass
+
+        # Do NOT apply CORS to admin endpoint responses
+        return jsonify({
+            "ok": True,
+            "count": len(attempts),
+            "attempts": attempts,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "correlation_id": corr_id,
+            "latency_ms": latency_ms,
+        })
+    except Exception as e:
+        logger.error(f"trigger_realtime_fallback error: {e}")
+        return make_response(jsonify({"error": "Fallback trigger failed", "details": str(e)}), 500)
+
+
+# ---------- Admin: Submit asynchronous fallback job ----------
+@app.route("/admin/fallback/submit", methods=["POST"])
+def submit_fallback_job_endpoint():
+    """Queue a real-time fallback job and return job_id.
+
+    Header: X-API-Key: <ADMIN_API_KEY>
+    Body/Query: country (required), region (optional)
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return make_response(jsonify({"error": "Unauthorized - valid API key required"}), 401)
+        if submit_fallback_job is None:
+            return make_response(jsonify({"error": "Job queue unavailable"}), 503)
+        body = {}
+        try:
+            body = request.get_json(silent=True) or {}
+        except Exception:
+            body = {}
+        country = (request.args.get("country") or body.get("country") or "").strip()
+        region = (request.args.get("region") or body.get("region") or "").strip() or None
+        if not country:
+            return make_response(jsonify({"error": "country is required"}), 400)
+        acting_email = request.headers.get("X-Acting-Email", "unknown@system")
+        acting_plan = request.headers.get("X-Acting-Plan", "UNKNOWN").upper()
+        # Normalization (reuse logic from trigger endpoint)
+        def _norm_country(c: str) -> str:
+            try:
+                import pycountry  # type: ignore
+                try:
+                    res = pycountry.countries.search_fuzzy(c)
+                    if res:
+                        return res[0].name
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return c.strip().title()
+        def _norm_region(r: str) -> str:
+            return (r or "").strip().title()
+        country_n = _norm_country(country)
+        region_n = _norm_region(region) if region else None
+        job = submit_fallback_job(country_n, region_n, acting_email, acting_plan)
+        logger.info("admin_fallback_submit", extra={"job_id": job.get("job_id"), "country": country_n, "region": region_n, "acting_email": acting_email})
+        return jsonify({
+            "ok": True,
+            "job_id": job.get("job_id"),
+            "status": job.get("status"),
+            "correlation_id": job.get("correlation_id"),
+            "queue_enabled": bool(job_queue_enabled and job_queue_enabled()),
+        })
+    except Exception as e:
+        logger.error(f"submit_fallback_job_endpoint error: {e}")
+        return make_response(jsonify({"error": "Job submit failed", "details": str(e)}), 500)
+
+
+# ---------- Admin: Fallback job status ----------
+@app.route("/admin/fallback/status", methods=["GET"])
+def fallback_job_status_endpoint():
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return make_response(jsonify({"error": "Unauthorized - valid API key required"}), 401)
+        if get_fallback_job_status is None:
+            return make_response(jsonify({"error": "Job queue unavailable"}), 503)
+        job_id = (request.args.get("job_id") or "").strip()
+        if not job_id:
+            return make_response(jsonify({"error": "job_id is required"}), 400)
+        status = get_fallback_job_status(job_id)
+        if not status:
+            return make_response(jsonify({"error": "job_not_found"}), 404)
+        return jsonify({"ok": True, "job": status})
+    except Exception as e:
+        logger.error(f"fallback_job_status_endpoint error: {e}")
+        return make_response(jsonify({"error": "Status lookup failed", "details": str(e)}), 500)
+
+
+# ---------- Admin: List recent fallback jobs ----------
+@app.route("/admin/fallback/jobs", methods=["GET"])
+def list_fallback_jobs_endpoint():
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return make_response(jsonify({"error": "Unauthorized - valid API key required"}), 401)
+        if list_fallback_jobs is None:
+            return make_response(jsonify({"error": "Job queue unavailable"}), 503)
+        limit = max(1, min(int(request.args.get("limit", 50)), 200))
+        jobs = list_fallback_jobs(limit=limit)
+        return jsonify({"ok": True, "jobs": jobs, "count": len(jobs)})
+    except Exception as e:
+        logger.error(f"list_fallback_jobs_endpoint error: {e}")
+        return make_response(jsonify({"error": "Jobs list failed", "details": str(e)}), 500)
+
+
+# ---------- Admin: List RQ Failed Jobs ----------
+@app.route("/admin/fallback/failed", methods=["GET"])
+def list_failed_rq_jobs():
+    """List recent RQ failed jobs with metadata (admin only)."""
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return make_response(jsonify({"error": "Unauthorized - valid API key required"}), 401)
+        
+        redis_url = os.getenv('REDIS_URL') or os.getenv('ADMIN_LIMITER_REDIS_URL')
+        if not redis_url:
+            return make_response(jsonify({"error": "REDIS_URL not configured"}), 503)
+        
+        try:
+            import redis
+            from rq import Queue
+            from rq.registry import FailedJobRegistry
+            from rq.job import Job
+        except Exception as e:
+            return make_response(jsonify({"error": "RQ dependencies unavailable", "details": str(e)}), 503)
+        
+        limit = max(1, min(int(request.args.get("limit", 50)), 200))
+        conn = redis.from_url(redis_url)
+        reg = FailedJobRegistry('fallback', connection=conn)
+        job_ids = reg.get_job_ids()[:limit]
+        
+        failed_jobs = []
+        for jid in job_ids:
+            try:
+                job = Job.fetch(jid, connection=conn)
+                meta = job.meta or {}
+                failed_jobs.append({
+                    "job_id": jid,
+                    "status": job.get_status(),
+                    "enqueued_at": job.enqueued_at.isoformat() if job.enqueued_at else None,
+                    "ended_at": job.ended_at.isoformat() if job.ended_at else None,
+                    "correlation_id": meta.get('correlation_id'),
+                    "acting_email": meta.get('acting_email'),
+                    "country": meta.get('country'),
+                    "region": meta.get('region'),
+                    "attempts": meta.get('attempts'),
+                    "max_retries": meta.get('max_retries'),
+                    "exc_info": (job.exc_info or '').splitlines()[-1] if job.exc_info else None,
+                })
+            except Exception as e:
+                failed_jobs.append({"job_id": jid, "error": str(e)})
+        
+        return jsonify({"ok": True, "failed_jobs": failed_jobs, "count": len(failed_jobs)})
+    except Exception as e:
+        logger.error(f"list_failed_rq_jobs error: {e}")
+        return make_response(jsonify({"error": "Failed jobs list error", "details": str(e)}), 500)
+
+
+# ---------- Ops Stub: Public fallback trigger (intentionally non-operational) ----------
+@app.route("/api/fallback/trigger", methods=["POST", "OPTIONS"])  # stub for future use
+def public_fallback_trigger_stub():
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    # For safety, expose only admin path for now
+    return _build_cors_response(make_response(jsonify({
+        "ok": False,
+        "message": "Use /admin/fallback/trigger with X-API-Key",
+    }), 403))
 
 # -------------------------------------------------------------------
 # Local development entrypoint

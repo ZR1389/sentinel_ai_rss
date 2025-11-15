@@ -30,6 +30,8 @@ class GeographicCoverage:
     region: Optional[str] = None
     alert_count_7d: int = 0
     alert_count_30d: int = 0
+    synthetic_count_7d: int = 0
+    synthetic_count_30d: int = 0
     last_alert_timestamp: Optional[float] = None
     confidence_avg: float = 0.0
     sources_count: int = 0
@@ -114,6 +116,7 @@ class CoverageMonitor:
         region: Optional[str] = None,
         confidence: float = 0.0,
         source_count: int = 1,
+        provenance: str = "organic",
     ):
         """Record an alert for geographic coverage tracking"""
         with self._lock:
@@ -128,6 +131,9 @@ class CoverageMonitor:
             cov = self._state.geographic_coverage[key]
             cov.alert_count_7d += 1
             cov.alert_count_30d += 1
+            if (provenance or "").lower() == "synthetic":
+                cov.synthetic_count_7d += 1
+                cov.synthetic_count_30d += 1
             cov.last_alert_timestamp = time.time()
             
             # Update rolling average confidence
@@ -164,6 +170,8 @@ class CoverageMonitor:
                         "region": cov.region,
                         "issues": issues,
                         "alert_count_7d": cov.alert_count_7d,
+                        "synthetic_count_7d": cov.synthetic_count_7d,
+                        "synthetic_ratio_7d": round((cov.synthetic_count_7d / max(1, cov.alert_count_7d)) * 100, 2),
                         "last_alert_age_hours": (time.time() - (cov.last_alert_timestamp or 0)) / 3600,
                         "confidence_avg": round(cov.confidence_avg, 2),
                     })
@@ -182,6 +190,9 @@ class CoverageMonitor:
                         "region": cov.region,
                         "alert_count_7d": cov.alert_count_7d,
                         "alert_count_30d": cov.alert_count_30d,
+                        "synthetic_count_7d": cov.synthetic_count_7d,
+                        "synthetic_count_30d": cov.synthetic_count_30d,
+                        "synthetic_ratio_7d": round((cov.synthetic_count_7d / max(1, cov.alert_count_7d)) * 100, 2),
                         "confidence_avg": round(cov.confidence_avg, 2),
                         "sources_count": cov.sources_count,
                     })
@@ -277,6 +288,11 @@ class CoverageMonitor:
         gate_stats = self.get_advisory_gating_stats()
         
         with self._lock:
+            # Compute overall provenance metrics (7d)
+            total_alerts_7d = sum(c.alert_count_7d for c in self._state.geographic_coverage.values())
+            total_synth_7d = sum(c.synthetic_count_7d for c in self._state.geographic_coverage.values())
+            synthetic_ratio_7d = round((total_synth_7d / max(1, total_alerts_7d)) * 100, 2)
+
             return {
                 "timestamp": datetime.now().isoformat(),
                 "last_updated": datetime.fromtimestamp(self._state.last_updated).isoformat(),
@@ -285,6 +301,11 @@ class CoverageMonitor:
                     "covered_locations": len(covered_locs),
                     "coverage_gaps": len(coverage_gaps),
                     "gaps_detail": coverage_gaps[:10],  # Top 10 gaps
+                    "provenance": {
+                        "total_alerts_7d": total_alerts_7d,
+                        "synthetic_alerts_7d": total_synth_7d,
+                        "synthetic_ratio_7d": synthetic_ratio_7d,
+                    },
                 },
                 "location_extraction": loc_stats,
                 "advisory_gating": gate_stats,
