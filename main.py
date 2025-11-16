@@ -220,7 +220,9 @@ def auth_status():
                 "map_days": all_limits.get("map_days", 7),
                 "timeline_days": all_limits.get("timeline_days", 7),
                 "statistics_days": all_limits.get("statistics_days", 7),
-                "monitoring_days": all_limits.get("monitoring_days", 7),
+                    "monitoring_days": all_limits.get("monitoring_days", 7),
+                    # Added for frontend debug/limits page convenience
+                    "chat_messages_per_month": all_limits.get("chat_messages_per_month", 3),
             },
         }))
     except Exception as e:
@@ -718,7 +720,9 @@ def _load_user_profile(email: str) -> Dict[str, Any]:
         "map_days": all_limits.get("map_days", 7),
         "timeline_days": all_limits.get("timeline_days", 7),
         "statistics_days": all_limits.get("statistics_days", 7),
-        "monitoring_days": all_limits.get("monitoring_days", 7),
+            "monitoring_days": all_limits.get("monitoring_days", 7),
+            # Added for consistency with /auth/status limits block
+            "chat_messages_per_month": all_limits.get("chat_messages_per_month", 3),
     }
 
     return data
