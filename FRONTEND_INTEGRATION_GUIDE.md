@@ -1,271 +1,332 @@
-# Frontend Integration Guide - Phase 4 Coverage Dashboard
+# Frontend Integration Guide - Plan-Based Feature Access
 
-## Backend Endpoints (Production Ready)
+**Date**: November 15, 2025  
+**Backend Status**: ✅ Ready to Deploy  
+**Breaking Changes**: Yes - See Migration section
 
-### Summary
-```
-GET /api/monitoring/dashboard/summary
-```
-Returns:
+---
+
+## 🎯 Overview
+
+All users must login/signup to access features. Upon registration, users receive a **FREE** plan with 7-day data access and 3 chat messages. Upgrading unlocks extended history and higher quotas.
+
+---
+
+## 📋 Plan Structure
+
+### Confirmed Plan Names:
+- **FREE** (default for new signups)
+- **PRO** (paid tier 1)
+- **ENTERPRISE** (paid tier 2)
+
+### Plan Limits:
+
+| Feature | FREE | PRO | ENTERPRISE |
+|---------|------|-----|------------|
+| **Chat Messages/Month** | 3 | 1,000 | 5,000 |
+| **Data History Window** | 7 days | 30 days | 90 days |
+| **Max Alerts per Query** | 30 | 100 | 500 |
+| **Map Access** | 7-day data | 30-day data | 90-day data |
+| **Timeline Access** | 7-day data | 30-day data | 90-day data |
+| **Statistics Access** | 7-day data | 30-day data | 90-day data |
+| **Monitoring Access** | 7-day data | 30-day data | 90-day data |
+| **Email Verification** | Required | Required | Required |
+
+---
+
+## 🔐 Access Control
+
+### Protected Pages (Login Required):
+- `/map` - Global threat map
+- `/travel-risk-map` - Travel risk assessment map
+- `/timeline` - Alert timeline view
+- `/statistics` - Threat statistics dashboard
+- `/monitoring` - Coverage monitoring
+- `/sentinel-ai-chat` - AI chat interface
+- `/dashboard` - User dashboard
+- `/account` - Account settings
+- `/alerts` - Alert list view
+
+### Public Pages (No Auth):
+- Homepage (`/`)
+- Marketing pages (`/about`, `/contact`, `/pricing`, `/faq`)
+- Blog pages
+- Service pages (executive-protection, risk-advisory, etc.)
+
+---
+
+## 🔄 API Response Changes
+
+### 1. `/auth/status` - **NEW FORMAT**
+
+**Endpoint**: `GET /auth/status`  
+**Headers**: `Authorization: Bearer <token>`
+
+**Response**:
 ```json
 {
-  "timestamp": "2025-11-15T06:47:32.123456",
-  "total_locations": 15,
-  "covered_locations": 10,
-  "coverage_gaps": 5,
-  "total_alerts_7d": 150,
-  "synthetic_alerts_7d": 20,
-  "synthetic_ratio_7d": 13.33
+  "email": "user@example.com",
+  "plan": "FREE",
+  "email_verified": true,
+  "usage": {
+    "chat_messages_used": 2,
+    "chat_messages_limit": 3
+  },
+  "limits": {
+    "alerts_days": 7,
+    "alerts_max_results": 30,
+    "map_days": 7,
+    "timeline_days": 7,
+    "statistics_days": 7,
+    "monitoring_days": 7
+  }
 }
 ```
 
-### Top Coverage Gaps
-```
-GET /api/monitoring/dashboard/top_gaps?limit=10&min_alerts_7d=5&max_age_hours=24
-```
-Returns:
+**PRO User Example**:
 ```json
 {
-  "items": [
-    {
-      "country": "Serbia",
-      "region": "Vojvodina",
-      "issues": ["sparse", "stale"],
-      "alert_count_7d": 2,
-      "synthetic_count_7d": 1,
-      "synthetic_ratio_7d": 50.0,
-      "last_alert_age_hours": 36.5,
-      "confidence_avg": 0.45
-    }
-  ],
-  "count": 1
+  "email": "pro@example.com",
+  "plan": "PRO",
+  "email_verified": true,
+  "usage": {
+    "chat_messages_used": 50,
+    "chat_messages_limit": 1000
+  },
+  "limits": {
+    "alerts_days": 30,
+    "alerts_max_results": 100,
+    "map_days": 30,
+    "timeline_days": 30,
+    "statistics_days": 30,
+    "monitoring_days": 30
+  }
 }
 ```
 
-### Top Covered Locations
-```
-GET /api/monitoring/dashboard/top_covered?limit=10
-```
-Returns:
-```json
-{
-  "items": [
-    {
-      "country": "France",
-      "region": "Île-de-France",
-      "alert_count_7d": 45,
-      "alert_count_30d": 180,
-      "synthetic_count_7d": 5,
-      "synthetic_count_30d": 15,
-      "synthetic_ratio_7d": 11.11,
-      "confidence_avg": 0.78,
-      "sources_count": 12
-    }
-  ],
-  "count": 1
-}
-```
+---
 
-### Admin Trigger (Requires X-API-Key)
-```
-POST /admin/fallback/trigger?country=Serbia&region=Vojvodina
-Header: X-API-Key: YOUR_ADMIN_KEY
-```
-Returns:
+### 2. `/profile/me` - **NEW FORMAT**
+
+**Endpoint**: `GET /profile/me`  
+**Headers**: `Authorization: Bearer <token>`
+
+**Response**:
 ```json
 {
   "ok": true,
-  "count": 1,
-  "attempts": [
+  "user": {
+    "email": "user@example.com",
+    "plan": "FREE",
+    "email_verified": true,
+    "name": "John Doe",
+    "employer": "Acme Corp",
+    "usage": {
+      "chat_messages_used": 2,
+      "chat_messages_limit": 3
+    },
+    "limits": {
+      "alerts_days": 7,
+      "alerts_max_results": 30,
+      "map_days": 7,
+      "timeline_days": 7,
+      "statistics_days": 7,
+      "monitoring_days": 7
+    },
+    "used": 2,
+    "limit": 3
+  }
+}
+```
+
+**Notes**:
+- `user.used` and `user.limit` are kept for backward compatibility
+- `user.limits` is the new canonical source for feature access windows
+
+---
+
+### 3. `/alerts/latest` - **BEHAVIOR CHANGE**
+
+**Endpoint**: `GET /alerts/latest`  
+**Headers**: `Authorization: Bearer <token>`  
+**Query Params**: `?lat=47.5&lon=19&radius=200&days=30&limit=100`
+
+**OLD Behavior**:
+- ❌ FREE users got 403 Forbidden
+- ✅ Only PRO/ENTERPRISE could access
+
+**NEW Behavior**:
+- ✅ ALL authenticated users can access
+- Server automatically caps `days` and `limit` to user's plan
+- FREE user requesting `?days=30&limit=100` gets max 7 days, 30 results
+- PRO user with same query gets full 30 days, 100 results
+
+**Response** (GeoJSON format):
+```json
+{
+  "ok": true,
+  "items": [
     {
-      "country": "Serbia",
-      "region": "Vojvodina",
-      "issues": ["sparse"],
-      "feed_type": "country",
-      "feeds_used": ["https://www.danas.rs/feed/"],
-      "fetched_items": 15,
-      "created_alerts": 10,
-      "status": "success",
-      "error": null,
-      "timestamp": 1731654123.456
+      "uuid": "abc-123",
+      "title": "Security Alert in Lagos",
+      "published": "2025-11-15T10:30:00Z",
+      "country": "Nigeria",
+      "city": "Lagos",
+      "score": 75,
+      "threat_level": "high",
+      "latitude": 6.5244,
+      "longitude": 3.3792
     }
   ],
-  "timestamp": "2025-11-15T06:48:43.123456Z"
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [3.3792, 6.5244]
+      },
+      "properties": {
+        "uuid": "abc-123",
+        "title": "Security Alert in Lagos",
+        "score": 75,
+        "threat_level": "high",
+        "country": "Nigeria",
+        "city": "Lagos"
+      }
+    }
+  ]
 }
 ```
 
 ---
 
-## Next.js Setup
+### 4. `/chat` or `/api/sentinel-chat` - **QUOTA HANDLING**
 
-### 1. Environment Variables
-
-`.env.local`:
-```bash
-NEXT_PUBLIC_BACKEND_URL=https://your-backend-host
-BACKEND_ADMIN_API_KEY=your_admin_key_here
+**Success Response** (202 or 200):
+```json
+{
+  "session_id": "uuid-abc-123",
+  "accepted": true,
+  "quota": {
+    "used": 3,
+    "limit": 3,
+    "plan": "FREE"
+  }
+}
 ```
 
-### 2. API Client
-
-`lib/api.ts`:
-```typescript
-export const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL!;
-
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json() as Promise<T>;
+**Quota Exceeded Response** (403):
+```json
+{
+  "code": "QUOTA_EXCEEDED",
+  "error": "Monthly chat quota reached for your plan.",
+  "quota": {
+    "used": 3,
+    "limit": 3,
+    "plan": "FREE"
+  }
 }
+```
 
-export const MonitoringAPI = {
-  summary: () => fetchJson<{
-    timestamp: string;
-    total_locations: number;
-    covered_locations: number;
-    coverage_gaps: number;
-    total_alerts_7d: number;
-    synthetic_alerts_7d: number;
-    synthetic_ratio_7d: number;
-  }>('/api/monitoring/dashboard/summary'),
+---
 
-  topGaps: (q?: { limit?: number; min_alerts_7d?: number; max_age_hours?: number }) =>
-    fetchJson<{ items: any[]; count: number }>(
-      `/api/monitoring/dashboard/top_gaps?limit=${q?.limit ?? 10}&min_alerts_7d=${q?.min_alerts_7d ?? 5}&max_age_hours=${q?.max_age_hours ?? 24}`
-    ),
+## 🎨 Frontend Implementation
 
-  topCovered: (limit = 10) =>
-    fetchJson<{ items: any[]; count: number }>(`/api/monitoring/dashboard/top_covered?limit=${limit}`),
+### 1. Update Auth Context
+
+```javascript
+// contexts/AuthContext.js
+const [auth, setAuth] = useState({
+  token: null,
+  user: null,
+  plan: 'FREE',
+  quota: { used: 0, limit: 3 },
+  limits: {
+    alerts_days: 7,
+    alerts_max_results: 30,
+    map_days: 7,
+    timeline_days: 7,
+    statistics_days: 7,
+    monitoring_days: 7,
+  }
+});
+
+// After login or /auth/status call
+const fetchAuthStatus = async () => {
+  const response = await fetch('/api/auth/status', {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const data = await response.json();
+  
+  setAuth({
+    ...auth,
+    plan: data.plan,
+    quota: { 
+      used: data.usage.chat_messages_used, 
+      limit: data.usage.chat_messages_limit 
+    },
+    limits: data.limits  // NEW: Store feature limits
+  });
 };
 ```
 
-### 3. SWR Hooks
-
-`hooks/useMonitoring.ts`:
-```typescript
-import useSWR from 'swr';
-import { MonitoringAPI } from '@/lib/api';
-
-export function useSummary() {
-  const { data, error, isLoading, mutate } = useSWR('summary', MonitoringAPI.summary, { refreshInterval: 60000 });
-  return { summary: data, error, isLoading, refresh: mutate };
-}
-
-export function useTopGaps(params?: { limit?: number; min_alerts_7d?: number; max_age_hours?: number }) {
-  const key = `top_gaps:${JSON.stringify(params || {})}`;
-  const { data, error, isLoading, mutate } = useSWR(key, () => MonitoringAPI.topGaps(params), { refreshInterval: 60000 });
-  return { gaps: data?.items || [], count: data?.count || 0, error, isLoading, refresh: mutate };
-}
-
-export function useTopCovered(limit = 10) {
-  const { data, error, isLoading, mutate } = useSWR(`top_covered:${limit}`, () => MonitoringAPI.topCovered(limit), { refreshInterval: 60000 });
-  return { covered: data?.items || [], count: data?.count || 0, error, isLoading, refresh: mutate };
-}
-```
-
-### 4. Secure Admin Proxy (Pages Router)
-
-`pages/api/admin/fallback/trigger.ts`:
-```typescript
-import type { NextApiRequest, NextApiResponse } from 'next';
-
-const ADMIN_KEY = process.env.BACKEND_ADMIN_API_KEY!;
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL!;
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  
-  // Optional: Add your own auth check here (e.g., session validation)
-  
-  try {
-    const { country, region } = req.body || {};
-    const url = new URL('/admin/fallback/trigger', API_BASE);
-    if (country) url.searchParams.set('country', country);
-    if (region) url.searchParams.set('region', region);
-
-    const resp = await fetch(url.toString(), {
-      method: 'POST',
-      headers: { 'X-API-Key': ADMIN_KEY },
-    });
-    const json = await resp.json();
-    return res.status(resp.status).json(json);
-  } catch (e: any) {
-    return res.status(500).json({ error: 'Proxy failed', details: e?.message });
-  }
-}
-```
-
-**App Router version:** `app/api/admin/fallback/trigger/route.ts`:
-```typescript
-import { NextRequest, NextResponse } from 'next/server';
-
-const ADMIN_KEY = process.env.BACKEND_ADMIN_API_KEY!;
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL!;
-
-export async function POST(req: NextRequest) {
-  try {
-    const { country, region } = await req.json();
-    const url = new URL('/admin/fallback/trigger', API_BASE);
-    if (country) url.searchParams.set('country', country);
-    if (region) url.searchParams.set('region', region);
-
-    const resp = await fetch(url.toString(), {
-      method: 'POST',
-      headers: { 'X-API-Key': ADMIN_KEY },
-    });
-    const json = await resp.json();
-    return NextResponse.json(json, { status: resp.status });
-  } catch (e: any) {
-    return NextResponse.json({ error: 'Proxy failed', details: e?.message }, { status: 500 });
-  }
-}
-```
-
 ---
 
-## UI Components
+### 2. Display Plan Limits in UI
 
-### Summary Cards
-`components/SummaryCards.tsx`:
-```tsx
-import React from 'react';
+```javascript
+// components/PlanBanner.js
+import { useAuth } from '@/contexts/AuthContext';
 
-export function SummaryCards({ data }: { data?: {
-  total_locations: number;
-  covered_locations: number;
-  coverage_gaps: number;
-  synthetic_ratio_7d: number;
-}}) {
-  if (!data) return null;
-  const { total_locations, covered_locations, coverage_gaps, synthetic_ratio_7d } = data;
-  
+export default function PlanBanner({ feature }) {
+  const { auth } = useAuth();
+  const days = auth.limits?.[`${feature}_days`] || 7;
+  const isPaid = auth.plan !== 'FREE';
+
   return (
-    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))' }}>
-      <Card title="Total Locations" value={total_locations} />
-      <Card title="Covered Locations" value={covered_locations} />
-      <Card title="Coverage Gaps" value={coverage_gaps} />
-      <Card title="Synthetic Ratio (7d)" value={`${synthetic_ratio_7d}%`} bar={synthetic_ratio_7d} />
+    <div className="plan-banner">
+      <span>Viewing last {days} days of data</span>
+      {!isPaid && (
+        <button onClick={() => router.push('/pricing')}>
+          Upgrade to PRO for 30-day access
+        </button>
+      )}
     </div>
   );
 }
 
-function Card({ title, value, bar }: { title: string; value: any; bar?: number }) {
+// Usage in Map page
+<PlanBanner feature="map" />
+```
+
+---
+
+### 3. Chat Quota Display
+
+```javascript
+// components/ChatQuotaDisplay.js
+import { useAuth } from '@/contexts/AuthContext';
+
+export default function ChatQuotaDisplay() {
+  const { auth } = useAuth();
+  const { used, limit } = auth.quota;
+  const percentage = (used / limit) * 100;
+
   return (
-    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-      <div style={{ fontSize: 12, color: '#6b7280' }}>{title}</div>
-      <div style={{ fontSize: 20, fontWeight: 600 }}>{value}</div>
-      {typeof bar === 'number' && (
-        <div style={{ marginTop: 8, background: '#f3f4f6', height: 6, borderRadius: 999 }}>
-          <div style={{
-            width: `${Math.min(100, Math.max(0, bar))}%`,
-            height: 6,
-            borderRadius: 999,
-            background: bar > 20 ? '#ef4444' : bar > 10 ? '#f59e0b' : '#10b981'
-          }} />
+    <div className="quota-display">
+      <div className="quota-bar">
+        <div 
+          className="quota-fill" 
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      <span>{used} / {limit} messages used</span>
+      {used >= limit && (
+        <div className="upgrade-cta">
+          <p>You've reached your message limit</p>
+          <button onClick={() => router.push('/pricing')}>
+            Upgrade to {auth.plan === 'FREE' ? 'PRO' : 'ENTERPRISE'}
+          </button>
         </div>
       )}
     </div>
@@ -273,353 +334,339 @@ function Card({ title, value, bar }: { title: string; value: any; bar?: number }
 }
 ```
 
-### Top Gaps Table
-`components/TopGapsTable.tsx`:
-```tsx
-import React from 'react';
+---
 
-export function TopGapsTable({ 
-  items, 
-  onTrigger 
-}: { 
-  items: Array<{
-    country: string;
-    region?: string;
-    issues: string[];
-    alert_count_7d: number;
-    synthetic_count_7d: number;
-    synthetic_ratio_7d: number;
-    last_alert_age_hours: number;
-    confidence_avg: number;
-  }>; 
-  onTrigger: (country: string, region?: string) => void; 
-}) {
+### 4. Map Component with Plan-Aware Fetching
+
+```javascript
+// components/ThreatMap.js
+import { useAuth } from '@/contexts/AuthContext';
+
+export default function ThreatMap() {
+  const { auth } = useAuth();
+  const [alerts, setAlerts] = useState([]);
+
+  const fetchAlerts = async () => {
+    const token = localStorage.getItem('auth_token');
+    
+    // Request what you want, backend will cap to plan limits
+    const response = await fetch(
+      `/api/map-alerts?lat=47.5&lon=19&radius=200&days=30&limit=100`,
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+    
+    const data = await response.json();
+    setAlerts(data.features || []);
+  };
+
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-      <thead>
-        <tr>
-          <Th>Country</Th>
-          <Th>Region</Th>
-          <Th>Issues</Th>
-          <Th>Alerts (7d)</Th>
-          <Th>Synthetic (7d)</Th>
-          <Th>Ratio</Th>
-          <Th>Last Alert Age</Th>
-          <Th>Confidence</Th>
-          <Th>Action</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((g, i) => (
-          <tr key={i} style={{ borderTop: '1px solid #e5e7eb' }}>
-            <Td>{g.country}</Td>
-            <Td>{g.region || '—'}</Td>
-            <Td>
-              {(g.issues || []).map((issue) => (
-                <Badge key={issue} text={issue} />
-              ))}
-            </Td>
-            <Td>{g.alert_count_7d}</Td>
-            <Td>{g.synthetic_count_7d ?? 0}</Td>
-            <Td>{g.synthetic_ratio_7d ?? 0}%</Td>
-            <Td>{Math.round(g.last_alert_age_hours)}h</Td>
-            <Td>{g.confidence_avg?.toFixed(2) ?? '—'}</Td>
-            <Td>
-              <button 
-                onClick={() => onTrigger(g.country, g.region)}
-                style={{ padding: '6px 10px', cursor: 'pointer' }}
-              >
-                Trigger
-              </button>
-            </Td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <PlanBanner feature="map" />
+      <MapGL markers={alerts} />
+    </>
   );
-}
-
-function Th({ children }: any) {
-  return <th style={{ textAlign: 'left', fontSize: 12, color: '#6b7280', padding: 8 }}>{children}</th>;
-}
-
-function Td({ children }: any) {
-  return <td style={{ padding: 8 }}>{children}</td>;
-}
-
-function Badge({ text }: { text: string }) {
-  const color = text === 'stale' ? '#f59e0b' : text === 'sparse' ? '#ef4444' : '#6b7280';
-  return (
-    <span style={{
-      background: color,
-      color: 'white',
-      padding: '2px 6px',
-      borderRadius: 6,
-      marginRight: 6,
-      fontSize: 11
-    }}>
-      {text}
-    </span>
-  );
-}
-```
-
-### Top Covered Table (CORRECTED - Only Uses Returned Fields)
-`components/TopCoveredTable.tsx`:
-```tsx
-import React from 'react';
-
-export function TopCoveredTable({ 
-  items 
-}: { 
-  items: Array<{
-    country: string;
-    region?: string;
-    alert_count_7d: number;
-    alert_count_30d: number;
-    synthetic_count_7d: number;
-    synthetic_count_30d: number;
-    synthetic_ratio_7d: number;
-    confidence_avg: number;
-    sources_count: number;
-  }> 
-}) {
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-      <thead>
-        <tr>
-          <Th>Country</Th>
-          <Th>Region</Th>
-          <Th>Alerts (7d)</Th>
-          <Th>Alerts (30d)</Th>
-          <Th>Synth. (7d)</Th>
-          <Th>Synth. Ratio (7d)</Th>
-          <Th>Confidence</Th>
-          <Th>Sources</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((item, i) => (
-          <tr key={i} style={{ borderTop: '1px solid #e5e7eb' }}>
-            <Td>{item.country}</Td>
-            <Td>{item.region || '—'}</Td>
-            <Td>{item.alert_count_7d}</Td>
-            <Td>{item.alert_count_30d}</Td>
-            <Td>{item.synthetic_count_7d ?? 0}</Td>
-            <Td>
-              <span style={{
-                color: item.synthetic_ratio_7d > 20 ? '#ef4444' : item.synthetic_ratio_7d > 10 ? '#f59e0b' : '#10b981'
-              }}>
-                {item.synthetic_ratio_7d?.toFixed(1) ?? 0}%
-              </span>
-            </Td>
-            <Td>{item.confidence_avg?.toFixed(2) ?? '—'}</Td>
-            <Td>{item.sources_count ?? 0}</Td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function Th({ children }: any) {
-  return <th style={{ textAlign: 'left', fontSize: 12, color: '#6b7280', padding: 8 }}>{children}</th>;
-}
-
-function Td({ children }: any) {
-  return <td style={{ padding: 8 }}>{children}</td>;
 }
 ```
 
 ---
 
-## Complete Dashboard Page
+### 5. Handle Chat Quota Exceeded
 
-### Pages Router
-`pages/admin/coverage.tsx`:
-```tsx
-import { useSummary, useTopGaps, useTopCovered } from '@/hooks/useMonitoring';
-import { SummaryCards } from '@/components/SummaryCards';
-import { TopGapsTable } from '@/components/TopGapsTable';
-import { TopCoveredTable } from '@/components/TopCoveredTable';
+```javascript
+// pages/sentinel-ai-chat.js
+const handleSendMessage = async (message) => {
+  try {
+    const response = await fetch('/api/sentinel-chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ message })
+    });
 
-export default function CoverageDashboard() {
-  const { summary, isLoading: summaryLoading } = useSummary();
-  const { gaps, refresh: refreshGaps, isLoading: gapsLoading } = useTopGaps({ limit: 10 });
-  const { covered, isLoading: coveredLoading } = useTopCovered(10);
-
-  async function triggerFallback(country: string, region?: string) {
-    try {
-      const res = await fetch('/api/admin/fallback/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ country, region }),
-      });
-      const data = await res.json();
-      console.log('Fallback triggered:', data);
-      // Refresh gaps after 2 seconds to see changes
-      setTimeout(refreshGaps, 2000);
-    } catch (e) {
-      console.error('Trigger failed:', e);
+    if (response.status === 403) {
+      const error = await response.json();
+      if (error.code === 'QUOTA_EXCEEDED') {
+        // Update quota from response
+        setAuth(prev => ({
+          ...prev,
+          quota: error.quota
+        }));
+        
+        // Show upgrade modal
+        setShowUpgradeModal(true);
+        return;
+      }
     }
-  }
 
-  return (
-    <div style={{ padding: 16, maxWidth: 1400, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>Coverage Dashboard</h1>
-      
-      {summaryLoading ? <div>Loading summary...</div> : <SummaryCards data={summary} />}
-      
-      <h2 style={{ marginTop: 24, marginBottom: 12, fontSize: 18, fontWeight: 600 }}>
-        Top Coverage Gaps
-      </h2>
-      {gapsLoading ? (
-        <div>Loading gaps...</div>
-      ) : (
-        <TopGapsTable items={gaps} onTrigger={triggerFallback} />
-      )}
-      
-      <h2 style={{ marginTop: 24, marginBottom: 12, fontSize: 18, fontWeight: 600 }}>
-        Top Covered Locations
-      </h2>
-      {coveredLoading ? (
-        <div>Loading covered locations...</div>
-      ) : (
-        <TopCoveredTable items={covered} />
-      )}
-    </div>
-  );
-}
-```
-
-### App Router
-`app/admin/coverage/page.tsx`:
-```tsx
-'use client';
-
-import { useSummary, useTopGaps, useTopCovered } from '@/hooks/useMonitoring';
-import { SummaryCards } from '@/components/SummaryCards';
-import { TopGapsTable } from '@/components/TopGapsTable';
-import { TopCoveredTable } from '@/components/TopCoveredTable';
-
-export default function CoverageDashboard() {
-  const { summary, isLoading: summaryLoading } = useSummary();
-  const { gaps, refresh: refreshGaps, isLoading: gapsLoading } = useTopGaps({ limit: 10 });
-  const { covered, isLoading: coveredLoading } = useTopCovered(10);
-
-  async function triggerFallback(country: string, region?: string) {
-    try {
-      const res = await fetch('/api/admin/fallback/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ country, region }),
-      });
-      const data = await res.json();
-      console.log('Fallback triggered:', data);
-      setTimeout(refreshGaps, 2000);
-    } catch (e) {
-      console.error('Trigger failed:', e);
+    const data = await response.json();
+    // Update quota on success
+    if (data.quota) {
+      setAuth(prev => ({
+        ...prev,
+        quota: data.quota
+      }));
     }
+  } catch (error) {
+    console.error('Chat error:', error);
   }
-
-  return (
-    <div style={{ padding: 16, maxWidth: 1400, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>Coverage Dashboard</h1>
-      
-      {summaryLoading ? <div>Loading summary...</div> : <SummaryCards data={summary} />}
-      
-      <h2 style={{ marginTop: 24, marginBottom: 12, fontSize: 18, fontWeight: 600 }}>
-        Top Coverage Gaps
-      </h2>
-      {gapsLoading ? (
-        <div>Loading gaps...</div>
-      ) : (
-        <TopGapsTable items={gaps} onTrigger={triggerFallback} />
-      )}
-      
-      <h2 style={{ marginTop: 24, marginBottom: 12, fontSize: 18, fontWeight: 600 }}>
-        Top Covered Locations
-      </h2>
-      {coveredLoading ? (
-        <div>Loading covered locations...</div>
-      ) : (
-        <TopCoveredTable items={covered} />
-      )}
-    </div>
-  );
-}
+};
 ```
 
 ---
 
-## Grafana JSON API Setup
+## 🔧 Required Frontend Changes
 
-1. **Install JSON API Plugin:**
-   - Dashboard → Settings → Data Sources → Add data source → JSON API
+### High Priority (Breaking):
+1. ✅ **Update Auth Context** to store `limits` object from `/auth/status`
+2. ✅ **Update Quota Display** to use `usage.chat_messages_limit` instead of hardcoded values
+3. ✅ **Remove 403 handling** for FREE users on `/alerts/latest` (now returns data)
 
-2. **Configure:**
-   - URL: `https://your-backend-host`
-   - Method: GET
-   - No authentication needed (if endpoints are public) or add headers
+### Medium Priority (UX):
+4. ✅ **Add Plan Banners** to Map, Timeline, Statistics, Monitoring pages
+5. ✅ **Add Upgrade CTAs** when users hit FREE limits (chat quota, data window)
+6. ✅ **Update Map/Timeline/Stats** to show actual data window (7/30/90 days)
 
-3. **Panel Examples:**
-
-   **Stat Panel - Synthetic Ratio:**
-   - Query: `/api/monitoring/dashboard/summary`
-   - Field: `synthetic_ratio_7d`
-   - Unit: Percent
-   - Thresholds: Green 0-10, Orange 10-20, Red 20+
-
-   **Table Panel - Top Gaps:**
-   - Query: `/api/monitoring/dashboard/top_gaps?limit=10`
-   - Transform: Extract fields → `items[*]`
-   - Columns: country, region, issues, alert_count_7d, synthetic_ratio_7d
-
-   **Stat Panel - Coverage Ratio:**
-   - Query: `/api/monitoring/dashboard/summary`
-   - Transform: Add field from calculation → `covered_locations / total_locations * 100`
-   - Unit: Percent
+### Low Priority (Optional):
+7. ⚪ **Add plan comparison** on dashboard/account page
+8. ⚪ **Show "upgrade to unlock" tooltips** on FREE plan features
+9. ⚪ **Add usage analytics** tracking (when users hit limits)
 
 ---
 
-## Testing Checklist
+## 🧪 Testing Guide
 
-- [ ] Backend endpoints respond correctly
-  ```bash
-  curl -s localhost:8080/api/monitoring/dashboard/summary | python3 -m json.tool
-  curl -s "localhost:8080/api/monitoring/dashboard/top_gaps?limit=5" | python3 -m json.tool
-  curl -s "localhost:8080/api/monitoring/dashboard/top_covered?limit=5" | python3 -m json.tool
-  ```
+### Test as FREE User:
 
-- [ ] Admin trigger works (replace YOUR_KEY):
-  ```bash
-  curl -s -X POST \
-    -H "X-API-Key: YOUR_KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"country":"Serbia"}' \
-    http://localhost:8080/admin/fallback/trigger | python3 -m json.tool
-  ```
+```bash
+# 1. Register new account
+POST /auth/register
+{
+  "email": "test-free@example.com",
+  "password": "Test1234!",
+  "name": "Free User"
+}
 
-- [ ] Frontend fetches data without CORS errors
-- [ ] Trigger button creates fallback attempts
-- [ ] SWR auto-refreshes every 60 seconds
-- [ ] Synthetic ratio color coding works (green <10%, orange 10-20%, red >20%)
+# 2. Login and get token
+POST /auth/login
+{
+  "email": "test-free@example.com",
+  "password": "Test1234!"
+}
+
+# 3. Check auth status
+GET /auth/status
+Headers: { Authorization: Bearer <token> }
+
+# Expected:
+{
+  "plan": "FREE",
+  "usage": { "chat_messages_used": 0, "chat_messages_limit": 3 },
+  "limits": { "map_days": 7, "alerts_max_results": 30, ... }
+}
+
+# 4. Fetch map data
+GET /alerts/latest?days=30&limit=100
+Headers: { Authorization: Bearer <token> }
+
+# Expected: Returns max 7 days, 30 results (silently capped)
+
+# 5. Send 3 chat messages
+POST /api/sentinel-chat (x3)
+
+# 6. Send 4th chat message
+POST /api/sentinel-chat
+
+# Expected: 403 with code "QUOTA_EXCEEDED"
+```
+
+### Test as PRO User:
+
+```bash
+# 1. Upgrade account to PRO (via admin or payment flow)
+
+# 2. Check auth status
+GET /auth/status
+
+# Expected:
+{
+  "plan": "PRO",
+  "usage": { "chat_messages_used": X, "chat_messages_limit": 1000 },
+  "limits": { "map_days": 30, "alerts_max_results": 100, ... }
+}
+
+# 3. Fetch map data with full params
+GET /alerts/latest?days=30&limit=100
+
+# Expected: Returns full 30 days, 100 results
+```
 
 ---
 
-## Next Steps (Optional)
+## 🚨 Breaking Changes & Migration
 
-**Phase 4c - Trend Persistence:**
-- Add hourly/daily snapshot of `synthetic_ratio_7d` to DB
-- Create `/api/monitoring/trends?days=7` endpoint
-- Build time-series chart in frontend
+### What Changed:
 
-**Advanced Filtering:**
-- Add region selector dropdown in UI
-- Filter by issues (sparse/stale)
-- Date range picker for historical data (requires persistence)
+1. **`/auth/status` Response**:
+   - ✅ Added: `limits` object with feature access windows
+   - ✅ Kept: `usage` object (backward compatible)
 
-**Alerts:**
-- Send Slack/email when synthetic_ratio > 25%
-- Notify when coverage_gaps increases by >20% hour-over-hour
+2. **`/profile/me` Response**:
+   - ✅ Added: `user.limits` object
+   - ✅ Kept: `user.used` and `user.limit` (backward compatible)
+
+3. **`/alerts/latest` Behavior**:
+   - ❌ Removed: 403 error for FREE users
+   - ✅ Changed: Now returns data with plan-based caps
+   - ⚠️ Frontend should NOT rely on 403 to block FREE users
+
+### Migration Steps:
+
+```javascript
+// Before (OLD CODE):
+const quota = {
+  used: authData.usage?.chat_messages_used || 0,
+  limit: authData.plan === 'PRO' ? 1000 : 3  // Hardcoded fallback
+};
+
+// After (NEW CODE):
+const quota = {
+  used: authData.usage?.chat_messages_used || 0,
+  limit: authData.usage?.chat_messages_limit || 3  // From backend
+};
+
+// NEW: Access feature limits
+const mapDays = authData.limits?.map_days || 7;
+const alertsMax = authData.limits?.alerts_max_results || 30;
+```
+
+---
+
+## 📊 Pricing Page Recommendations
+
+### Suggested Pricing Structure:
+
+| Feature | FREE | PRO | ENTERPRISE |
+|---------|------|-----|------------|
+| **Monthly Price** | $0 | $49/mo | $199/mo |
+| **Chat Messages** | 3 | 1,000 | 5,000 |
+| **Data History** | 7 days | 30 days | 90 days |
+| **Map Alerts** | 30/query | 100/query | 500/query |
+| **Real-time Updates** | ❌ | ✅ | ✅ |
+| **Email Alerts** | ❌ | ✅ | ✅ |
+| **PDF Reports** | ❌ | ✅ | ✅ |
+| **API Access** | ❌ | ❌ | ✅ |
+| **Priority Support** | ❌ | ❌ | ✅ |
+
+### Value Propositions:
+
+**FREE Plan**:
+- "Try Sentinel AI with 7 days of threat intelligence"
+- "Perfect for occasional travelers"
+- "No credit card required"
+
+**PRO Plan**:
+- "30-day historical data for travel planning"
+- "1,000 AI chat messages for detailed analysis"
+- "Email and push notifications"
+
+**ENTERPRISE Plan**:
+- "90-day intelligence archive"
+- "High-volume chat access (5,000 messages)"
+- "Priority support and custom integrations"
+
+---
+
+## 🌐 Environment Variables
+
+### Frontend (.env.local for dev):
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXT_PUBLIC_ENV=development
+```
+
+### Frontend (.env.production for Vercel):
+```bash
+NEXT_PUBLIC_API_URL=https://sentinelairss-production.up.railway.app
+NEXT_PUBLIC_ENV=production
+```
+
+### Backend (Railway - Already Set):
+```bash
+DATABASE_URL=postgresql://...
+PAID_PLANS=PRO,ENTERPRISE
+DEFAULT_PLAN=FREE
+```
+
+---
+
+## 📞 Support & Troubleshooting
+
+### Common Issues:
+
+**Issue**: Maps still show 403 errors  
+**Solution**: Ensure frontend sends `Authorization: Bearer <token>` header
+
+**Issue**: FREE users see "upgrade required" instead of limited data  
+**Solution**: Remove frontend plan checks, let backend enforce caps
+
+**Issue**: Quota shows 0/3 for PRO users  
+**Solution**: Check `/auth/status` returns correct `usage.chat_messages_limit`
+
+**Issue**: Users can request 90 days on FREE plan  
+**Solution**: This is OK - backend silently caps to 7 days
+
+### Debug Endpoints:
+
+```bash
+# Check user's current plan and limits
+GET /api/debug-quota
+Headers: { Authorization: Bearer <token> }
+
+# Returns full backend state for debugging
+```
+
+---
+
+## ✅ Deployment Checklist
+
+### Backend (Ready to Deploy):
+- ✅ Plan limits defined in `plan_utils.py`
+- ✅ `/auth/status` returns `limits` object
+- ✅ `/profile/me` returns `limits` object
+- ✅ `/alerts/latest` enforces plan caps
+- ✅ Chat quota returns updated quota on success/failure
+- ✅ GeoJSON format in `/alerts/latest`
+
+### Frontend (Action Required):
+- ⏳ Update `AuthContext` to store `limits`
+- ⏳ Update quota display components
+- ⏳ Add plan banners to Map/Timeline/Statistics
+- ⏳ Add upgrade CTAs on quota exceeded
+- ⏳ Test all protected pages with FREE/PRO users
+- ⏳ Update environment variables
+- ⏳ Deploy to Vercel
+
+---
+
+## 🚀 Ready to Push
+
+**Backend**: Ready for Railway deployment  
+**Frontend**: Needs updates per this guide  
+**Database**: No schema changes required (uses existing `users.plan` and `user_usage`)
+
+**Next Steps**:
+1. Backend team: Push to Railway
+2. Frontend team: Implement changes per this guide
+3. QA: Test with FREE and PRO accounts
+4. Deploy frontend to Vercel
+5. Monitor for any issues
+
+---
+
+**Questions or Issues?**  
+Reference this guide and check `/api/debug-quota` for live diagnostics.
 

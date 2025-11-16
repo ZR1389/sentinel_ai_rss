@@ -17,6 +17,46 @@ PAID_PLANS = set(
     p.strip().upper() for p in CONFIG.app.paid_plans.split(",") if p.strip()
 )
 
+# Feature limits per plan (data window in days, max results)
+PLAN_FEATURE_LIMITS = {
+    "FREE": {
+        "chat_messages_per_month": 3,
+        "alerts_days": 7,          # Last 7 days of data
+        "alerts_max_results": 30,   # Max 30 alerts per query
+        "map_days": 7,
+        "timeline_days": 7,
+        "statistics_days": 7,
+        "monitoring_days": 7,
+    },
+    "PRO": {
+        "chat_messages_per_month": 1000,
+        "alerts_days": 30,
+        "alerts_max_results": 100,
+        "map_days": 30,
+        "timeline_days": 30,
+        "statistics_days": 30,
+        "monitoring_days": 30,
+    },
+    "ENTERPRISE": {
+        "chat_messages_per_month": 5000,
+        "alerts_days": 90,
+        "alerts_max_results": 500,
+        "map_days": 90,
+        "timeline_days": 90,
+        "statistics_days": 90,
+        "monitoring_days": 90,
+    },
+    "VIP": {  # Alias for ENTERPRISE
+        "chat_messages_per_month": 5000,
+        "alerts_days": 90,
+        "alerts_max_results": 500,
+        "map_days": 90,
+        "timeline_days": 90,
+        "statistics_days": 90,
+        "monitoring_days": 90,
+    },
+}
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] %(message)s",
@@ -98,33 +138,51 @@ def get_plan(email: str) -> str | None:
 
 def get_plan_limits(email: str) -> dict:
     """
-    Returns { plan: PLAN, chat_messages_per_month: int }.
-    - If the user is missing or INACTIVE, falls back to FREE with 0 limit.
+    Returns plan limits including chat quota and feature access windows.
+    Falls back to FREE limits if user inactive/missing.
+    
+    Returns:
+        {
+            "plan": "FREE|PRO|ENTERPRISE",
+            "chat_messages_per_month": int,
+            "alerts_days": int,
+            "alerts_max_results": int,
+            "map_days": int,
+            "timeline_days": int,
+            "statistics_days": int,
+            "monitoring_days": int,
+        }
     """
     email = _sanitize_email(email)
     if not email:
-        return {"plan": "FREE", "chat_messages_per_month": 0}
+        return {**PLAN_FEATURE_LIMITS["FREE"], "plan": "FREE"}
 
     try:
         with _conn() as conn, conn.cursor() as cur:
-            # Require active users to pick up their plan limits.
+            # Get user's plan and active status
             cur.execute("""
-                SELECT u.plan, p.chat_messages_per_month
+                SELECT u.plan, COALESCE(u.is_active, TRUE)
                 FROM users u
-                JOIN plans p ON UPPER(u.plan) = UPPER(p.name)
                 WHERE u.email = %s
-                  AND COALESCE(u.is_active, TRUE) = TRUE
             """, (email,))
             row = cur.fetchone()
-            if not row:
-                logger.warning("get_plan_limits: Inactive or no plan for %s; using default limits", email)
-                return {"plan": "FREE", "chat_messages_per_month": 0}
-            plan, msgs = row[0], row[1]
-            return {"plan": (plan or "FREE").upper(), "chat_messages_per_month": int(msgs or 0)}
+            
+            if not row or not row[1]:  # No user or inactive
+                logger.warning("get_plan_limits: Inactive or no plan for %s; using FREE limits", email)
+                return {**PLAN_FEATURE_LIMITS["FREE"], "plan": "FREE"}
+            
+            plan = (row[0] or "FREE").upper()
+            
+            # Get limits from PLAN_FEATURE_LIMITS constant
+            limits = PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["FREE"]).copy()
+            limits["plan"] = plan
+            
+            return limits
+            
     except Exception as e:
         logger.error("get_plan_limits error: %s", e)
         log_security_event(event_type="plan_limits_error", email=email, details=str(e))
-        return {"plan": "FREE", "chat_messages_per_month": 0}
+        return {**PLAN_FEATURE_LIMITS["FREE"], "plan": "FREE"}
 
 
 # ---------------------------- Usage (chat-only metering) ----------------------------

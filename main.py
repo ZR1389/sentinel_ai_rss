@@ -189,14 +189,39 @@ def auth_status():
             return _build_cors_response(make_response(jsonify({"error": "Invalid or expired token"}), 401))
 
         email = payload.get("user_email")
-        plan = payload.get("plan")
-        # Optional: usage — placeholder until metering store is added
-        usage = {}
+        plan_name = (payload.get("plan") or os.getenv("DEFAULT_PLAN", "FREE")).strip().upper()
+
+        # Resolve usage + full feature limits
+        chat_used = 0
+        all_limits = {}
+        try:
+            from plan_utils import get_usage, get_plan_limits
+            u = get_usage(email) if get_usage else None
+            if isinstance(u, dict):
+                chat_used = int(u.get("chat_messages_used", 0))
+
+            # Get all plan limits (chat + feature access)
+            all_limits = get_plan_limits(email) or {}
+        except Exception as e:
+            logger.warning("Failed to resolve usage in /auth/status: %s", e)
+            all_limits = {"chat_messages_per_month": 3, "alerts_days": 7, "alerts_max_results": 30}
+
         return _build_cors_response(jsonify({
             "email": email,
-            "plan": plan,
-            "email_verified": True,  # assume verified if access token exists in our flow
-            "usage": usage,
+            "plan": plan_name,
+            "email_verified": True,
+            "usage": {
+                "chat_messages_used": chat_used,
+                "chat_messages_limit": all_limits.get("chat_messages_per_month", 3),
+            },
+            "limits": {
+                "alerts_days": all_limits.get("alerts_days", 7),
+                "alerts_max_results": all_limits.get("alerts_max_results", 30),
+                "map_days": all_limits.get("map_days", 7),
+                "timeline_days": all_limits.get("timeline_days", 7),
+                "statistics_days": all_limits.get("statistics_days", 7),
+                "monitoring_days": all_limits.get("monitoring_days", 7),
+            },
         }))
     except Exception as e:
         logger.error(f"/auth/status error: {e}")
@@ -662,25 +687,39 @@ def _load_user_profile(email: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # --- NEW: Attach usage ---
+    # --- Attach usage and all feature limits ---
+    chat_used = 0
+    all_limits = {}
     try:
-        # This function must return a dict, e.g. {'chat_messages_used': 2}
-        from plan_utils import get_usage
-        usage = get_usage(email) if get_usage else None
-        if usage:
-            data["usage"] = usage
-    except Exception:
-        data["usage"] = {}  
+        from plan_utils import get_usage, get_plan_limits
+        u = get_usage(email) if get_usage else None
+        if isinstance(u, dict):
+            chat_used = int(u.get("chat_messages_used", 0))
 
-    # Add used/limit for frontend compatibility
-    plan = data.get("plan", "FREE").upper()
-    if plan == "PRO" or plan == "ENTERPRISE":
-        data["limit"] = 10000  # High limit for paid plans
-    else:
-        data["limit"] = 100  # Free plan limit
-    
-    # Used count from usage (chat messages or other tracked metrics)
-    data["used"] = data.get("usage", {}).get("chat_messages_used", 0)
+        # Get full plan limits
+        all_limits = get_plan_limits(email) or {}
+    except Exception as e:
+        logger.info("usage resolution failed in _load_user_profile: %s", e)
+        all_limits = {"chat_messages_per_month": 3, "alerts_days": 7, "alerts_max_results": 30}
+
+    # Nested usage structure
+    data.setdefault("usage", {})
+    data["usage"]["chat_messages_used"] = chat_used
+    data["usage"]["chat_messages_limit"] = all_limits.get("chat_messages_per_month", 3)
+
+    # Backward-compat top-level fields
+    data["used"] = chat_used
+    data["limit"] = all_limits.get("chat_messages_per_month", 3)
+
+    # Feature access limits
+    data["limits"] = {
+        "alerts_days": all_limits.get("alerts_days", 7),
+        "alerts_max_results": all_limits.get("alerts_max_results", 30),
+        "map_days": all_limits.get("map_days", 7),
+        "timeline_days": all_limits.get("timeline_days", 7),
+        "statistics_days": all_limits.get("statistics_days", 7),
+        "monitoring_days": all_limits.get("monitoring_days", 7),
+    }
 
     return data
 
@@ -1032,7 +1071,32 @@ def _chat_impl():
             plan_limits = get_plan_limits(email)
             ok, msg = check_user_message_quota(email, plan_limits)
             if not ok:
-                return _build_cors_response(make_response(jsonify({"error": msg, "quota_exceeded": True}), 429))
+                # Build quota block for frontend contract
+                plan_name = (get_plan(email) if get_plan else os.getenv("DEFAULT_PLAN", "FREE")).strip().upper()
+                used_val = 0
+                limit_val = 3
+                try:
+                    from plan_utils import get_usage
+                    u = get_usage(email)
+                    if isinstance(u, dict):
+                        used_val = int(u.get("chat_messages_used", 0))
+                except Exception:
+                    pass
+                if plan_name == "PRO":
+                    limit_val = 1000
+                elif plan_name in ("VIP", "ENTERPRISE"):
+                    limit_val = 5000
+                else:
+                    try:
+                        limit_val = int(plan_limits.get("chat_messages_per_month", 3))
+                    except Exception:
+                        limit_val = 3
+
+                return _build_cors_response(make_response(jsonify({
+                    "code": "QUOTA_EXCEEDED",
+                    "error": "Monthly chat quota reached.",
+                    "quota": {"used": used_val, "limit": limit_val, "plan": plan_name}
+                }), 403))
     except Exception as e:
         logger.error("plan check failed: %s", e)
         pass
@@ -1071,15 +1135,34 @@ def _chat_impl():
         except Exception as e:
             logger.warning("Usage increment failed: %s", e)
         
+        # Resolve current quota after accepting request (usage has been incremented)
+        try:
+            from plan_utils import get_usage, get_plan_limits
+            plan_name = (get_plan(email) if get_plan else os.getenv("DEFAULT_PLAN", "FREE")).strip().upper()
+            used_val = 0
+            lim_val = 3
+            u = get_usage(email) if get_usage else None
+            if isinstance(u, dict):
+                used_val = int(u.get("chat_messages_used", 0))
+            if plan_name == "PRO":
+                lim_val = 1000
+            elif plan_name in ("VIP", "ENTERPRISE"):
+                lim_val = 5000
+            else:
+                try:
+                    limits = get_plan_limits(email) or {}
+                    lim_val = int(limits.get("chat_messages_per_month", 3))
+                except Exception:
+                    lim_val = 3
+        except Exception:
+            plan_name, used_val, lim_val = (os.getenv("DEFAULT_PLAN", "FREE").strip().upper(), 0, 3)
+
         success_response = {
             "accepted": True,
             "session_id": session_id,
             "message": "Processing your request. Poll /api/chat/status/<session_id> for results.",
-            "plan": get_plan(email) if get_plan else "FREE",
-            "quota": {
-                "plan": get_plan(email) if get_plan else "FREE",
-                "background_processing": True
-            }
+            "plan": plan_name,
+            "quota": {"used": used_val, "limit": lim_val, "plan": plan_name}
         }
         
         logger.info("Returning 202 response for session: %s", session_id)
@@ -1133,6 +1216,72 @@ def chat_status(session_id):
         }), 202))
     else:
         return _build_cors_response(make_response(jsonify({"error": "Job not found"}), 404))
+
+# ---------- Debug quota (login required) ----------
+@app.route("/api/debug-quota", methods=["GET"])
+@login_required
+def debug_quota():
+    """Return raw and mapped quota views for debugging frontend integration."""
+    # Build auth_status-like payload
+    email = get_logged_in_email()
+    plan_name = None
+    try:
+        plan_name = (get_plan(email) if get_plan else os.getenv("DEFAULT_PLAN", "FREE")).strip().upper()
+    except Exception:
+        plan_name = (os.getenv("DEFAULT_PLAN", "FREE")).strip().upper()
+
+    # Resolve usage + limits
+    used_val = 0
+    limit_val = 3
+    try:
+        from plan_utils import get_usage, get_plan_limits
+        u = get_usage(email) if get_usage else None
+        if isinstance(u, dict):
+            used_val = int(u.get("chat_messages_used", 0))
+        if plan_name == "PRO":
+            limit_val = 1000
+        elif plan_name in ("VIP", "ENTERPRISE"):
+            limit_val = 5000
+        else:
+            try:
+                limits = get_plan_limits(email) or {}
+                limit_val = int(limits.get("chat_messages_per_month", 3))
+            except Exception:
+                limit_val = 3
+    except Exception:
+        pass
+
+    backend_auth_status = {
+        "email": email,
+        "plan": plan_name,
+        "email_verified": _is_verified(email),
+        "usage": {"chat_messages_used": used_val, "chat_messages_limit": limit_val},
+    }
+
+    # profile/me equivalent
+    user_profile = _load_user_profile(email)
+
+    mapped_from_auth_status = {
+        "plan": backend_auth_status.get("plan"),
+        "used": backend_auth_status.get("usage", {}).get("chat_messages_used", 0),
+        "limit": backend_auth_status.get("usage", {}).get("chat_messages_limit", 0),
+    }
+    mapped_from_profile_me = {
+        "plan": (user_profile.get("plan") or "").upper(),
+        "used": user_profile.get("usage", {}).get("chat_messages_used", user_profile.get("used", 0)),
+        "limit": user_profile.get("usage", {}).get("chat_messages_limit", user_profile.get("limit", 0)),
+    }
+
+    return _build_cors_response(jsonify({
+        "backend": {
+            "auth_status": backend_auth_status,
+            "profile_me": {"ok": True, "user": user_profile}
+        },
+        "mapped": {
+            "from_auth_status": mapped_from_auth_status,
+            "from_profile_me": mapped_from_profile_me
+        }
+    }))
 
 # ---------- Newsletter (unmetered; verified login required) ----------
 @app.route("/newsletter/subscribe", methods=["POST", "OPTIONS"])
@@ -1676,23 +1825,36 @@ def engine_run():
 @app.route("/alerts/latest", methods=["GET"])
 @login_required
 def alerts_latest():
-    # Paid gate (consistent with /alerts)
-    if require_paid_feature is None:
-        return _build_cors_response(make_response(jsonify({"error": "Plan gate unavailable"}), 503))
+    # Paid gate removed - ALL authenticated users (FREE/PRO/ENTERPRISE) can access
+    # Plan-based limits applied below
     email = get_logged_in_email()
-    ok, msg = require_paid_feature(email)
-    if not ok:
-        return _build_cors_response(make_response(jsonify({"error": msg}), 403))
-
+    
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
 
-    # Cap limit defensively
+    # Get user's plan limits
     try:
-        limit = int(request.args.get("limit", 20))
+        from plan_utils import get_plan_limits
+        limits = get_plan_limits(email)
+        plan_days_cap = limits.get("alerts_days", 7)
+        plan_results_cap = limits.get("alerts_max_results", 30)
+    except Exception as e:
+        logger.warning("Failed to get plan limits: %s", e)
+        plan_days_cap = 7
+        plan_results_cap = 30
+
+    # Parse and cap user-requested params
+    try:
+        limit_requested = int(request.args.get("limit", 20))
     except Exception:
-        limit = 20
-    limit = max(1, min(limit, 500))
+        limit_requested = 20
+    limit = max(1, min(limit_requested, plan_results_cap))  # Enforce plan cap
+
+    try:
+        days_requested = int(request.args.get("days", "7"))
+    except Exception:
+        days_requested = 7
+    days = max(1, min(days_requested, plan_days_cap))  # Enforce plan cap
 
     region = request.args.get("region")
     country = request.args.get("country")
@@ -1700,18 +1862,13 @@ def alerts_latest():
     lat = request.args.get("lat")
     lon = request.args.get("lon")
     radius = request.args.get("radius", "100")  # km
-    days = request.args.get("days", "7")
 
     where = []
     params = []
     
-    # Time window filter
-    try:
-        days_int = int(days)
-        where.append("published >= NOW() - INTERVAL '%s days'")
-        params.append(days_int)
-    except Exception:
-        pass
+    # Time window filter (plan-capped days)
+    where.append("published >= NOW() - make_interval(days => %s)")
+    params.append(days)
     
     # Geographic filters
     if lat and lon:
@@ -1782,9 +1939,159 @@ def alerts_latest():
 
     try:
         rows = fetch_all(q, tuple(params))
-        return _build_cors_response(jsonify({"ok": True, "items": rows}))
+        
+        # Transform to GeoJSON for frontend map compatibility
+        features = []
+        for row in (rows or []):
+            if isinstance(row, dict):
+                lat_val = row.get("latitude")
+                lon_val = row.get("longitude")
+            else:
+                # Tuple row: latitude at index -2, longitude at index -1
+                lat_val = row[-2] if len(row) >= 2 else None
+                lon_val = row[-1] if len(row) >= 1 else None
+            
+            if lat_val is not None and lon_val is not None:
+                properties = dict(row) if isinstance(row, dict) else {
+                    "uuid": row[0] if len(row) > 0 else None,
+                    "published": row[1] if len(row) > 1 else None,
+                    "source": row[2] if len(row) > 2 else None,
+                    "title": row[3] if len(row) > 3 else None,
+                    "link": row[4] if len(row) > 4 else None,
+                    "region": row[5] if len(row) > 5 else None,
+                    "country": row[6] if len(row) > 6 else None,
+                    "city": row[7] if len(row) > 7 else None,
+                    "category": row[8] if len(row) > 8 else None,
+                    "subcategory": row[9] if len(row) > 9 else None,
+                    "threat_level": row[10] if len(row) > 10 else None,
+                    "threat_label": row[11] if len(row) > 11 else None,
+                    "score": row[12] if len(row) > 12 else None,
+                    "confidence": row[13] if len(row) > 13 else None,
+                }
+                # Remove lat/lon from properties (they're in geometry)
+                properties.pop("latitude", None)
+                properties.pop("longitude", None)
+                
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [float(lon_val), float(lat_val)]  # GeoJSON: [lon, lat]
+                    },
+                    "properties": properties
+                })
+        
+        return _build_cors_response(jsonify({"ok": True, "items": rows, "features": features}))
     except Exception as e:
         logger.error("alerts_latest error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+# ---------- Public Alerts (limited, no auth) ----------
+@app.route("/alerts/public/latest", methods=["GET"])
+def alerts_public_latest():
+    """Public version of latest alerts for maps. No auth, limited results.
+    Supports same query params: lat, lon, radius, days, region, country, city, limit.
+    Caps: limit<=50, days<=14.
+    """
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
+    # Defensive caps
+    try:
+        limit = int(request.args.get("limit", 20))
+    except Exception:
+        limit = 20
+    limit = max(1, min(limit, 50))
+
+    region = request.args.get("region")
+    country = request.args.get("country")
+    city = request.args.get("city")
+    lat = request.args.get("lat")
+    lon = request.args.get("lon")
+    radius = request.args.get("radius", "100")  # km
+    days = request.args.get("days", "7")
+
+    where = []
+    params = []
+
+    # Time window filter (cap days to 14)
+    try:
+        days_int = min(int(days), 14)
+        where.append("published >= NOW() - make_interval(days => %s)")
+        params.append(days_int)
+    except Exception:
+        pass
+
+    # Geographic filters
+    if lat and lon:
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+            radius_f = float(radius)
+            where.append(
+                "(" \
+                "  6371 * acos(" \
+                "    cos(radians(%s)) * cos(radians(latitude)) * " \
+                "    cos(radians(longitude) - radians(%s)) + " \
+                "    sin(radians(%s)) * sin(radians(latitude))" \
+                "  ) <= %s" \
+                ")"
+            )
+            params.extend([lat_f, lon_f, lat_f, radius_f])
+        except Exception as e:
+            logger.warning(f"Invalid lat/lon/radius params: {e}")
+
+    if region:
+        where.append("(region = %s OR city = %s)")
+        params.extend([region, region])
+    if country:
+        where.append("country = %s")
+        params.append(country)
+    if city:
+        where.append("city = %s")
+        params.append(city)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    q = f"""
+        SELECT
+          uuid,
+          published,
+          source,
+          title,
+          link,
+          region,
+          country,
+          city,
+          category,
+          subcategory,
+          threat_level,
+          threat_label,
+          score,
+          confidence,
+          gpt_summary,
+          summary,
+          en_snippet,
+          trend_direction,
+          anomaly_flag,
+          domains,
+          tags,
+          threat_score_components,
+          source_kind,
+          source_tag,
+          latitude,
+          longitude
+        FROM alerts
+        {where_sql}
+        ORDER BY published DESC NULLS LAST
+        LIMIT %s
+    """
+    params.append(limit)
+
+    try:
+        rows = fetch_all(q, tuple(params))
+        return _build_cors_response(jsonify({"ok": True, "items": rows}))
+    except Exception as e:
+        logger.error("alerts_public_latest error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
 # ---------- Alert Scoring Details ----------
