@@ -465,9 +465,28 @@ else:
 CHAT_RATE = os.getenv("CHAT_RATE", "10 per minute;200 per day")
 SEARCH_RATE = os.getenv("SEARCH_RATE", "20 per minute;500 per hour")
 BATCH_ENRICH_RATE = os.getenv("BATCH_ENRICH_RATE", "5 per minute;100 per hour")
+TRAVEL_RISK_RATE = os.getenv("TRAVEL_RISK_RATE", "5 per minute;100 per hour")
 CHAT_QUERY_MAX_CHARS = int(os.getenv("CHAT_QUERY_MAX_CHARS", "5000"))
 
 # SOCMINT rates (platform-specific)
+
+# ---------- Cache setup for travel risk ----------
+try:
+    import redis
+    REDIS_URL = os.getenv("REDIS_URL")
+    if REDIS_URL:
+        travel_risk_cache = redis.from_url(REDIS_URL, decode_responses=True)
+        logger.info("Travel risk cache: Redis enabled")
+    else:
+        travel_risk_cache = None
+        logger.info("Travel risk cache: Redis not configured, using in-memory fallback")
+except Exception as e:
+    travel_risk_cache = None
+    logger.warning(f"Travel risk cache initialization failed: {e}")
+
+# In-memory fallback cache (TTL-based)
+travel_risk_memory_cache = {}
+TRAVEL_RISK_CACHE_TTL = 900  # 15 minutes
 SOCMINT_INSTAGRAM_RATE = os.getenv("SOCMINT_INSTAGRAM_RATE", "30 per minute")
 SOCMINT_FACEBOOK_RATE = os.getenv("SOCMINT_FACEBOOK_RATE", "10 per minute")  # Stricter due to block risk
 
@@ -2501,6 +2520,7 @@ def _assessment_to_alert_for_advisor(assessment: dict, destination: str | None =
 
 
 @app.route('/api/travel-risk/assess', methods=['POST', 'OPTIONS'])
+@limiter.limit(TRAVEL_RISK_RATE) if limiter else lambda f: f
 def travel_risk_assessment():
     """Unified travel risk assessment plus LLM advisory for a destination."""
     if request.method == 'OPTIONS':
@@ -2520,7 +2540,54 @@ def travel_risk_assessment():
         radius_km = int(data.get('radius_km', 100))
         days = int(data.get('days', 14))
         output_format = str(data.get('format', 'structured')).lower()
+        
+        # Generate cache key
+        cache_key = f"travel-risk:{lat:.4f}:{lon:.4f}:{country_code or 'none'}:{radius_km}:{days}:{output_format}"
+        
+        # Try cache (Redis first, then in-memory)
+        cached_result = None
+        if travel_risk_cache:
+            try:
+                import json
+                cached_json = travel_risk_cache.get(cache_key)
+                if cached_json:
+                    cached_result = json.loads(cached_json)
+                    logger.info("travel_risk_cache_hit", cache_key=cache_key)
+            except Exception as e:
+                logger.warning(f"Redis cache read failed: {e}")
+        
+        # In-memory fallback cache
+        if not cached_result and cache_key in travel_risk_memory_cache:
+            entry = travel_risk_memory_cache[cache_key]
+            if time.time() - entry['timestamp'] < TRAVEL_RISK_CACHE_TTL:
+                cached_result = entry['data']
+                logger.info("travel_risk_cache_hit", cache_key=cache_key, source="memory")
+            else:
+                # Expired, remove
+                del travel_risk_memory_cache[cache_key]
+        
+        if cached_result:
+            return _build_cors_response(jsonify(cached_result))
 
+        # Analytics logging for popular destinations
+        user_email = None
+        try:
+            user_email = get_logged_in_email() if 'get_logged_in_email' in globals() else None
+        except Exception:
+            pass
+        
+        metrics.info("travel_risk_query",
+            lat=lat,
+            lon=lon,
+            country_code=country_code,
+            destination=destination,
+            radius_km=radius_km,
+            days=days,
+            format=output_format,
+            user_email=user_email,
+            timestamp=datetime.utcnow().isoformat()
+        )
+        
         # Run fusion analysis
         from threat_fusion import ThreatFusion
         assessment = ThreatFusion.assess_location(
@@ -2546,11 +2613,35 @@ def travel_risk_assessment():
         else:
             advisory_text = _generate_llm_travel_advisory(assessment, destination)
 
-        return _build_cors_response(jsonify({
+        result = {
             'assessment': assessment,
             'advisory': advisory_text,
             'format': output_format,
-        }))
+        }
+        
+        # Store in cache
+        if travel_risk_cache:
+            try:
+                import json
+                travel_risk_cache.setex(cache_key, TRAVEL_RISK_CACHE_TTL, json.dumps(result))
+                logger.info("travel_risk_cache_set", cache_key=cache_key, ttl=TRAVEL_RISK_CACHE_TTL)
+            except Exception as e:
+                logger.warning(f"Redis cache write failed: {e}")
+        
+        # In-memory cache
+        travel_risk_memory_cache[cache_key] = {
+            'data': result,
+            'timestamp': time.time()
+        }
+        
+        # Clean old in-memory entries (keep last 100)
+        if len(travel_risk_memory_cache) > 100:
+            oldest_keys = sorted(travel_risk_memory_cache.keys(), 
+                               key=lambda k: travel_risk_memory_cache[k]['timestamp'])[:50]
+            for k in oldest_keys:
+                del travel_risk_memory_cache[k]
+        
+        return _build_cors_response(jsonify(result))
     except Exception as e:
         logger.error(f"/api/travel-risk/assess error: {e}")
         return _build_cors_response(make_response(jsonify({'error': 'Assessment or advisory failed'}), 500))
