@@ -2110,6 +2110,7 @@ def analytics_timeline():
         return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
     
     try:
+        from plan_utils import get_plan_limits
         email = g.email
         limits = get_plan_limits(email) or {}
         timeline_days = limits.get("timeline_days", 7)
@@ -2168,6 +2169,7 @@ def analytics_statistics():
         return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
     
     try:
+        from plan_utils import get_plan_limits
         email = g.email
         limits = get_plan_limits(email) or {}
         statistics_days = limits.get("statistics_days", 7)
