@@ -2098,6 +2098,160 @@ def alerts_public_latest():
         logger.error("alerts_public_latest error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
+# ---------- Analytics Endpoints ----------
+@app.route("/analytics/timeline", methods=["GET"])
+@login_required
+def analytics_timeline():
+    """Return time-series aggregation of alerts for timeline chart.
+    Respects user's timeline_days plan limit.
+    Returns: { series: [{ date: "YYYY-MM-DD", incidents: number }], escalation?: {...} }
+    """
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
+    
+    try:
+        email = g.email
+        limits = get_plan_limits(email) or {}
+        timeline_days = limits.get("timeline_days", 7)
+        
+        # Query alerts grouped by day within user's plan window
+        q = """
+            SELECT 
+                DATE(published) as incident_date,
+                COUNT(*) as incident_count
+            FROM alerts
+            WHERE published >= NOW() - make_interval(days => %s)
+            GROUP BY DATE(published)
+            ORDER BY incident_date ASC
+        """
+        rows = fetch_all(q, (timeline_days,))
+        
+        series = []
+        for row in (rows or []):
+            if isinstance(row, dict):
+                series.append({
+                    "date": str(row.get("incident_date", "")),
+                    "incidents": int(row.get("incident_count", 0))
+                })
+            else:
+                series.append({
+                    "date": str(row[0]) if row[0] else "",
+                    "incidents": int(row[1]) if len(row) > 1 else 0
+                })
+        
+        # Optional: Detect escalation trend (simple heuristic)
+        escalation = None
+        if len(series) >= 3:
+            recent_avg = sum(s["incidents"] for s in series[-3:]) / 3
+            older_avg = sum(s["incidents"] for s in series[:-3]) / max(len(series) - 3, 1)
+            if recent_avg > older_avg * 1.5:
+                escalation = {"level": "rising", "trend": "up"}
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "series": series,
+            "escalation": escalation,
+            "window_days": timeline_days
+        }))
+        
+    except Exception as e:
+        logger.error("analytics_timeline error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Timeline query failed"}), 500))
+
+@app.route("/analytics/statistics", methods=["GET"])
+@login_required
+def analytics_statistics():
+    """Return aggregated statistics for alerts within user's statistics_days window.
+    Returns: { summary: {...}, top_countries: [...], avg_score: number }
+    """
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
+    
+    try:
+        email = g.email
+        limits = get_plan_limits(email) or {}
+        statistics_days = limits.get("statistics_days", 7)
+        
+        # Summary stats by threat level
+        summary_q = """
+            SELECT 
+                threat_level,
+                COUNT(*) as count
+            FROM alerts
+            WHERE published >= NOW() - make_interval(days => %s)
+            GROUP BY threat_level
+        """
+        summary_rows = fetch_all(summary_q, (statistics_days,))
+        
+        summary = {
+            "total": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "unknown": 0
+        }
+        
+        for row in (summary_rows or []):
+            level = (row.get("threat_level") if isinstance(row, dict) else row[0]) or "unknown"
+            count = int(row.get("count") if isinstance(row, dict) else row[1])
+            level_key = level.lower() if level else "unknown"
+            if level_key in summary:
+                summary[level_key] = count
+            summary["total"] += count
+        
+        # Top countries
+        countries_q = """
+            SELECT 
+                country,
+                COUNT(*) as count
+            FROM alerts
+            WHERE published >= NOW() - make_interval(days => %s)
+              AND country IS NOT NULL
+            GROUP BY country
+            ORDER BY count DESC
+            LIMIT 10
+        """
+        countries_rows = fetch_all(countries_q, (statistics_days,))
+        
+        top_countries = []
+        for row in (countries_rows or []):
+            if isinstance(row, dict):
+                top_countries.append({
+                    "country": row.get("country", "Unknown"),
+                    "count": int(row.get("count", 0))
+                })
+            else:
+                top_countries.append({
+                    "country": row[0] if row[0] else "Unknown",
+                    "count": int(row[1]) if len(row) > 1 else 0
+                })
+        
+        # Average threat score
+        avg_q = """
+            SELECT AVG(score) as avg_score
+            FROM alerts
+            WHERE published >= NOW() - make_interval(days => %s)
+              AND score IS NOT NULL
+        """
+        avg_row = fetch_all(avg_q, (statistics_days,))
+        avg_score = 0.0
+        if avg_row and len(avg_row) > 0:
+            avg_val = avg_row[0].get("avg_score") if isinstance(avg_row[0], dict) else avg_row[0][0]
+            avg_score = float(avg_val) if avg_val else 0.0
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "summary": summary,
+            "top_countries": top_countries,
+            "avg_score": round(avg_score, 2),
+            "window_days": statistics_days
+        }))
+        
+    except Exception as e:
+        logger.error("analytics_statistics error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Statistics query failed"}), 500))
+
 # ---------- Alert Scoring Details ----------
 @app.route("/alerts/<alert_uuid>/scoring", methods=["GET"])
 @login_required
