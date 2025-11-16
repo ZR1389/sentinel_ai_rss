@@ -672,6 +672,16 @@ def _load_user_profile(email: str) -> Dict[str, Any]:
     except Exception:
         data["usage"] = {}  
 
+    # Add used/limit for frontend compatibility
+    plan = data.get("plan", "FREE").upper()
+    if plan == "PRO" or plan == "ENTERPRISE":
+        data["limit"] = 10000  # High limit for paid plans
+    else:
+        data["limit"] = 100  # Free plan limit
+    
+    # Used count from usage (chat messages or other tracked metrics)
+    data["used"] = data.get("usage", {}).get("chat_messages_used", 0)
+
     return data
 
 # ---------- Routes ----------
@@ -1687,9 +1697,42 @@ def alerts_latest():
     region = request.args.get("region")
     country = request.args.get("country")
     city = request.args.get("city")
+    lat = request.args.get("lat")
+    lon = request.args.get("lon")
+    radius = request.args.get("radius", "100")  # km
+    days = request.args.get("days", "7")
 
     where = []
     params = []
+    
+    # Time window filter
+    try:
+        days_int = int(days)
+        where.append("published >= NOW() - INTERVAL '%s days'")
+        params.append(days_int)
+    except Exception:
+        pass
+    
+    # Geographic filters
+    if lat and lon:
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+            radius_f = float(radius)
+            # Haversine distance filter (PostgreSQL)
+            where.append(
+                "("
+                "  6371 * acos("
+                "    cos(radians(%s)) * cos(radians(latitude)) * "
+                "    cos(radians(longitude) - radians(%s)) + "
+                "    sin(radians(%s)) * sin(radians(latitude))"
+                "  ) <= %s"
+                ")"
+            )
+            params.extend([lat_f, lon_f, lat_f, radius_f])
+        except Exception as e:
+            logger.warning(f"Invalid lat/lon/radius params: {e}")
+    
     if region:
         # Keep original behavior: region param can match region OR city
         where.append("(region = %s OR city = %s)")
