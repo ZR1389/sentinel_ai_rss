@@ -378,11 +378,14 @@ CREATE INDEX IF NOT EXISTS idx_gdelt_latlon ON gdelt_events(latitude, longitude)
         # Execute migration
         cur.execute(migration_sql)
         
-        # Update GDELT lat/lon from existing columns
+        # Update GDELT lat/lon from existing columns (with bounds check)
         cur.execute("""
             UPDATE gdelt_events 
             SET latitude = action_lat, longitude = action_long
-            WHERE latitude IS NULL AND action_lat IS NOT NULL;
+            WHERE latitude IS NULL 
+            AND action_lat IS NOT NULL 
+            AND action_lat BETWEEN -90 AND 90
+            AND action_long BETWEEN -180 AND 180;
         """)
         updated_gdelt = cur.rowcount
         
