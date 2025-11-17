@@ -3173,6 +3173,58 @@ def cleanup_corrupted_coordinates():
         logger.error(f"/admin/coordinates/cleanup error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+@app.route("/admin/gdelt/reprocess", methods=["POST", "OPTIONS"])
+def gdelt_reprocess_coords():
+    """Reprocess GDELT events with invalid coordinates (lon=0) to geocode them properly"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import _get_db_connection
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Mark GDELT events with lon=0 as unprocessed so enrichment worker will reprocess them
+            cur.execute("""
+                UPDATE gdelt_events
+                SET processed = false
+                WHERE action_long = 0.0 
+                  AND quad_class IN (3, 4)
+                  AND processed = true
+            """)
+            marked_count = cur.rowcount
+            
+            # Delete existing raw_alerts/alerts with lon=0 so they can be regenerated
+            cur.execute("""
+                DELETE FROM alerts
+                WHERE longitude = 0.0 AND uuid LIKE 'gdelt-%'
+            """)
+            deleted_alerts = cur.rowcount
+            
+            cur.execute("""
+                DELETE FROM raw_alerts
+                WHERE longitude = 0.0 AND uuid LIKE 'gdelt-%'
+            """)
+            deleted_raw = cur.rowcount
+            
+            conn.commit()
+            
+            logger.info(f"Marked {marked_count} GDELT events for reprocessing (lon=0)")
+            logger.info(f"Deleted {deleted_alerts} alerts and {deleted_raw} raw_alerts with lon=0")
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "marked_for_reprocessing": marked_count,
+            "deleted_alerts": deleted_alerts,
+            "deleted_raw_alerts": deleted_raw,
+            "message": f"Marked {marked_count} events for reprocessing. Run /admin/gdelt/enrich to geocode them."
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/gdelt/reprocess error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
 @app.route("/admin/gdelt/health", methods=["GET", "OPTIONS"])
 def gdelt_health():
     """Check GDELT ingestion status"""
