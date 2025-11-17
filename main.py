@@ -3173,6 +3173,68 @@ def cleanup_corrupted_coordinates():
         logger.error(f"/admin/coordinates/cleanup error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+@app.route("/admin/alerts/sources", methods=["GET", "OPTIONS"])
+def check_alert_sources():
+    """Check alert counts and coordinate status by source"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import _get_db_connection
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Count alerts by source with coordinate stats
+            cur.execute("""
+                SELECT source, COUNT(*) as total,
+                       SUM(CASE WHEN longitude = 0.0 THEN 1 ELSE 0 END) as lon_zero,
+                       SUM(CASE WHEN longitude IS NULL THEN 1 ELSE 0 END) as lon_null,
+                       SUM(CASE WHEN longitude != 0.0 AND longitude IS NOT NULL THEN 1 ELSE 0 END) as lon_valid
+                FROM alerts
+                GROUP BY source
+                ORDER BY total DESC
+            """)
+            
+            sources = []
+            for row in cur.fetchall():
+                sources.append({
+                    'source': row[0],
+                    'total': row[1],
+                    'lon_zero': row[2],
+                    'lon_null': row[3],
+                    'lon_valid': row[4]
+                })
+            
+            # Get sample RSS alerts
+            cur.execute("""
+                SELECT uuid, title, country, city, latitude, longitude
+                FROM alerts
+                WHERE source = 'rss'
+                LIMIT 3
+            """)
+            rss_samples = []
+            for row in cur.fetchall():
+                rss_samples.append({
+                    'uuid': row[0],
+                    'title': row[1],
+                    'country': row[2],
+                    'city': row[3],
+                    'coords': {'lat': row[4], 'lon': row[5]}
+                })
+            
+            cur.close()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "sources": sources,
+            "rss_samples": rss_samples
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/alerts/sources error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
 @app.route("/admin/gdelt/reprocess", methods=["POST", "OPTIONS"])
 def gdelt_reprocess_coords():
     """Reprocess GDELT events with invalid coordinates (lon=0) to geocode them properly"""
@@ -3185,13 +3247,20 @@ def gdelt_reprocess_coords():
         with _get_db_connection() as conn:
             cur = conn.cursor()
             
+            # First check how many events we have with lon=0
+            cur.execute("""
+                SELECT COUNT(*) FROM gdelt_events
+                WHERE action_long = 0.0 
+                  AND quad_class IN (3, 4)
+            """)
+            total_with_zero = cur.fetchone()[0]
+            
             # Mark GDELT events with lon=0 as unprocessed so enrichment worker will reprocess them
             cur.execute("""
                 UPDATE gdelt_events
                 SET processed = false
                 WHERE action_long = 0.0 
                   AND quad_class IN (3, 4)
-                  AND processed = true
             """)
             marked_count = cur.rowcount
             
@@ -3210,15 +3279,27 @@ def gdelt_reprocess_coords():
             
             conn.commit()
             
-            logger.info(f"Marked {marked_count} GDELT events for reprocessing (lon=0)")
+            # Check unprocessed count after update
+            cur.execute("""
+                SELECT COUNT(*) FROM gdelt_events
+                WHERE processed = false
+                  AND quad_class IN (3, 4)
+            """)
+            unprocessed_count = cur.fetchone()[0]
+            
+            logger.info(f"Total GDELT events with lon=0: {total_with_zero}")
+            logger.info(f"Marked {marked_count} GDELT events for reprocessing")
+            logger.info(f"Unprocessed events after update: {unprocessed_count}")
             logger.info(f"Deleted {deleted_alerts} alerts and {deleted_raw} raw_alerts with lon=0")
         
         return _build_cors_response(jsonify({
             "ok": True,
+            "total_with_zero_lon": total_with_zero,
             "marked_for_reprocessing": marked_count,
+            "unprocessed_count": unprocessed_count,
             "deleted_alerts": deleted_alerts,
             "deleted_raw_alerts": deleted_raw,
-            "message": f"Marked {marked_count} events for reprocessing. Run /admin/gdelt/enrich to geocode them."
+            "message": f"Marked {marked_count} events for reprocessing. {unprocessed_count} events ready. Run /admin/gdelt/enrich to geocode them."
         }))
         
     except Exception as e:
