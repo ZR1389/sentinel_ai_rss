@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 GDELT Enrichment Worker
-Processes unprocessed gdelt_events into alerts table
+Processes unprocessed gdelt_events into raw_alerts table
+(Threat Engine then enriches raw_alerts → alerts with unified scoring/SOCMINT)
 """
 import os
 import sys
@@ -28,8 +29,8 @@ def get_conn():
         raise RuntimeError("DATABASE_URL not set")
     return psycopg2.connect(DATABASE_URL)
 
-def gdelt_to_alert(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert GDELT event to alert format"""
+def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert GDELT event to raw_alerts format (minimal schema for Threat Engine input)"""
     # Generate UUID from global_event_id
     uuid = f"gdelt-{event['global_event_id']}"
     
@@ -40,69 +41,60 @@ def gdelt_to_alert(event: Dict[str, Any]) -> Dict[str, Any]:
     except:
         published = datetime.now(timezone.utc)
     
-    # Map quad_class to threat level
-    quad_class = event.get('quad_class', 0)
-    goldstein = event.get('goldstein', 0) or 0
-    
-    if quad_class == 4:  # Conflict
-        threat_level = "critical"
-        threat_label = "Armed Conflict"
-    elif quad_class == 3:  # Material Conflict
-        threat_level = "high"
-        threat_label = "Material Conflict"
-    elif goldstein < -5:
-        threat_level = "high"
-        threat_label = "High Tension Event"
-    elif goldstein < -2:
-        threat_level = "medium"
-        threat_label = "Negative Event"
-    else:
-        threat_level = "low"
-        threat_label = "Monitored Activity"
-    
-    # Calculate score (0-100) based on goldstein and mentions
-    # Goldstein ranges from -10 to +10, lower is worse
-    goldstein_normalized = max(0, min(100, ((-goldstein + 10) / 20) * 100))
-    mentions_weight = min(100, (event.get('num_mentions', 0) or 0) / 10)
-    score = int((goldstein_normalized * 0.7) + (mentions_weight * 0.3))
-    
-    # Build title from actors and event
+    # Extract basic metadata
     actor1 = event.get('actor1', 'Unknown')
     actor2 = event.get('actor2', 'Unknown')
     event_code = event.get('event_code', '')
+    quad_class = event.get('quad_class', 0)
+    goldstein = event.get('goldstein', 0) or 0
     
+    # Build title
     title = f"GDELT: {actor1} → {actor2}"
     if event_code:
         title += f" ({event_code})"
     
     country = event.get('action_country', 'Unknown')
     
-    alert = {
+    # Summary with raw metrics (Threat Engine will compute final scores)
+    summary = f"GDELT event: {actor1} and {actor2}. Goldstein: {goldstein}, Tone: {event.get('avg_tone', 0)}, Mentions: {event.get('num_mentions', 0)}"
+    
+    # Tags with rich metadata for Threat Engine context
+    import json
+    tags = [{
+        'source': 'gdelt',
+        'event_id': event['global_event_id'],
+        'quad_class': quad_class,
+        'event_code': event_code,
+        'goldstein': goldstein,
+        'avg_tone': event.get('avg_tone'),
+        'num_mentions': event.get('num_mentions'),
+        'num_sources': event.get('num_sources'),
+        'num_articles': event.get('num_articles'),
+        'actor1': actor1,
+        'actor2': actor2,
+    }]
+    
+    raw_alert = {
         'uuid': uuid,
         'published': published,
         'source': 'gdelt',
-        'source_kind': 'gdelt',
+        'source_kind': 'intelligence',  # Match ACLED pattern
+        'source_tag': f"country:{country}" if country and country != 'Unknown' else 'country:Unknown',
         'title': title,
+        'summary': summary,
         'link': event.get('source_url') or f"https://gdeltproject.org/data/lookups/CAMEO.eventcodes.txt",
-        'region': None,  # GDELT doesn't provide region
+        'region': None,
         'country': country if country and country != 'Unknown' else None,
-        'city': None,  # GDELT doesn't provide city-level
-        'category': 'conflict' if quad_class in [3, 4] else 'monitoring',
-        'subcategory': threat_label,
-        'threat_level': threat_level,
-        'threat_label': threat_label,
-        'score': score,
-        'confidence': min(1.0, (event.get('num_sources', 0) or 0) / 10),
-        'summary': f"GDELT event: {actor1} and {actor2}. Goldstein: {goldstein}, Tone: {event.get('avg_tone', 0)}",
+        'city': None,
         'latitude': event.get('action_lat'),
         'longitude': event.get('action_long'),
-        'tags': ['gdelt', f'quad_{quad_class}', event_code] if event_code else ['gdelt', f'quad_{quad_class}'],
+        'tags': json.dumps(tags),
     }
     
-    return alert
+    return raw_alert
 
 def process_batch(conn, batch_size: int = 100) -> int:
-    """Process a batch of unprocessed GDELT events"""
+    """Process a batch of unprocessed GDELT events into raw_alerts"""
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
     try:
@@ -125,30 +117,27 @@ def process_batch(conn, batch_size: int = 100) -> int:
         if not events:
             return 0
         
-        logger.info(f"Processing {len(events)} GDELT events...")
+        logger.info(f"Processing {len(events)} GDELT events into raw_alerts...")
         
         processed_ids = []
         inserted_count = 0
         
         for event in events:
             try:
-                alert = gdelt_to_alert(dict(event))
+                raw_alert = gdelt_to_raw_alert(dict(event))
                 
-                # Insert into alerts (with ON CONFLICT DO NOTHING)
+                # Insert into raw_alerts (Threat Engine will enrich → alerts)
                 cur.execute("""
-                    INSERT INTO alerts (
-                        uuid, published, source, source_kind, title, link,
-                        region, country, city, category, subcategory,
-                        threat_level, threat_label, score, confidence, summary,
-                        latitude, longitude, tags
+                    INSERT INTO raw_alerts (
+                        uuid, published, source, source_kind, source_tag, title, summary, link,
+                        region, country, city, latitude, longitude, tags
                     ) VALUES (
-                        %(uuid)s, %(published)s, %(source)s, %(source_kind)s, %(title)s, %(link)s,
-                        %(region)s, %(country)s, %(city)s, %(category)s, %(subcategory)s,
-                        %(threat_level)s, %(threat_label)s, %(score)s, %(confidence)s, %(summary)s,
-                        %(latitude)s, %(longitude)s, %(tags)s
+                        %(uuid)s, %(published)s, %(source)s, %(source_kind)s, %(source_tag)s,
+                        %(title)s, %(summary)s, %(link)s, %(region)s, %(country)s, %(city)s,
+                        %(latitude)s, %(longitude)s, %(tags)s::jsonb
                     )
                     ON CONFLICT (uuid) DO NOTHING
-                """, alert)
+                """, raw_alert)
                 
                 processed_ids.append(event['global_event_id'])
                 inserted_count += 1
@@ -166,7 +155,7 @@ def process_batch(conn, batch_size: int = 100) -> int:
             """, (processed_ids,))
         
         conn.commit()
-        logger.info(f"✓ Processed {inserted_count} GDELT events into alerts")
+        logger.info(f"✓ Processed {inserted_count} GDELT events into raw_alerts (will be enriched by Threat Engine)")
         
         return inserted_count
         
