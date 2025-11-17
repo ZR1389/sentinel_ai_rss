@@ -97,6 +97,14 @@ def process_batch(conn, batch_size: int = 100) -> int:
     """Process a batch of unprocessed GDELT events into raw_alerts"""
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
+        # Import geocoding service to cache coordinates
+        try:
+            from geocoding_service import _save_to_db as save_to_geocoding_cache
+            geocoding_cache_available = True
+        except ImportError:
+            logger.warning("geocoding_service not available - skipping coordinate cache")
+            geocoding_cache_available = False
+    
     try:
         # Get unprocessed events with coordinates
         cur.execute("""
@@ -126,15 +134,43 @@ def process_batch(conn, batch_size: int = 100) -> int:
             try:
                 raw_alert = gdelt_to_raw_alert(dict(event))
                 
+                                # Cache GDELT coordinates in geocoded_locations for future proximity searches
+                                geocoded_location_id = None
+                                if geocoding_cache_available:
+                                    lat = raw_alert.get('latitude')
+                                    lon = raw_alert.get('longitude')
+                                    country = raw_alert.get('country')
+                    
+                                    if lat and lon and country:
+                                        try:
+                                            # Create location text from country (GDELT doesn't provide city/region reliably)
+                                            location_text = f"{country} ({lat:.4f}, {lon:.4f})"
+                            
+                                            result = save_to_geocoding_cache(
+                                                location=location_text,
+                                                lat=lat,
+                                                lon=lon,
+                                                country_code=country,
+                                                admin1=None,
+                                                admin2=None,
+                                                confidence=7,  # Medium-high confidence - from GDELT coordinates
+                                                source="gdelt"
+                                            )
+                                            if result:
+                                                geocoded_location_id = result.get('location_id')
+                                                raw_alert['geocoded_location_id'] = geocoded_location_id
+                                        except Exception as e:
+                                            logger.debug(f"Failed to cache GDELT coordinates: {e}")
+                
                 # Insert into raw_alerts (Threat Engine will enrich → alerts)
                 cur.execute("""
                     INSERT INTO raw_alerts (
                         uuid, published, source, source_kind, source_tag, title, summary, link,
-                        region, country, city, latitude, longitude, tags
+                        region, country, city, latitude, longitude, tags, geocoded_location_id
                     ) VALUES (
                         %(uuid)s, %(published)s, %(source)s, %(source_kind)s, %(source_tag)s,
                         %(title)s, %(summary)s, %(link)s, %(region)s, %(country)s, %(city)s,
-                        %(latitude)s, %(longitude)s, %(tags)s::jsonb
+                        %(latitude)s, %(longitude)s, %(tags)s::jsonb, %(geocoded_location_id)s
                     )
                     ON CONFLICT (uuid) DO NOTHING
                 """, raw_alert)

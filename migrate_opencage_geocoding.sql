@@ -39,16 +39,61 @@ CREATE INDEX IF NOT EXISTS idx_geocoded_last_used ON geocoded_locations(last_use
 -- ============================================================
 -- Keep existing lat/lon for backwards compatibility
 -- Add geom alongside for spatial queries
+-- Only runs if tables exist
 
--- alerts table
-ALTER TABLE alerts ADD COLUMN IF NOT EXISTS geom GEOGRAPHY(POINT, 4326);
-ALTER TABLE alerts ADD COLUMN IF NOT EXISTS geocoded_location_id INTEGER REFERENCES geocoded_locations(id);
-CREATE INDEX IF NOT EXISTS idx_alerts_geom ON alerts USING GIST(geom);
+-- alerts table (if exists)
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'alerts') THEN
+        ALTER TABLE alerts ADD COLUMN IF NOT EXISTS geom GEOGRAPHY(POINT, 4326);
+        ALTER TABLE alerts ADD COLUMN IF NOT EXISTS geocoded_location_id INTEGER;
+        
+        -- Add foreign key constraint if geocoded_locations exists
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints 
+            WHERE constraint_name = 'alerts_geocoded_location_id_fkey'
+        ) THEN
+            ALTER TABLE alerts ADD CONSTRAINT alerts_geocoded_location_id_fkey 
+                FOREIGN KEY (geocoded_location_id) REFERENCES geocoded_locations(id);
+        END IF;
+        
+        -- Create spatial index
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_alerts_geom') THEN
+            CREATE INDEX idx_alerts_geom ON alerts USING GIST(geom);
+        END IF;
+        
+        RAISE NOTICE 'Added geom columns to alerts table';
+    ELSE
+        RAISE NOTICE 'Skipping alerts table (does not exist)';
+    END IF;
+END $$;
 
--- raw_alerts table
-ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS geom GEOGRAPHY(POINT, 4326);
-ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS geocoded_location_id INTEGER REFERENCES geocoded_locations(id);
-CREATE INDEX IF NOT EXISTS idx_raw_alerts_geom ON raw_alerts USING GIST(geom);
+-- raw_alerts table (if exists)
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_alerts') THEN
+        ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS geom GEOGRAPHY(POINT, 4326);
+        ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS geocoded_location_id INTEGER;
+        
+        -- Add foreign key constraint
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints 
+            WHERE constraint_name = 'raw_alerts_geocoded_location_id_fkey'
+        ) THEN
+            ALTER TABLE raw_alerts ADD CONSTRAINT raw_alerts_geocoded_location_id_fkey 
+                FOREIGN KEY (geocoded_location_id) REFERENCES geocoded_locations(id);
+        END IF;
+        
+        -- Create spatial index
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_raw_alerts_geom') THEN
+            CREATE INDEX idx_raw_alerts_geom ON raw_alerts USING GIST(geom);
+        END IF;
+        
+        RAISE NOTICE 'Added geom columns to raw_alerts table';
+    ELSE
+        RAISE NOTICE 'Skipping raw_alerts table (does not exist)';
+    END IF;
+END $$;
 
 -- Backfill geom from existing lat/lon (run after migration)
 -- UPDATE alerts SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography

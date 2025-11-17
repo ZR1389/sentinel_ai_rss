@@ -50,6 +50,23 @@ healthcheck_path = "/health"
   command = "python railway_cron.py engine"
   schedule = "7,22,37,52 * * * *"  # Every 15 min (offset): Threat Engine enriches raw_alerts → alerts (scoring, domains, embeddings, SOCMINT)
 
+# Geocoding & Proximity
+[[cron]]
+  name = "proximity-check"
+  command = "python railway_cron.py proximity"
+  schedule = "0 * * * *"  # Hourly: Check all travelers for nearby threats
+  
+[[cron]]
+  name = "geocode-backfill"
+  command = "python railway_cron.py geocode"
+  schedule = "30 3 * * *"  # Daily at 3:30 AM UTC: Geocode missing coordinates in raw_alerts and alerts
+
+# User Notifications
+[[cron]]
+  name = "daily-notify"
+  command = "python railway_cron.py notify"
+  schedule = "0 8 * * *"  # Daily at 8:00 AM UTC: Send PDF reports and Telegram alerts to eligible users
+
 # Environment Variables (set these in Railway Dashboard)
 # Required:
 # - DATABASE_URL

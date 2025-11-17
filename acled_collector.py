@@ -189,6 +189,14 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
         Number of events inserted (excludes duplicates)
     """
     if not execute:
+    
+            # Import geocoding service to cache coordinates
+            try:
+                from geocoding_service import _save_to_db as save_to_geocoding_cache
+                geocoding_cache_available = True
+            except ImportError:
+                logger.warning("geocoding_service not available - skipping coordinate cache")
+                geocoding_cache_available = False
         logger.error("db_utils.execute not available - cannot persist ACLED data")
         return 0
     
@@ -233,6 +241,35 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
             try:
                 latitude = float(event.get("latitude"))
                 longitude = float(event.get("longitude"))
+            
+                        # Cache coordinates in geocoded_locations for future proximity searches
+                        geocoded_location_id = None
+                        if geocoding_cache_available and latitude and longitude:
+                            try:
+                                # Create location text from available fields
+                                location_parts = [p for p in [
+                                    event.get("location"),
+                                    event.get("admin2"),
+                                    event.get("admin1"),
+                                    event.get("country")
+                                ] if p]
+                                location_text = ", ".join(location_parts) if location_parts else None
+                    
+                                if location_text:
+                                    result = save_to_geocoding_cache(
+                                        location=location_text,
+                                        lat=latitude,
+                                        lon=longitude,
+                                        country_code=event.get("iso"),
+                                        admin1=event.get("admin1"),
+                                        admin2=event.get("admin2"),
+                                        confidence=9,  # High confidence - from ACLED API
+                                        source="acled"
+                                    )
+                                    if result:
+                                        geocoded_location_id = result.get('location_id')
+                            except Exception as e:
+                                logger.debug(f"Failed to cache ACLED coordinates: {e}")
             except (ValueError, TypeError):
                 skipped_no_coords += 1
                 continue
@@ -282,9 +319,10 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
                     city,
                     tags,
                     source_tag,
-                    source_kind
+                    source_kind,
+                    geocoded_location_id
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
                 )
                 ON CONFLICT (uuid) DO NOTHING
             """
@@ -303,6 +341,7 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
                 json.dumps(tags),
                 f"country:{country}",  # source_tag for filtering
                 "intelligence"  # source_kind
+                            geocoded_location_id,
             ))
             
             inserted_count += 1

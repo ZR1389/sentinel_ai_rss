@@ -508,11 +508,19 @@ if save_raw_alerts_to_db is None:
             logger.error("No DATABASE_URL or psycopg; cannot write alerts.")
             return 0
 
+        # Import geocoding service for location enrichment
+        try:
+            from geocoding_service import geocode
+            geocoding_available = True
+        except ImportError:
+            logger.warning("geocoding_service not available - skipping coordinate enrichment")
+            geocoding_available = False
+
         cols = [
             "uuid","title","summary","en_snippet","link","source","published",
-            "tags","region","country","city","location_method","location_confidence","language","latitude","longitude"
+            "tags","region","country","city","location_method","location_confidence","language","latitude","longitude","geocoded_location_id"
         ]
-        placeholders = "%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s"
+        placeholders = "%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s"
         sql = f"INSERT INTO raw_alerts ({','.join(cols)}) VALUES ({placeholders}) ON CONFLICT (uuid) DO NOTHING"
 
         wrote = 0
@@ -520,6 +528,27 @@ if save_raw_alerts_to_db is None:
             with psycopg.connect(dsn, autocommit=True) as conn:
                 with conn.cursor() as cur:
                     for a in alerts or []:
+                                                # Geocode location if available and not already set
+                                                geocoded_location_id = None
+                                                lat = a.get("latitude")
+                                                lon = a.get("longitude")
+                        
+                                                if geocoding_available and not (lat and lon):
+                                                    # Try to geocode from location text
+                                                    location_text = a.get("location") or a.get("city") or a.get("region") or a.get("country")
+                                                    if location_text:
+                                                        try:
+                                                            geo_result = geocode(location_text)
+                                                            if geo_result:
+                                                                lat = geo_result.get('lat')
+                                                                lon = geo_result.get('lon')
+                                                                geocoded_location_id = geo_result.get('location_id')
+                                                                # Optionally update country/region from geocoding if not set
+                                                                if not a.get("country") and geo_result.get("country_code"):
+                                                                    a["country"] = geo_result.get("country_code")
+                                                        except Exception as e:
+                                                            logger.debug(f"Geocoding failed for '{location_text}': {e}")
+                        
                         cur.execute(sql, [
                             a.get("uuid"),
                             a.get("title"),
@@ -535,8 +564,9 @@ if save_raw_alerts_to_db is None:
                             a.get("location_method"),
                             a.get("location_confidence"),
                             a.get("language") or "en",
-                            a.get("latitude"),
-                            a.get("longitude"),
+                            lat,
+                            lon,
+                            geocoded_location_id,
                         ])
                         wrote += getattr(cur, "rowcount", 0) or 0
         except Exception as e:

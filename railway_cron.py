@@ -210,8 +210,155 @@ def run_acled_collect():
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return False
+
+def run_proximity_check():
+    """Check all travelers for nearby threats"""
+    
+    logger = logging.getLogger('railway_cron')
+    
+    try:
+        from proximity_alerts import check_all_travelers
+        
+        logger.info("Starting proximity check for all travelers...")
+        result = check_all_travelers(send_alerts=True)
+        
+        if 'error' in result:
+            logger.error(f"Proximity check failed: {result['error']}")
+            return False
+        
+        logger.info(f"Proximity check completed: {result}")
+        return True
+        
+    except ImportError as e:
+        logger.error(f"Import error: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Database vacuum failed: {e}")
+        logger.error(f"Proximity check failed: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
+
+def run_geocode_backfill():
+    """Geocode missing coordinates in raw_alerts"""
+    
+    logger = logging.getLogger('railway_cron')
+    
+    try:
+        from geocoding_service import geocode_and_update_table
+        
+        # Geocode raw_alerts first (most recent data)
+        logger.info("Starting geocode backfill for raw_alerts...")
+        geocode_and_update_table(
+            table_name='raw_alerts',
+            id_column='id',
+            location_column='location',
+            limit=100  # Process 100 rows per run
+        )
+        
+        # Optionally geocode alerts table too
+        logger.info("Starting geocode backfill for alerts...")
+        geocode_and_update_table(
+            table_name='alerts',
+            id_column='id',
+            location_column='location',
+            limit=50  # Fewer for alerts since it's larger
+        )
+        
+        logger.info("Geocode backfill completed successfully")
+        return True
+        
+    except ImportError as e:
+        logger.error(f"Import error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Geocode backfill failed: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
+
+def run_scheduler_notify():
+    """Send daily email PDF reports and Telegram alerts to eligible users"""
+    
+    logger = logging.getLogger('railway_cron')
+    
+    try:
+        from email_dispatcher import send_pdf_report
+        from telegram_dispatcher import send_alerts_to_telegram
+        import psycopg2
+        from psycopg2.extras import DictCursor
+        
+        logger.info("Starting scheduler notify (email + Telegram)...")
+        
+        # Get database connection
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.error("DATABASE_URL not set")
+            return False
+        
+        # Email job: send PDF reports
+        try:
+            conn = psycopg2.connect(db_url, cursor_factory=DictCursor)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT u.email, u.plan, u.region
+                FROM users u
+                JOIN plans p ON u.plan = p.name
+                WHERE COALESCE(p.pdf_reports_per_month, 0) > 0
+                  AND u.is_active = TRUE
+            """)
+            pdf_users = cur.fetchall()
+            cur.close()
+            conn.close()
+            
+            logger.info(f"Found {len(pdf_users)} users eligible for PDF reports")
+            for user in pdf_users:
+                email = user["email"]
+                region = user.get("region")
+                result = send_pdf_report(email=email, region=region)
+                status = result.get("status", "unknown")
+                if status == "sent":
+                    logger.info(f"PDF report sent to {email}")
+                elif status == "skipped":
+                    logger.info(f"PDF report skipped for {email}: {result.get('reason', '')}")
+                elif status == "error":
+                    logger.warning(f"PDF report error for {email}: {result.get('reason', '')}")
+        except Exception as e:
+            logger.error(f"Email job failed: {e}")
+        
+        # Telegram job: send alerts
+        try:
+            conn = psycopg2.connect(db_url, cursor_factory=DictCursor)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT u.email, u.plan
+                FROM users u
+                JOIN plans p ON u.plan = p.name
+                WHERE p.telegram = TRUE
+                  AND u.is_active = TRUE
+            """)
+            telegram_users = cur.fetchall()
+            cur.close()
+            conn.close()
+            
+            logger.info(f"Found {len(telegram_users)} users eligible for Telegram alerts")
+            for user in telegram_users:
+                email = user["email"]
+                try:
+                    count = send_alerts_to_telegram(email=email)
+                    logger.info(f"Sent Telegram alert to {email} ({count} alerts)")
+                except Exception as e:
+                    logger.warning(f"Telegram alert failed for {email}: {e}")
+        except Exception as e:
+            logger.error(f"Telegram job failed: {e}")
+        
+        logger.info("Scheduler notify completed")
+        return True
+        
+    except ImportError as e:
+        logger.error(f"Import error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Scheduler notify failed: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return False
@@ -237,9 +384,15 @@ if __name__ == "__main__":
             success = run_gdelt_enrich_once()
         elif operation == "acled":
             success = run_acled_collect()
+        elif operation == "proximity":
+            success = run_proximity_check()
+        elif operation == "geocode":
+            success = run_geocode_backfill()
+        elif operation == "notify":
+            success = run_scheduler_notify()
         else:
             print(f"Unknown operation: {operation}")
-            print("Usage: python railway_cron.py [cleanup|vacuum|rss|engine|gdelt_enrich|acled]")
+            print("Usage: python railway_cron.py [cleanup|vacuum|rss|engine|gdelt_enrich|acled|proximity|geocode|notify]")
             sys.exit(1)
     else:
         # Default to cleanup
