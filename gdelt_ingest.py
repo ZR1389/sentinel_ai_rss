@@ -322,8 +322,8 @@ def _parse_and_store_export(zip_bytes: bytes, filename: str) -> int:
                             'num_articles': safe_int(gv(33)),
                             'avg_tone': safe_float(gv(34)),
                             'action_country': gv(53),
-                            'action_lat': safe_float(gv(57)),
-                            'action_long': safe_float(gv(58)),
+                            'action_lat': safe_float(gv(59)),  # FIXED: Column 59 is ActionGeo_Lat
+                            'action_long': safe_float(gv(60)),  # FIXED: Column 60 is ActionGeo_Long
                             'raw': row
                         }
                         rows_batch.append(mapped)
