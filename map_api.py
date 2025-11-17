@@ -1,7 +1,7 @@
 # map_api.py — Map endpoints (static + GeoJSON incidents)
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, send_from_directory, current_app, request
+from flask import Blueprint, jsonify, send_from_directory, current_app, request, make_response
 from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import json
@@ -322,22 +322,40 @@ def map_alerts():
     """
     Returns a FeatureCollection of recent alerts that have latitude/longitude.
     Output keys match your frontend expectations: risk_level, risk_color, risk_radius.
+    Query params: ?bbox=minLon,minLat,maxLon,maxLat (optional spatial filter)
     """
-    q = """
+    # Parse bounding box filter
+    bbox_param = request.args.get('bbox', '').strip()
+    bbox_filter = ""
+    bbox_values = []
+    
+    if bbox_param:
+        try:
+            parts = [float(x.strip()) for x in bbox_param.split(',')]
+            if len(parts) == 4:
+                min_lon, min_lat, max_lon, max_lat = parts
+                bbox_filter = "AND longitude BETWEEN %s AND %s AND latitude BETWEEN %s AND %s"
+                bbox_values = [min_lon, max_lon, min_lat, max_lat]
+        except (ValueError, IndexError):
+            pass  # Invalid bbox, ignore filter
+    
+    q = f"""
         SELECT
           uuid, title, summary, link, city, country, region, score,
           threat_level, latitude, longitude, published
         FROM alerts
         WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        {bbox_filter}
         ORDER BY published DESC NULLS LAST
         LIMIT 500
     """
-
+    
+    # Execute query with bbox params if provided
     rows: Iterable[Any] = []
     try:
         if fetch_all is None:
             raise RuntimeError("db_utils.fetch_all unavailable")
-        rows = fetch_all(q) or []
+        rows = fetch_all(q, tuple(bbox_values)) if bbox_values else fetch_all(q) or []
     except Exception as e:
         try:
             current_app.logger.error("/map_alerts query failed: %s", e)
@@ -358,6 +376,14 @@ def map_alerts():
 
         risk_raw = _row_get(r, "threat_level") or "low"
         risk = str(risk_raw).strip().lower()
+        
+        # Severity rank for sorting/filtering (4=critical, 3=high, 2=moderate, 1=low)
+        severity_rank = {
+            "critical": 4,
+            "high": 3,
+            "moderate": 2,
+            "low": 1,
+        }.get(risk, 1)
 
         # Normalize country (if provided). If country missing, leave as-is (frontend can still color via /country_risks).
         country_raw = _row_get(r, "country") or ""
@@ -380,6 +406,7 @@ def map_alerts():
                 "lon": lon,
                 "risk_level": risk.capitalize(),
                 "risk_level_raw": risk,  # always lowercase
+                "severity_rank": severity_rank,  # numeric 1-4 for sorting
                 "risk_color": {
                     "critical": "#d90429",
                     "high": "#ff7f50",
@@ -401,12 +428,29 @@ def map_alerts():
         if ft:
             features.append(ft)
 
-    return jsonify({"type": "FeatureCollection", "features": features})
+    response = jsonify({"type": "FeatureCollection", "features": features})
+    
+    # Add CORS headers
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    
+    return response
 
 # Alias endpoint under /api for frontend consistency
 @map_api.route("/api/map_alerts")
 def map_alerts_alias():
     return map_alerts()
+
+# OPTIONS support for CORS preflight
+@map_api.route("/map_alerts", methods=["OPTIONS"])
+@map_api.route("/api/map_alerts", methods=["OPTIONS"])
+def map_alerts_options():
+    response = make_response("", 204)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
 # ---------------- Country risk aggregates (works even if country missing) ----------------
 @map_api.route("/country_risks")
@@ -473,7 +517,14 @@ def country_risks():
     inv = {4: "critical", 3: "high", 2: "moderate", 1: "low"}
     by_country: Dict[str, str] = {name: inv.get(sev_val, "low") for name, sev_val in by_country_sev.items()}
 
-    return jsonify({"by_country": by_country})
+    response = jsonify({"by_country": by_country})
+    
+    # Add CORS headers
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    
+    return response
 
 # ---------------- Individual incident details ----------------
 @map_api.route("/incidents/<incident_id>")
@@ -549,11 +600,20 @@ def get_incident_details(incident_id: str):
             }
         }
 
-        return jsonify(incident)
+        response = jsonify(incident)
+        
+        # Add CORS headers
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        
+        return response
 
     except Exception as e:
         current_app.logger.error(f"Error fetching incident {incident_id}: {e}")
-        return jsonify({"error": "Database error"}), 500
+        error_response = jsonify({"error": "Database error"})
+        error_response.headers["Access-Control-Allow-Origin"] = "*"
+        return error_response, 500
 
 
 def _safe_parse_json(value):
