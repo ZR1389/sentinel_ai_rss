@@ -375,7 +375,11 @@ def map_alerts():
                 "country": country_ne,
                 "region": _row_get(r, "region"),
                 "score": _row_get(r, "score"),
+                # convenience coordinate fields for frontend (duplicate of geometry)
+                "lat": lat,
+                "lon": lon,
                 "risk_level": risk.capitalize(),
+                "risk_level_raw": risk,  # always lowercase
                 "risk_color": {
                     "critical": "#d90429",
                     "high": "#ff7f50",
@@ -398,6 +402,11 @@ def map_alerts():
             features.append(ft)
 
     return jsonify({"type": "FeatureCollection", "features": features})
+
+# Alias endpoint under /api for frontend consistency
+@map_api.route("/api/map_alerts")
+def map_alerts_alias():
+    return map_alerts()
 
 # ---------------- Country risk aggregates (works even if country missing) ----------------
 @map_api.route("/country_risks")
