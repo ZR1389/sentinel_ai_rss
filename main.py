@@ -3127,16 +3127,18 @@ def travel_risk_assessment():
         except Exception:
             pass
         
-        metrics.info("travel_risk_query",
-            lat=lat,
-            lon=lon,
-            country_code=country_code,
-            destination=destination,
-            radius_km=radius_km,
-            days=days,
-            format=output_format,
-            user_email=user_email,
-            timestamp=datetime.utcnow().isoformat()
+        logger.info("travel_risk_query",
+            extra={
+                "lat": lat,
+                "lon": lon,
+                "country_code": country_code,
+                "destination": destination,
+                "radius_km": radius_km,
+                "days": days,
+                "format": output_format,
+                "user_email": user_email,
+                "timestamp": datetime.utcnow().isoformat()
+            }
         )
         
         # Run fusion analysis
