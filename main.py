@@ -3173,6 +3173,94 @@ def cleanup_corrupted_coordinates():
         logger.error(f"/admin/coordinates/cleanup error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+@app.route("/admin/coordinates/fix-simple", methods=["POST", "OPTIONS"])
+def fix_coordinates_simple():
+    """Emergency fix: Geocode using country centroids (no API quota)"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import _get_db_connection
+        
+        # Country centroids (major countries only, enough for GDELT)
+        CENTROIDS = {
+            'US': (39.8, -98.6), 'USA': (39.8, -98.6),
+            'UK': (55.4, -3.4), 'GB': (55.4, -3.4),
+            'FR': (46.2, 2.2), 'DE': (51.2, 10.5),
+            'CN': (35.9, 104.2), 'IN': (20.6, 78.9),
+            'BR': (-14.2, -51.9), 'RU': (61.5, 105.3),
+            'JP': (36.2, 138.3), 'IT': (41.9, 12.6),
+            'ES': (40.5, -3.7), 'CA': (56.1, -106.3),
+            'AU': (-25.3, 133.8), 'MX': (23.6, -102.6),
+            'KR': (36.0, 127.8), 'ID': (-0.8, 113.9),
+            'TR': (39.0, 35.2), 'SA': (23.9, 45.1),
+            'AR': (-38.4, -63.6), 'ZA': (-30.6, 22.9),
+            'EG': (26.8, 30.8), 'PL': (51.9, 19.1),
+            'UA': (48.4, 31.2), 'PK': (30.4, 69.3),
+            'NG': (9.1, 8.7), 'BD': (23.7, 90.4),
+            'IL': (31.0, 34.9), 'IQ': (33.2, 43.7),
+            'SY': (34.8, 39.0), 'YE': (15.6, 48.5),
+            'AF': (33.9, 67.7), 'IR': (32.4, 53.7),
+        }
+        
+        batch_size = int(request.args.get("batch_size", 100))
+        source_filter = request.args.get("source", "gdelt")
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Get alerts needing geocoding
+            cur.execute("""
+                SELECT id, uuid, country, source
+                FROM alerts
+                WHERE (longitude IS NULL OR longitude = 0.0)
+                  AND country IS NOT NULL
+                  AND source = %s
+                LIMIT %s
+            """, (source_filter, batch_size))
+            
+            alerts = cur.fetchall()
+            
+            if not alerts:
+                return _build_cors_response(jsonify({
+                    "ok": True,
+                    "geocoded": 0,
+                    "message": "No alerts need geocoding"
+                }))
+            
+            geocoded = 0
+            failed = 0
+            
+            for alert_id, uuid, country, source in alerts:
+                country_code = country.strip().upper() if country else None
+                
+                if country_code and country_code in CENTROIDS:
+                    lat, lon = CENTROIDS[country_code]
+                    cur.execute("""
+                        UPDATE alerts
+                        SET latitude = %s, longitude = %s
+                        WHERE id = %s
+                    """, (lat, lon, alert_id))
+                    geocoded += 1
+                else:
+                    failed += 1
+                    logger.warning(f"No centroid for country: {country}")
+            
+            conn.commit()
+            cur.close()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "geocoded": geocoded,
+            "failed": failed,
+            "total": len(alerts),
+            "message": f"Geocoded {geocoded} using country centroids"
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/coordinates/fix-simple error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
 @app.route("/admin/alerts/geocode-backfill", methods=["POST", "OPTIONS"])
 def geocode_backfill():
     """Backfill geocoding for alerts with NULL coordinates that have city/country"""
