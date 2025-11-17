@@ -3883,6 +3883,310 @@ def public_fallback_trigger_stub():
         "message": "Use /admin/fallback/trigger with X-API-Key",
     }), 403))
 
+
+# ============================================================================
+# GEOCODING ENDPOINTS
+# ============================================================================
+
+@app.route('/api/geocode', methods=['POST', 'OPTIONS'])
+def geocode_location():
+    """
+    Geocode a single location.
+    
+    POST /api/geocode
+    {
+        "location": "Paris, France"
+    }
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from geocoding_service import geocode as geocode_svc
+        
+        data = request.json
+        location = data.get('location')
+        
+        if not location:
+            return _build_cors_response(jsonify({'error': 'location required'}), 400)
+        
+        result = geocode_svc(location)
+        
+        if result:
+            return _build_cors_response(jsonify({
+                'success': True,
+                'location': location,
+                'result': result
+            }))
+        else:
+            return _build_cors_response(jsonify({
+                'success': False,
+                'error': 'Geocoding failed'
+            }), 404)
+            
+    except Exception as e:
+        logger.error(f"[geocode] Error: {e}")
+        return _build_cors_response(jsonify({'error': str(e)}), 500)
+
+
+@app.route('/api/geocode/batch', methods=['POST', 'OPTIONS'])
+def batch_geocode_locations():
+    """
+    Geocode multiple locations.
+    
+    POST /api/geocode/batch
+    {
+        "locations": ["Paris, France", "London, UK", "Berlin, Germany"],
+        "max_api_calls": 50
+    }
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from geocoding_service import batch_geocode, get_quota_status
+        
+        data = request.json
+        locations = data.get('locations', [])
+        max_api_calls = data.get('max_api_calls', 100)
+        
+        if not locations:
+            return _build_cors_response(jsonify({'error': 'locations array required'}), 400)
+        
+        results = batch_geocode(locations, max_api_calls=max_api_calls)
+        
+        return _build_cors_response(jsonify({
+            'success': True,
+            'total_requested': len(locations),
+            'total_geocoded': len(results),
+            'results': results,
+            'quota': get_quota_status()
+        }))
+        
+    except Exception as e:
+        logger.error(f"[batch_geocode] Error: {e}")
+        return _build_cors_response(jsonify({'error': str(e)}), 500)
+
+
+@app.route('/api/geocode/quota', methods=['GET', 'OPTIONS'])
+def geocoding_quota():
+    """
+    Check OpenCage API quota status.
+    
+    GET /api/geocode/quota
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from geocoding_service import get_quota_status
+        return _build_cors_response(jsonify(get_quota_status()))
+    except Exception as e:
+        logger.error(f"[quota] Error: {e}")
+        return _build_cors_response(jsonify({'error': str(e)}), 500)
+
+
+# ============================================================================
+# PROXIMITY ALERT ENDPOINTS
+# ============================================================================
+
+@app.route('/api/proximity/threats/<int:traveler_id>', methods=['GET', 'OPTIONS'])
+def get_proximity_threats(traveler_id):
+    """
+    Get threats near a specific traveler.
+    
+    GET /api/proximity/threats/123?hours=24
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from proximity_alerts import find_threats_near_traveler
+        
+        hours = request.args.get('hours', 24, type=int)
+        
+        threats = find_threats_near_traveler(traveler_id, hours_lookback=hours)
+        
+        return _build_cors_response(jsonify({
+            'success': True,
+            'traveler_id': traveler_id,
+            'hours_lookback': hours,
+            'threat_count': len(threats),
+            'threats': threats
+        }))
+        
+    except Exception as e:
+        logger.error(f"[proximity_threats] Error: {e}")
+        return _build_cors_response(jsonify({'error': str(e)}), 500)
+
+
+@app.route('/api/proximity/location', methods=['POST', 'OPTIONS'])
+def proximity_by_location():
+    """
+    Get threats near any location.
+    
+    POST /api/proximity/location
+    {
+        "lat": 48.8566,
+        "lon": 2.3522,
+        "radius_km": 50,
+        "days": 7,
+        "sources": ["gdelt", "rss"]
+    }
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from proximity_alerts import find_threats_near_location
+        
+        data = request.json
+        
+        lat = data.get('lat')
+        lon = data.get('lon')
+        radius_km = data.get('radius_km', 50)
+        days = data.get('days', 7)
+        sources = data.get('sources')
+        
+        if lat is None or lon is None:
+            return _build_cors_response(jsonify({'error': 'lat and lon required'}), 400)
+        
+        threats = find_threats_near_location(
+            lat=float(lat),
+            lon=float(lon),
+            radius_km=radius_km,
+            days=days,
+            sources=sources
+        )
+        
+        return _build_cors_response(jsonify({
+            'success': True,
+            'location': {'lat': lat, 'lon': lon},
+            'radius_km': radius_km,
+            'days': days,
+            'threat_count': len(threats),
+            'threats': threats
+        }))
+        
+    except Exception as e:
+        logger.error(f"[proximity_location] Error: {e}")
+        return _build_cors_response(jsonify({'error': str(e)}), 500)
+
+
+@app.route('/api/proximity/history/<int:traveler_id>', methods=['GET', 'OPTIONS'])
+def traveler_alert_history(traveler_id):
+    """
+    Get alert history for a traveler.
+    
+    GET /api/proximity/history/123?days=30
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from proximity_alerts import get_traveler_threat_history
+        
+        days = request.args.get('days', 30, type=int)
+        
+        history = get_traveler_threat_history(traveler_id, days=days)
+        
+        return _build_cors_response(jsonify({
+            'success': True,
+            'traveler_id': traveler_id,
+            'days': days,
+            'alert_count': len(history),
+            'alerts': history
+        }))
+        
+    except Exception as e:
+        logger.error(f"[alert_history] Error: {e}")
+        return _build_cors_response(jsonify({'error': str(e)}), 500)
+
+
+# ============================================================================
+# ADMIN: GEOCODING & PROXIMITY
+# ============================================================================
+
+@app.route('/admin/proximity/check-all', methods=['POST'])
+def admin_check_all_travelers():
+    """
+    Manually trigger proximity check for all travelers.
+    
+    POST /admin/proximity/check-all
+    {
+        "send_alerts": true
+    }
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from proximity_alerts import check_all_travelers
+        
+        data = request.json or {}
+        send_alerts = data.get('send_alerts', False)
+        
+        result = check_all_travelers(send_alerts=send_alerts)
+        
+        return jsonify({
+            'success': True,
+            'result': result
+        })
+        
+    except Exception as e:
+        logger.error(f"[check_all] Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/geocode/backfill', methods=['POST'])
+def admin_geocode_backfill():
+    """
+    Geocode missing coordinates in a table.
+    
+    POST /admin/geocode/backfill
+    {
+        "table": "raw_alerts",
+        "id_column": "id",
+        "location_column": "location",
+        "limit": 100
+    }
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from geocoding_service import geocode_and_update_table
+        
+        data = request.json
+        
+        table = data.get('table')
+        id_column = data.get('id_column', 'id')
+        location_column = data.get('location_column', 'location')
+        limit = data.get('limit', 100)
+        
+        if not table:
+            return jsonify({'error': 'table required'}), 400
+        
+        geocode_and_update_table(
+            table_name=table,
+            id_column=id_column,
+            location_column=location_column,
+            limit=limit
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': f'Geocoded up to {limit} rows in {table}'
+        })
+        
+    except Exception as e:
+        logger.error(f"[backfill] Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # -------------------------------------------------------------------
 # Local development entrypoint
 # -------------------------------------------------------------------
