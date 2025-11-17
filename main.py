@@ -3417,6 +3417,48 @@ def check_alert_sources():
         logger.error(f"/admin/alerts/sources error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+@app.route("/admin/geocoding/status", methods=["GET", "OPTIONS"])
+def geocoding_status():
+    """Check geocoding coverage and backlog status"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from geocoding_monitor import get_geocoding_status
+        from db_utils import _get_db_connection
+        
+        with _get_db_connection() as conn:
+            status = get_geocoding_status(conn)
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            **status
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/geocoding/status error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
+@app.route("/admin/geocoding/notify", methods=["POST", "OPTIONS"])
+def geocoding_notify():
+    """Manually trigger geocoding backlog notification check"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from geocoding_monitor import check_and_notify
+        
+        result = check_and_notify()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            **result
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/geocoding/notify error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
 @app.route("/admin/gdelt/reprocess", methods=["POST", "OPTIONS"])
 def gdelt_reprocess_coords():
     """Reprocess GDELT events with invalid coordinates (lon=0) to geocode them properly"""

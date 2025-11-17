@@ -245,6 +245,7 @@ def run_geocode_backfill():
     
     try:
         from geocoding_service import geocode_and_update_table
+        from geocoding_monitor import check_and_notify
         
         # Geocode raw_alerts first (most recent data)
         logger.info("Starting geocode backfill for raw_alerts...")
@@ -263,6 +264,14 @@ def run_geocode_backfill():
             location_column='location',
             limit=50  # Fewer for alerts since it's larger
         )
+        
+        # Check and notify if backlog is cleared
+        try:
+            notify_result = check_and_notify()
+            if notify_result.get('notified'):
+                logger.info(f"Backlog cleared notification sent via: {notify_result.get('channels')}")
+        except Exception as e:
+            logger.warning(f"Geocoding monitor check failed: {e}")
         
         logger.info("Geocode backfill completed successfully")
         return True

@@ -101,6 +101,16 @@ def main():
 
             updated = update_alert_coords(conn, updates)
             print(f"Updated {updated} alerts with coordinates (from {len(backlog)} candidates).")
+            
+            # Check and notify if backlog is cleared
+            try:
+                sys.path.insert(0, str(ROOT))
+                from geocoding_monitor import check_and_notify
+                notify_result = check_and_notify()
+                if notify_result.get('notified'):
+                    print(f"✅ Backlog cleared notification sent via: {notify_result.get('channels')}")
+            except Exception as e:
+                print(f"⚠️ Notification check skipped: {e}")
 
     except Exception as e:
         print(f"ERROR: Backfill failed: {e}")
