@@ -2111,7 +2111,7 @@ def analytics_timeline():
     
     try:
         from plan_utils import get_plan_limits
-        email = g.email
+        email = g.user_email
         limits = get_plan_limits(email) or {}
         timeline_days = limits.get("timeline_days", 7)
         
@@ -2170,7 +2170,7 @@ def analytics_statistics():
     
     try:
         from plan_utils import get_plan_limits
-        email = g.email
+        email = g.user_email
         limits = get_plan_limits(email) or {}
         statistics_days = limits.get("statistics_days", 7)
         
@@ -2675,6 +2675,47 @@ def admin_gdelt_ingest():
     except Exception as e:
         logger.error(f"/admin/gdelt/ingest error: {e}")
         return _build_cors_response(make_response(jsonify({"error": "GDELT ingest failed"}), 500))
+
+@app.route("/admin/gdelt/enrich", methods=["POST", "OPTIONS"])
+def admin_gdelt_enrich():
+    """Process unprocessed GDELT events into alerts"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    api_key = request.headers.get("X-API-Key")
+    expected = os.getenv("ADMIN_API_KEY") or os.getenv("API_KEY")
+    if expected and api_key != expected:
+        return _build_cors_response(make_response(jsonify({"error": "Unauthorized"}), 401))
+    
+    try:
+        from gdelt_enrichment_worker import process_batch, get_conn
+        
+        batch_size = int(request.args.get("batch_size", 1000))
+        conn = get_conn()
+        
+        total_processed = 0
+        batches = 0
+        
+        while batches < 100:  # Max 100 batches per request (100k events)
+            processed = process_batch(conn, min(batch_size, 1000))
+            total_processed += processed
+            batches += 1
+            
+            if processed == 0:
+                break
+        
+        conn.close()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "processed": total_processed,
+            "batches": batches,
+            "message": f"Enriched {total_processed} GDELT events into alerts"
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/gdelt/enrich error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
 @app.route("/admin/gdelt/health", methods=["GET", "OPTIONS"])
 def gdelt_health():
