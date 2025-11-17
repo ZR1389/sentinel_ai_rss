@@ -3173,6 +3173,82 @@ def cleanup_corrupted_coordinates():
         logger.error(f"/admin/coordinates/cleanup error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+@app.route("/admin/alerts/geocode-backfill", methods=["POST", "OPTIONS"])
+def geocode_backfill():
+    """Backfill geocoding for alerts with NULL coordinates that have city/country"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import _get_db_connection
+        from geocoding_service import geocode
+        
+        batch_size = int(request.args.get("batch_size", 100))
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Get alerts with NULL coords but have city/country
+            cur.execute("""
+                SELECT id, uuid, city, country
+                FROM alerts
+                WHERE longitude IS NULL 
+                  AND city IS NOT NULL 
+                  AND country IS NOT NULL
+                  AND source != 'gdelt'
+                LIMIT %s
+            """, (batch_size,))
+            
+            alerts_to_geocode = cur.fetchall()
+            
+            if not alerts_to_geocode:
+                return _build_cors_response(jsonify({
+                    "ok": True,
+                    "geocoded": 0,
+                    "message": "No alerts need geocoding"
+                }))
+            
+            geocoded_count = 0
+            failed_count = 0
+            
+            for alert_id, uuid, city, country in alerts_to_geocode:
+                try:
+                    # Geocode the city/country
+                    location_str = f"{city}, {country}" if city else country
+                    geo_result = geocode(location_str)
+                    
+                    if geo_result and geo_result.get('lat') and geo_result.get('lon'):
+                        # Update alert with coordinates
+                        cur.execute("""
+                            UPDATE alerts
+                            SET latitude = %s, longitude = %s
+                            WHERE id = %s
+                        """, (geo_result['lat'], geo_result['lon'], alert_id))
+                        geocoded_count += 1
+                        logger.info(f"Geocoded {uuid}: {city}, {country} → ({geo_result['lon']:.4f}, {geo_result['lat']:.4f})")
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Geocoding failed for {uuid}: {city}, {country}")
+                        
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Error geocoding alert {uuid}: {e}")
+            
+            conn.commit()
+            cur.close()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "geocoded": geocoded_count,
+            "failed": failed_count,
+            "total_processed": len(alerts_to_geocode),
+            "message": f"Geocoded {geocoded_count} alerts, {failed_count} failed"
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/alerts/geocode-backfill error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
 @app.route("/admin/alerts/sources", methods=["GET", "OPTIONS"])
 def check_alert_sources():
     """Check alert counts and coordinate status by source"""
