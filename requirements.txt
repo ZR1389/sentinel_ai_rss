@@ -88,4 +88,7 @@ structlog>=24.0.0
 redis>=5.0.0
 rq>=1.16.2
 
+# Background job scheduler for cron tasks
+APScheduler>=3.10.4
+
 # Note: FastAPI removed - using Flask app in main.py with health_check.py functions

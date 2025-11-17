@@ -38,9 +38,10 @@ except ImportError:
         'database': type('obj', (object,), {'url': os.getenv("DATABASE_URL", "")})()
     })()
 
-# ACLED API endpoints (from official documentation)
+# ACLED API endpoints (from official ACLED Python examples - November 2025)
+# Correct endpoint: https://acleddata.com/api/acled/read (with proper auth)
 ACLED_TOKEN_URL = "https://acleddata.com/oauth/token"
-ACLED_API_BASE = "https://acleddata.com/api/acled/read"  # Base URL for ACLED data endpoint
+ACLED_API_BASE = "https://acleddata.com/api/acled/read"
 
 
 def get_acled_token() -> str:
@@ -129,23 +130,37 @@ def fetch_acled_events(
     
     for country in countries:
         try:
-            # ACLED API: Bearer token authorization with query parameters
+            # ACLED API: Bearer token with proper headers (from official examples)
+            # Format: https://acleddata.com/api/acled/read?_format=json&country=Nigeria&event_date=2025-11-16
+            params = {
+                "_format": "json",
+                "country": country,
+                "event_date": target_date,
+                "limit": 500
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
             response = requests.get(
                 ACLED_API_BASE,
-                params={
-                    "_format": "json",  # Request JSON format
-                    "country": country,
-                    "event_date": target_date,
-                    "limit": 500
-                },
-                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+                headers=headers,
                 timeout=60
             )
             response.raise_for_status()
             
-            # Parse JSON response
+            # Parse JSON response (ACLED API format)
             data = response.json()
-            events = data.get("data", []) if isinstance(data, dict) else data
+            
+            # Check status in response
+            if data.get("status") == 200:
+                events = data.get("data", [])
+            else:
+                logger.error("acled_api_error", country=country, response=data)
+                events = []
             
             logger.info(
                 "acled_country_fetch_success",
@@ -189,16 +204,16 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
         Number of events inserted (excludes duplicates)
     """
     if not execute:
-    
-            # Import geocoding service to cache coordinates
-            try:
-                from geocoding_service import _save_to_db as save_to_geocoding_cache
-                geocoding_cache_available = True
-            except ImportError:
-                logger.warning("geocoding_service not available - skipping coordinate cache")
-                geocoding_cache_available = False
         logger.error("db_utils.execute not available - cannot persist ACLED data")
         return 0
+    
+    # Import geocoding service to cache coordinates
+    try:
+        from geocoding_service import _save_to_db as save_to_geocoding_cache
+        geocoding_cache_available = True
+    except ImportError:
+        logger.warning("geocoding_service not available - skipping coordinate cache")
+        geocoding_cache_available = False
     
     if not events:
         logger.warning("no_acled_events_to_write")
@@ -241,35 +256,35 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
             try:
                 latitude = float(event.get("latitude"))
                 longitude = float(event.get("longitude"))
+                
+                # Cache coordinates in geocoded_locations for future proximity searches
+                geocoded_location_id = None
+                if geocoding_cache_available and latitude and longitude:
+                    try:
+                        # Create location text from available fields
+                        location_parts = [p for p in [
+                            event.get("location"),
+                            event.get("admin2"),
+                            event.get("admin1"),
+                            event.get("country")
+                        ] if p]
+                        location_text = ", ".join(location_parts) if location_parts else None
             
-                        # Cache coordinates in geocoded_locations for future proximity searches
-                        geocoded_location_id = None
-                        if geocoding_cache_available and latitude and longitude:
-                            try:
-                                # Create location text from available fields
-                                location_parts = [p for p in [
-                                    event.get("location"),
-                                    event.get("admin2"),
-                                    event.get("admin1"),
-                                    event.get("country")
-                                ] if p]
-                                location_text = ", ".join(location_parts) if location_parts else None
-                    
-                                if location_text:
-                                    result = save_to_geocoding_cache(
-                                        location=location_text,
-                                        lat=latitude,
-                                        lon=longitude,
-                                        country_code=event.get("iso"),
-                                        admin1=event.get("admin1"),
-                                        admin2=event.get("admin2"),
-                                        confidence=9,  # High confidence - from ACLED API
-                                        source="acled"
-                                    )
-                                    if result:
-                                        geocoded_location_id = result.get('location_id')
-                            except Exception as e:
-                                logger.debug(f"Failed to cache ACLED coordinates: {e}")
+                        if location_text:
+                            result = save_to_geocoding_cache(
+                                location=location_text,
+                                lat=latitude,
+                                lon=longitude,
+                                country_code=event.get("iso"),
+                                admin1=event.get("admin1"),
+                                admin2=event.get("admin2"),
+                                confidence=9,  # High confidence - from ACLED API
+                                source="acled"
+                            )
+                            if result:
+                                geocoded_location_id = result.get('location_id')
+                    except Exception as e:
+                        logger.debug(f"Failed to cache ACLED coordinates: {e}")
             except (ValueError, TypeError):
                 skipped_no_coords += 1
                 continue
@@ -340,8 +355,8 @@ def write_acled_to_raw_alerts(events: List[Dict[str, Any]]) -> int:
                 city,
                 json.dumps(tags),
                 f"country:{country}",  # source_tag for filtering
-                "intelligence"  # source_kind
-                            geocoded_location_id,
+                "intelligence",  # source_kind
+                geocoded_location_id,
             ))
             
             inserted_count += 1
