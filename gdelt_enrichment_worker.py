@@ -97,24 +97,23 @@ def process_batch(conn, batch_size: int = 100) -> int:
     """Process a batch of unprocessed GDELT events into raw_alerts"""
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-        # Import geocoding service to cache coordinates
-        try:
-            from geocoding_service import _save_to_db as save_to_geocoding_cache
-            geocoding_cache_available = True
-        except ImportError:
-            logger.warning("geocoding_service not available - skipping coordinate cache")
-            geocoding_cache_available = False
+    # Import geocoding service to cache coordinates and fallback geocoding
+    try:
+        from geocoding_service import _save_to_db as save_to_geocoding_cache, geocode
+        geocoding_cache_available = True
+    except ImportError:
+        logger.warning("geocoding_service not available - skipping coordinate cache")
+        geocoding_cache_available = False
+        geocode = None
     
     try:
-        # Get unprocessed events with coordinates
+        # Get unprocessed events (don't require coordinates - we'll geocode if missing/invalid)
         cur.execute("""
             SELECT global_event_id, sql_date, actor1, actor2, event_code, event_root_code,
                    quad_class, goldstein, num_mentions, num_sources, num_articles, avg_tone,
                    action_country, action_lat, action_long, source_url
             FROM gdelt_events
             WHERE processed = false
-              AND action_lat IS NOT NULL
-              AND action_long IS NOT NULL
               AND quad_class IN (3, 4)  -- Only conflict events
             ORDER BY sql_date DESC
             LIMIT %s
@@ -134,33 +133,65 @@ def process_batch(conn, batch_size: int = 100) -> int:
             try:
                 raw_alert = gdelt_to_raw_alert(dict(event))
                 
-                                # Cache GDELT coordinates in geocoded_locations for future proximity searches
-                                geocoded_location_id = None
-                                if geocoding_cache_available:
-                                    lat = raw_alert.get('latitude')
-                                    lon = raw_alert.get('longitude')
-                                    country = raw_alert.get('country')
-                    
-                                    if lat and lon and country:
-                                        try:
-                                            # Create location text from country (GDELT doesn't provide city/region reliably)
-                                            location_text = f"{country} ({lat:.4f}, {lon:.4f})"
+                # Validate and fix coordinates
+                lat = raw_alert.get('latitude')
+                lon = raw_alert.get('longitude')
+                country = raw_alert.get('country')
+                
+                # Check if coordinates are invalid (lon=0 is GDELT's "unknown" marker)
+                coords_invalid = (
+                    lat is None or lon is None or
+                    lon == 0.0 or  # GDELT uses 0 for unknown longitude
+                    lon < -180 or lon > 180 or
+                    lat < -90 or lat > 90
+                )
+                
+                geocoded_location_id = None
+                
+                # If coordinates invalid, try geocoding the country
+                if coords_invalid and country and geocoding_cache_available and geocode:
+                    try:
+                        logger.info(f"Geocoding country '{country}' for event {event['global_event_id']} (GDELT coords invalid: lon={lon}, lat={lat})")
+                        geo_result = geocode(country)
+                        
+                        if geo_result and geo_result.get('lat') and geo_result.get('lon'):
+                            # Use geocoded coordinates
+                            raw_alert['latitude'] = geo_result['lat']
+                            raw_alert['longitude'] = geo_result['lon']
+                            lat = geo_result['lat']
+                            lon = geo_result['lon']
+                            logger.info(f"✓ Geocoded {country} → ({lon:.4f}, {lat:.4f})")
+                        else:
+                            logger.warning(f"Geocoding failed for country: {country}")
+                            # Set to None so we don't display invalid markers
+                            raw_alert['latitude'] = None
+                            raw_alert['longitude'] = None
+                    except Exception as e:
+                        logger.error(f"Geocoding error for {country}: {e}")
+                        raw_alert['latitude'] = None
+                        raw_alert['longitude'] = None
+                
+                # Cache valid coordinates in geocoded_locations
+                if geocoding_cache_available and lat and lon and country:
+                    # Validate coordinates are actually valid now
+                    if -180 <= lon <= 180 and -90 <= lat <= 90 and lon != 0.0:
+                        try:
+                            location_text = f"{country} ({lat:.4f}, {lon:.4f})"
                             
-                                            result = save_to_geocoding_cache(
-                                                location=location_text,
-                                                lat=lat,
-                                                lon=lon,
-                                                country_code=country,
-                                                admin1=None,
-                                                admin2=None,
-                                                confidence=7,  # Medium-high confidence - from GDELT coordinates
-                                                source="gdelt"
-                                            )
-                                            if result:
-                                                geocoded_location_id = result.get('location_id')
-                                                raw_alert['geocoded_location_id'] = geocoded_location_id
-                                        except Exception as e:
-                                            logger.debug(f"Failed to cache GDELT coordinates: {e}")
+                            geo_data = {
+                                'lat': lat,
+                                'lon': lon,
+                                'country_code': country,
+                                'admin_level_1': None,
+                                'admin_level_2': None,
+                                'confidence': 7,
+                                'source': 'gdelt'
+                            }
+                            
+                            save_to_geocoding_cache(location_text, geo_data)
+                            logger.debug(f"Cached coordinates for {country}")
+                        except Exception as e:
+                            logger.debug(f"Failed to cache coordinates: {e}")
                 
                 # Insert into raw_alerts (Threat Engine will enrich → alerts)
                 cur.execute("""
