@@ -528,26 +528,26 @@ if save_raw_alerts_to_db is None:
             with psycopg.connect(dsn, autocommit=True) as conn:
                 with conn.cursor() as cur:
                     for a in alerts or []:
-                                                # Geocode location if available and not already set
-                                                geocoded_location_id = None
-                                                lat = a.get("latitude")
-                                                lon = a.get("longitude")
+                        # Geocode location if available and not already set
+                        geocoded_location_id = None
+                        lat = a.get("latitude")
+                        lon = a.get("longitude")
                         
-                                                if geocoding_available and not (lat and lon):
-                                                    # Try to geocode from location text
-                                                    location_text = a.get("location") or a.get("city") or a.get("region") or a.get("country")
-                                                    if location_text:
-                                                        try:
-                                                            geo_result = geocode(location_text)
-                                                            if geo_result:
-                                                                lat = geo_result.get('lat')
-                                                                lon = geo_result.get('lon')
-                                                                geocoded_location_id = geo_result.get('location_id')
-                                                                # Optionally update country/region from geocoding if not set
-                                                                if not a.get("country") and geo_result.get("country_code"):
-                                                                    a["country"] = geo_result.get("country_code")
-                                                        except Exception as e:
-                                                            logger.debug(f"Geocoding failed for '{location_text}': {e}")
+                        if geocoding_available and not (lat and lon):
+                            # Try to geocode from location text
+                            location_text = a.get("location") or a.get("city") or a.get("region") or a.get("country")
+                            if location_text:
+                                try:
+                                    geo_result = geocode(location_text)
+                                    if geo_result:
+                                        lat = geo_result.get('lat')
+                                        lon = geo_result.get('lon')
+                                        geocoded_location_id = geo_result.get('location_id')
+                                        # Optionally update country/region from geocoding if not set
+                                        if not a.get("country") and geo_result.get("country_code"):
+                                            a["country"] = geo_result.get("country_code")
+                                except Exception as e:
+                                    logger.debug(f"Geocoding failed for '{location_text}': {e}")
                         
                         cur.execute(sql, [
                             a.get("uuid"),
