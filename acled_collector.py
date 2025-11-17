@@ -38,20 +38,20 @@ except ImportError:
         'database': type('obj', (object,), {'url': os.getenv("DATABASE_URL", "")})()
     })()
 
-# ACLED API endpoints (from official ACLED Python examples - November 2025)
-# Correct endpoint: https://acleddata.com/api/acled/read (with proper auth)
-ACLED_TOKEN_URL = "https://acleddata.com/oauth/token"
+# ACLED API endpoints (from official ACLED documentation - November 2025)
+# Uses cookie-based session authentication (not OAuth)
+ACLED_LOGIN_URL = "https://acleddata.com/user/login?_format=json"
 ACLED_API_BASE = "https://acleddata.com/api/acled/read"
 
 
-def get_acled_token() -> str:
+def get_acled_session() -> requests.Session:
     """
-    Authenticate with ACLED OAuth and retrieve access token.
+    Authenticate with ACLED using cookie-based session (official method).
     
-    ACLED API requires 'username' (not 'email') parameter with email value.
+    Creates a session with login cookies that persist for subsequent requests.
     
     Returns:
-        Access token string
+        Authenticated requests.Session object
         
     Raises:
         requests.HTTPError: If authentication fails
@@ -65,32 +65,43 @@ def get_acled_token() -> str:
     logger.info("authenticating_with_acled", email=email)
     
     try:
-        # ACLED OAuth2 - requires username, password, grant_type, and client_id
-        response = requests.post(
-            ACLED_TOKEN_URL,
-            data={
-                "username": email,
-                "password": password,
-                "grant_type": "password",
-                "client_id": "acled"
+        # Create session to maintain cookies
+        session = requests.Session()
+        
+        # ACLED cookie-based authentication (official method)
+        # POST to /user/login with JSON payload: {"name": "email", "pass": "password"}
+        response = session.post(
+            ACLED_LOGIN_URL,
+            json={
+                "name": email,
+                "pass": password
             },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers={"Content-Type": "application/json"},
             timeout=30
         )
         response.raise_for_status()
-        token = response.json()["access_token"]
-        logger.info("acled_authentication_success")
-        return token
+        
+        # Parse response to verify login success
+        auth_data = response.json()
+        user_id = auth_data.get("current_user", {}).get("uid")
+        
+        if user_id:
+            logger.info("acled_authentication_success", user_id=user_id)
+        else:
+            logger.warning("acled_auth_no_user_id", response=auth_data)
+        
+        # Return session with authentication cookies
+        return session
+        
     except requests.exceptions.RequestException as e:
         logger.error("acled_authentication_failed", error=str(e), status_code=getattr(e.response, 'status_code', None))
-        # Log response body for debugging
         if hasattr(e, 'response') and e.response is not None:
             logger.error("acled_auth_response_body", body=e.response.text[:500])
         raise
 
 
 def fetch_acled_events(
-    token: str,
+    session: requests.Session,
     countries: Optional[List[str]] = None,
     event_date: Optional[str] = None,
     days_back: int = 1
@@ -99,7 +110,7 @@ def fetch_acled_events(
     Fetch ACLED events for specified countries and date range.
     
     Args:
-        token: ACLED OAuth access token
+        session: Authenticated requests.Session with login cookies
         countries: List of country names (e.g., ["Nigeria", "Kenya"])
         event_date: Specific date in YYYY-MM-DD format (overrides days_back)
         days_back: Number of days back from today (default: 1 for yesterday)
@@ -130,7 +141,7 @@ def fetch_acled_events(
     
     for country in countries:
         try:
-            # ACLED API: Bearer token with proper headers (from official examples)
+            # ACLED API: Session with authentication cookies (official method)
             # Format: https://acleddata.com/api/acled/read?_format=json&country=Nigeria&event_date=2025-11-16
             params = {
                 "_format": "json",
@@ -139,15 +150,10 @@ def fetch_acled_events(
                 "limit": 500
             }
             
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
-            
-            response = requests.get(
+            # Use session.get (cookies are automatically included)
+            response = session.get(
                 ACLED_API_BASE,
                 params=params,
-                headers=headers,
                 timeout=60
             )
             response.raise_for_status()
@@ -416,11 +422,11 @@ def run_acled_collector(
     )
     
     try:
-        # 1. Authenticate
-        token = get_acled_token()
+        # 1. Authenticate and get session with cookies
+        session = get_acled_session()
         
-        # 2. Fetch events
-        events = fetch_acled_events(token, countries=countries, days_back=days_back)
+        # 2. Fetch events using authenticated session
+        events = fetch_acled_events(session, countries=countries, days_back=days_back)
         
         if not events:
             logger.warning("no_acled_events_fetched")
