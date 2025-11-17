@@ -291,6 +291,139 @@ def manual_retention_cleanup():
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }), 500)
 
+@app.route("/admin/geocoding/migrate", methods=["POST"])
+def run_geocoding_migration():
+    """Run the geocoding schema migration (no PostGIS)."""
+    try:
+        # Admin auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+        
+        migration_sql = """
+-- Geocoded locations cache (persistent)
+CREATE TABLE IF NOT EXISTS geocoded_locations (
+    id SERIAL PRIMARY KEY,
+    location_text TEXT UNIQUE NOT NULL,
+    normalized_text TEXT,
+    latitude NUMERIC(10, 7),
+    longitude NUMERIC(10, 7),
+    country_code VARCHAR(5),
+    admin_level_1 TEXT,
+    admin_level_2 TEXT,
+    confidence INTEGER,
+    source VARCHAR(50) DEFAULT 'opencage',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    last_used_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_geocoded_lookup ON geocoded_locations(location_text);
+CREATE INDEX IF NOT EXISTS idx_geocoded_normalized ON geocoded_locations(normalized_text);
+CREATE INDEX IF NOT EXISTS idx_geocoded_latlon ON geocoded_locations(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_geocoded_country ON geocoded_locations(country_code);
+
+-- Traveler profiles
+CREATE TABLE IF NOT EXISTS traveler_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    email TEXT NOT NULL,
+    name TEXT,
+    current_location TEXT,
+    latitude NUMERIC(10, 7),
+    longitude NUMERIC(10, 7),
+    country_code VARCHAR(5),
+    alert_radius_km INTEGER DEFAULT 50,
+    active BOOLEAN DEFAULT true,
+    last_alert_sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_traveler_latlon ON traveler_profiles(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_traveler_active ON traveler_profiles(active) WHERE active = true;
+CREATE INDEX IF NOT EXISTS idx_traveler_email ON traveler_profiles(email);
+
+-- Proximity alerts log
+CREATE TABLE IF NOT EXISTS proximity_alerts (
+    id SERIAL PRIMARY KEY,
+    traveler_id INTEGER REFERENCES traveler_profiles(id) ON DELETE CASCADE,
+    threat_id BIGINT,
+    threat_source VARCHAR(50),
+    threat_date DATE,
+    distance_km NUMERIC(6, 2),
+    severity_score NUMERIC(4, 2),
+    alert_method VARCHAR(20),
+    sent_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_proximity_traveler ON proximity_alerts(traveler_id);
+CREATE INDEX IF NOT EXISTS idx_proximity_sent_at ON proximity_alerts(sent_at);
+
+-- Update GDELT events
+ALTER TABLE gdelt_events ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7);
+ALTER TABLE gdelt_events ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 7);
+CREATE INDEX IF NOT EXISTS idx_gdelt_latlon ON gdelt_events(latitude, longitude);
+"""
+        
+        db_url = os.getenv('DATABASE_URL')
+        conn = psycopg2.connect(db_url)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        
+        # Execute migration
+        cur.execute(migration_sql)
+        
+        # Update GDELT lat/lon from existing columns
+        cur.execute("""
+            UPDATE gdelt_events 
+            SET latitude = action_lat, longitude = action_long
+            WHERE latitude IS NULL AND action_lat IS NOT NULL;
+        """)
+        updated_gdelt = cur.rowcount
+        
+        # Conditionally add columns to alerts if table exists
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alerts') THEN
+                    ALTER TABLE alerts ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7);
+                    ALTER TABLE alerts ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 7);
+                    ALTER TABLE alerts ADD COLUMN IF NOT EXISTS geocoded_location_id INTEGER REFERENCES geocoded_locations(id);
+                    CREATE INDEX IF NOT EXISTS idx_alerts_latlon ON alerts(latitude, longitude);
+                END IF;
+            END $$;
+        """)
+        
+        # Conditionally add columns to raw_alerts if table exists
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'raw_alerts') THEN
+                    ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 7);
+                    ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 7);
+                    ALTER TABLE raw_alerts ADD COLUMN IF NOT EXISTS geocoded_location_id INTEGER REFERENCES geocoded_locations(id);
+                    CREATE INDEX IF NOT EXISTS idx_raw_alerts_latlon ON raw_alerts(latitude, longitude);
+                END IF;
+            END $$;
+        """)
+        
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "message": "Geocoding schema migration completed",
+            "updated_gdelt_rows": updated_gdelt
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/admin/db/tables", methods=["GET"])
 def check_db_tables():
     """Check all database tables and row counts."""
