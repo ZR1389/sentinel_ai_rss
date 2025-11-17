@@ -369,6 +369,14 @@ def run_opencage_migration():
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         cur = conn.cursor()
         
+        # First check what tables exist
+        cur.execute("""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            ORDER BY table_name;
+        """)
+        existing_tables = [r[0] for r in cur.fetchall()]
+        
         # Read migration SQL from file
         migration_path = os.path.join(os.path.dirname(__file__), 'migrate_opencage_geocoding.sql')
         with open(migration_path, 'r') as f:
@@ -389,21 +397,29 @@ def run_opencage_migration():
         """)
         tables = [r[0] for r in cur.fetchall()]
         
-        cur.execute("""
-            SELECT table_name, column_name 
-            FROM information_schema.columns 
-            WHERE table_schema = 'public' 
-            AND table_name IN ('alerts', 'raw_alerts') 
-            AND column_name = 'geom'
-            ORDER BY table_name;
-        """)
-        geom_cols = [(r[0], r[1]) for r in cur.fetchall()]
+        # Check if geom columns were added (only if tables exist)
+        geom_cols = []
+        for table in ['alerts', 'raw_alerts']:
+            if table in existing_tables:
+                cur.execute(f"""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_schema = 'public' 
+                    AND table_name = '{table}'
+                    AND column_name = 'geom';
+                """)
+                if cur.fetchone():
+                    geom_cols.append({"table": table, "column": "geom"})
         
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL;")
-        alert_count = cur.fetchone()[0]
-        
-        cur.execute("SELECT COUNT(*) FROM raw_alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL;")
-        raw_count = cur.fetchone()[0]
+        # Count alerts with coords (only if tables exist)
+        alert_count = 0
+        raw_count = 0
+        if 'alerts' in existing_tables:
+            cur.execute("SELECT COUNT(*) FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL;")
+            alert_count = cur.fetchone()[0]
+        if 'raw_alerts' in existing_tables:
+            cur.execute("SELECT COUNT(*) FROM raw_alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL;")
+            raw_count = cur.fetchone()[0]
         
         cur.close()
         conn.close()
@@ -411,9 +427,10 @@ def run_opencage_migration():
         return jsonify({
             "success": True,
             "message": "OpenCage migration completed successfully",
+            "existing_tables": existing_tables,
             "postgis_version": pg_version,
             "tables_created": tables,
-            "geom_columns_added": [{"table": t, "column": c} for t, c in geom_cols],
+            "geom_columns_added": geom_cols,
             "alerts_with_coords": alert_count,
             "raw_alerts_with_coords": raw_count,
             "next_steps": [
@@ -423,7 +440,12 @@ def run_opencage_migration():
             ]
         })
     except Exception as e:
-        return jsonify({"error": str(e), "success": False}), 500
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "success": False
+        }), 500
 
 @app.route("/admin/acled/run", methods=["POST"])
 def trigger_acled_collection():
