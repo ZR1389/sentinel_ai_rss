@@ -74,6 +74,25 @@ try:
 except Exception as e:
     pass
 
+# Ensure PostGIS extension is installed (needed for geocoding)
+try:
+    import psycopg2
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+    db_url = os.getenv('DATABASE_URL')
+    if db_url:
+        conn = psycopg2.connect(db_url)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
+        cur.execute("SELECT PostGIS_Version();")
+        version = cur.fetchone()
+        if version:
+            logger.info(f"✓ PostGIS ready: {version[0]}")
+        cur.close()
+        conn.close()
+except Exception as e:
+    logger.warning(f"[main] PostGIS check/install: {e}")
+
 # Start GDELT polling thread if enabled
 if os.getenv('GDELT_ENABLED', 'false').lower() == 'true':
     try:
