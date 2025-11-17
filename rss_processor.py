@@ -1885,7 +1885,6 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
     # Try geocoding if we have city/country
     if location_data['city'] and location_data['country'] and GEOCODE_ENABLED:
         try:
-            from city_utils import get_city_coords
             lat, lon = get_city_coords(location_data['city'], location_data['country'])
             if lat and lon:
                 location_data.update({
