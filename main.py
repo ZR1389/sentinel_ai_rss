@@ -3078,6 +3078,101 @@ def admin_gdelt_enrich():
         logger.error(f"/admin/gdelt/enrich error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
+@app.route("/admin/coordinates/cleanup", methods=["POST", "OPTIONS"])
+def cleanup_corrupted_coordinates():
+    """Clean up corrupted coordinates where longitude/latitude are outside valid ranges"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import _get_db_connection
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Check corrupted data first
+            cur.execute("""
+                SELECT COUNT(*) FROM alerts 
+                WHERE longitude IS NOT NULL 
+                AND (longitude < -180 OR longitude > 180 OR latitude < -90 OR latitude > 90)
+            """)
+            corrupted_alerts = cur.fetchone()[0]
+            
+            cur.execute("""
+                SELECT COUNT(*) FROM raw_alerts 
+                WHERE longitude IS NOT NULL 
+                AND (longitude < -180 OR longitude > 180 OR latitude < -90 OR latitude > 90)
+            """)
+            corrupted_raw = cur.fetchone()[0]
+            
+            logger.info(f"Found {corrupted_alerts} corrupted records in alerts table")
+            logger.info(f"Found {corrupted_raw} corrupted records in raw_alerts table")
+            
+            # Clean alerts table
+            if corrupted_alerts > 0:
+                cur.execute("""
+                    UPDATE alerts 
+                    SET latitude = NULL, longitude = NULL 
+                    WHERE longitude < -180 OR longitude > 180 OR latitude < -90 OR latitude > 90
+                """)
+                logger.info(f"Cleaned {corrupted_alerts} records in alerts")
+            
+            # Clean raw_alerts table
+            if corrupted_raw > 0:
+                cur.execute("""
+                    UPDATE raw_alerts
+                    SET latitude = NULL, longitude = NULL  
+                    WHERE longitude < -180 OR longitude > 180 OR latitude < -90 OR latitude > 90
+                """)
+                logger.info(f"Cleaned {corrupted_raw} records in raw_alerts")
+            
+            conn.commit()
+            
+            # Verify cleanup
+            cur.execute("""
+                SELECT COUNT(*) FROM alerts 
+                WHERE longitude IS NOT NULL 
+                AND (longitude < -180 OR longitude > 180 OR latitude < -90 OR latitude > 90)
+            """)
+            remaining_alerts = cur.fetchone()[0]
+            
+            cur.execute("""
+                SELECT COUNT(*) FROM raw_alerts 
+                WHERE longitude IS NOT NULL 
+                AND (longitude < -180 OR longitude > 180 OR latitude < -90 OR latitude > 90)
+            """)
+            remaining_raw = cur.fetchone()[0]
+            
+            # Count valid coordinates
+            cur.execute("SELECT COUNT(*) FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+            valid_alerts = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM raw_alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+            valid_raw = cur.fetchone()[0]
+            
+            cur.close()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "cleaned": {
+                "alerts": corrupted_alerts,
+                "raw_alerts": corrupted_raw
+            },
+            "remaining_corrupted": {
+                "alerts": remaining_alerts,
+                "raw_alerts": remaining_raw
+            },
+            "valid_coordinates": {
+                "alerts": valid_alerts,
+                "raw_alerts": valid_raw
+            },
+            "message": f"Cleaned {corrupted_alerts + corrupted_raw} corrupted coordinate records"
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/coordinates/cleanup error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
 @app.route("/admin/gdelt/health", methods=["GET", "OPTIONS"])
 def gdelt_health():
     """Check GDELT ingestion status"""
