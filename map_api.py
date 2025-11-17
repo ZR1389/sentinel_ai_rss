@@ -344,7 +344,11 @@ def map_alerts():
           uuid, title, summary, link, city, country, region, score,
           threat_level, latitude, longitude, published
         FROM alerts
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        WHERE latitude IS NOT NULL 
+          AND longitude IS NOT NULL
+          AND longitude != 0.0
+          AND latitude BETWEEN -90 AND 90
+          AND longitude BETWEEN -180 AND 180
         {bbox_filter}
         ORDER BY published DESC NULLS LAST
         LIMIT 500
