@@ -4639,6 +4639,113 @@ def admin_geocode_backfill():
         logger.error(f"[backfill] Error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/admin/geocode/batch-smart', methods=['POST'])
+def batch_geocode_smart_endpoint():
+    """
+    Smart batch geocoding with deduplication and severity filtering.
+    
+    POST /admin/geocode/batch-smart
+    {
+        "limit": 2000,
+        "min_severity": 0.3,
+        "max_api_calls": 400
+    }
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from geocoding_service import batch_geocode
+        from db_utils import _get_db_connection
+        
+        data = request.json or {}
+        limit = data.get('limit', 2000)
+        min_severity = data.get('min_severity', 0.0)
+        max_api_calls = data.get('max_api_calls', 400)
+        
+        # Fetch alerts with missing coordinates, severity-first
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        
+        query = """
+            SELECT id, location
+            FROM alerts
+            WHERE (latitude IS NULL OR longitude IS NULL)
+              AND location IS NOT NULL
+              AND location != ''
+              AND (
+                CASE 
+                  WHEN (score::text) ~ '^[0-9]+(\\.[0-9]+)?$' 
+                  THEN (score::text)::numeric 
+                  ELSE 0 
+                END
+              ) >= %s
+            ORDER BY 
+              CASE 
+                WHEN (score::text) ~ '^[0-9]+(\\.[0-9]+)?$' 
+                THEN (score::text)::numeric 
+                ELSE 0 
+              END DESC,
+              published DESC
+            LIMIT %s
+        """
+        
+        cur.execute(query, (min_severity, limit))
+        rows = cur.fetchall()
+        
+        if not rows:
+            cur.close()
+            conn.close()
+            return jsonify({
+                'success': True,
+                'processed': 0,
+                'message': 'No alerts need geocoding'
+            })
+        
+        # Extract unique locations for batch geocoding
+        location_map = {}  # location -> [ids]
+        for alert_id, location in rows:
+            if location not in location_map:
+                location_map[location] = []
+            location_map[location].append(alert_id)
+        
+        unique_locations = list(location_map.keys())
+        logger.info(f"[batch-smart] Processing {len(rows)} alerts, {len(unique_locations)} unique locations")
+        
+        # Batch geocode with deduplication
+        geocoded = batch_geocode(unique_locations, max_api_calls=max_api_calls)
+        
+        # Update alerts with coordinates
+        updated = 0
+        for location, result in geocoded.items():
+            if result.get('latitude') and result.get('longitude'):
+                alert_ids = location_map[location]
+                cur.execute("""
+                    UPDATE alerts
+                    SET latitude = %s, longitude = %s
+                    WHERE id = ANY(%s)
+                """, (result['latitude'], result['longitude'], alert_ids))
+                updated += len(alert_ids)
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'processed': len(rows),
+            'unique_locations': len(unique_locations),
+            'updated': updated,
+            'api_calls': len([r for r in geocoded.values() if r.get('source') in ['nominatim', 'opencage']])
+        })
+        
+    except Exception as e:
+        logger.error(f"[batch-smart] Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # -------------------------------------------------------------------
 # Local development entrypoint
 # -------------------------------------------------------------------
