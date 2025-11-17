@@ -1,7 +1,7 @@
 """geocoding_service.py
 
-Geocode location strings with Redis + PostgreSQL caching + OpenCage API.
-Multi-tier caching to stay under free tier (2,500/day).
+Geocode location strings with Redis + PostgreSQL caching + Nominatim + OpenCage.
+Multi-tier: Redis -> Postgres -> Nominatim (free) -> OpenCage (quota 2,500/day).
 """
 
 import os
@@ -9,13 +9,21 @@ import logging
 import hashlib
 import json
 from typing import Optional, Dict, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 
 logger = logging.getLogger("geocoding")
 
 OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
 OPENCAGE_URL = "https://api.opencagedata.com/geocode/v1/json"
+
+# Nominatim configuration (respect usage policy)
+NOMINATIM_URL = os.getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
+NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "")
+USER_AGENT_APP = os.getenv("USER_AGENT_APP", "sentinel-ai-geocoding/1.0")
+_nominatim_last_call = datetime.utcnow() - timedelta(seconds=2)
+_nominatim_min_interval = float(os.getenv("NOMINATIM_MIN_INTERVAL_SEC", "1.0"))
+NOMINATIM_ENABLED = os.getenv("NOMINATIM_ENABLED", "true").lower() in ("1","true","yes","on")
 
 # Daily quota tracking
 _daily_requests = 0
@@ -171,6 +179,70 @@ def _save_to_db(location: str, data: Dict):
         logger.error(f"[geocoding] DB save error: {e}")
 
 
+def _call_nominatim(location: str) -> Optional[Dict]:
+        """Call Nominatim (free) with polite rate limiting and headers.
+        Returns a geocoding result compatible with OpenCage format used here.
+        """
+        global _nominatim_last_call
+        if not NOMINATIM_ENABLED:
+            return None
+
+        # Rate limit to 1 req/sec per policy
+        now = datetime.utcnow()
+        elapsed = (now - _nominatim_last_call).total_seconds()
+        if elapsed < _nominatim_min_interval:
+            import time
+            time.sleep(_nominatim_min_interval - elapsed)
+
+        headers = {
+            "User-Agent": USER_AGENT_APP,
+            "Accept": "application/json"
+        }
+        params = {
+            "q": location,
+            "format": "jsonv2",
+            "addressdetails": 1,
+            "limit": 1,
+        }
+        if NOMINATIM_EMAIL:
+            params["email"] = NOMINATIM_EMAIL
+
+        try:
+            resp = requests.get(NOMINATIM_URL, params=params, headers=headers, timeout=10)
+            resp.raise_for_status()
+            _nominatim_last_call = datetime.utcnow()
+            data = resp.json()
+            if isinstance(data, list) and data:
+                item = data[0]
+                lat = float(item.get("lat"))
+                lon = float(item.get("lon"))
+                addr = item.get("address", {})
+                # Map Nominatim 'importance' (0-1+) to 1-10 confidence scale
+                try:
+                    importance = float(item.get("importance", 0.5))
+                except (TypeError, ValueError):
+                    importance = 0.5
+                confidence = max(1, min(10, int(round(importance * 10))))
+                geocoded = {
+                    "lat": lat,
+                    "lon": lon,
+                    "country_code": (addr.get("country_code") or "").upper(),
+                    "admin_level_1": addr.get("state") or addr.get("province"),
+                    "admin_level_2": addr.get("city") or addr.get("town") or addr.get("county"),
+                    "confidence": confidence,
+                    "source": "nominatim",
+                    "formatted": item.get("display_name")
+                }
+                logger.info(f"[geocoding] Nominatim: {location}")
+                return geocoded
+            else:
+                logger.debug(f"[geocoding] Nominatim no results: {location}")
+                return None
+        except Exception as e:
+            logger.warning(f"[geocoding] Nominatim error: {e}")
+            return None
+
+
 def _call_opencage(location: str) -> Optional[Dict]:
     """Call OpenCage API (counts toward daily quota)"""
     global _daily_requests, _last_reset
@@ -273,8 +345,11 @@ def geocode(location: str, force_api: bool = False) -> Optional[Dict]:
             _set_redis_cache(location, cached)
             return cached
     
-    # 3. Call OpenCage API
-    result = _call_opencage(location)
+    # 3. Try Nominatim (free tier)
+    result = _call_nominatim(location)
+    if not result:
+        # 4. Fallback to OpenCage (quota-limited)
+        result = _call_opencage(location)
     
     if result:
         # Cache in both Redis and PostgreSQL
@@ -303,21 +378,33 @@ def batch_geocode(locations: List[str], max_api_calls: int = 100) -> Dict[str, D
     results = {}
     api_calls_used = 0
     
+    # Deduplicate by normalized text to avoid repeat calls
+    seen = {}
     for location in locations:
         if not location:
             continue
-        
+        norm = _normalize_location(location)
+        if norm in seen:
+            # Reuse prior result if any
+            if seen[norm] is not None:
+                results[location] = seen[norm]
+            continue
+
         # Try cache first
         result = geocode(location, force_api=False)
         
         if result:
             results[location] = result
+            seen[norm] = result
         elif api_calls_used < max_api_calls:
             # Cache miss, try API
             result = geocode(location, force_api=True)
             if result:
                 results[location] = result
                 api_calls_used += 1
+            seen[norm] = result
+        else:
+            seen[norm] = None
     
     logger.info(f"[geocoding] Batch: {len(results)}/{len(locations)} geocoded, {api_calls_used} API calls")
     return results

@@ -62,6 +62,12 @@ healthcheck_path = "/health"
   command = "python railway_cron.py geocode"
   schedule = "30 3 * * *"  # Daily at 3:30 AM UTC: Geocode missing coordinates in raw_alerts and alerts
 
+# Temporary aggressive backfill for 24h to clear 11,956 backlog (disable after completion)
+[[cron]]
+  name = "geocode-aggressive"
+  command = "python scripts/geocode_backfill_severity.py --dsn $DATABASE_URL --limit 1000 --max-api-calls 400"
+  schedule = "*/30 * * * *"  # Every 30 min: Severity-first, deduped backfill to clear backlog quickly
+
 # User Notifications
 [[cron]]
   name = "daily-notify"
