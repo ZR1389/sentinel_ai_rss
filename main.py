@@ -291,6 +291,52 @@ def manual_retention_cleanup():
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }), 500)
 
+@app.route("/admin/postgis/status", methods=["GET"])
+def check_postgis_status():
+    """Check PostgreSQL extensions, especially PostGIS availability."""
+    try:
+        # Admin auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        import psycopg2
+        db_url = os.getenv('DATABASE_URL')
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        
+        # Check available extensions
+        cur.execute("""
+            SELECT name, default_version, installed_version
+            FROM pg_available_extensions
+            WHERE name LIKE '%postgis%' OR name LIKE '%spatial%'
+            ORDER BY name;
+        """)
+        available = [{"name": r[0], "default_version": r[1], "installed_version": r[2]} 
+                    for r in cur.fetchall()]
+        
+        # Check installed extensions
+        cur.execute("SELECT extname, extversion FROM pg_extension ORDER BY extname;")
+        installed = [{"name": r[0], "version": r[1]} for r in cur.fetchall()]
+        
+        # Check PostgreSQL version
+        cur.execute("SELECT version();")
+        pg_version = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "postgresql_version": pg_version,
+            "postgis_available": available,
+            "installed_extensions": installed,
+            "postgis_installed": any(e["name"] == "postgis" for e in installed)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/admin/acled/run", methods=["POST"])
 def trigger_acled_collection():
     """Manually trigger ACLED intelligence collection (admin only).
