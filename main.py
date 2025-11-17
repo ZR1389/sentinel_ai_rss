@@ -350,6 +350,81 @@ def check_postgis_status():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/admin/opencage/migrate", methods=["POST"])
+def run_opencage_migration():
+    """Run OpenCage geocoding schema migration."""
+    try:
+        # Admin auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+        
+        db_url = os.getenv('DATABASE_URL')
+        conn = psycopg2.connect(db_url)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        
+        # Read migration SQL from file
+        migration_path = os.path.join(os.path.dirname(__file__), 'migrate_opencage_geocoding.sql')
+        with open(migration_path, 'r') as f:
+            migration_sql = f.read()
+        
+        # Execute migration
+        cur.execute(migration_sql)
+        
+        # Verification
+        cur.execute("SELECT PostGIS_Version();")
+        pg_version = cur.fetchone()[0]
+        
+        cur.execute("""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name IN ('geocoded_locations', 'traveler_profiles', 'proximity_alerts', 'geocoding_quota_log')
+            ORDER BY table_name;
+        """)
+        tables = [r[0] for r in cur.fetchall()]
+        
+        cur.execute("""
+            SELECT table_name, column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = 'public' 
+            AND table_name IN ('alerts', 'raw_alerts') 
+            AND column_name = 'geom'
+            ORDER BY table_name;
+        """)
+        geom_cols = [(r[0], r[1]) for r in cur.fetchall()]
+        
+        cur.execute("SELECT COUNT(*) FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL;")
+        alert_count = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM raw_alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL;")
+        raw_count = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "message": "OpenCage migration completed successfully",
+            "postgis_version": pg_version,
+            "tables_created": tables,
+            "geom_columns_added": [{"table": t, "column": c} for t, c in geom_cols],
+            "alerts_with_coords": alert_count,
+            "raw_alerts_with_coords": raw_count,
+            "next_steps": [
+                "Backfill geom columns: POST /admin/opencage/backfill",
+                "Test spatial queries",
+                "Deploy OpenCage geocoding service"
+            ]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "success": False}), 500
+
 @app.route("/admin/acled/run", methods=["POST"])
 def trigger_acled_collection():
     """Manually trigger ACLED intelligence collection (admin only).
