@@ -324,6 +324,12 @@ def check_postgis_status():
         # Check PostgreSQL version
         cur.execute("SELECT version();")
         pg_version = cur.fetchone()[0]
+
+        # Connection/server diagnostics
+        cur.execute("SELECT current_database(), inet_server_addr(), inet_server_port();")
+        db_name, server_ip, server_port = cur.fetchone()
+        cur.execute("SELECT inet_client_addr();")
+        client_ip = cur.fetchone()[0]
         
         cur.close()
         conn.close()
@@ -332,7 +338,14 @@ def check_postgis_status():
             "postgresql_version": pg_version,
             "postgis_available": available,
             "installed_extensions": installed,
-            "postgis_installed": any(e["name"] == "postgis" for e in installed)
+            "postgis_installed": any(e["name"] == "postgis" for e in installed),
+            "db_target": {
+                "url_host": (db_url.split('@')[1].split(':')[0] if '@' in db_url else ""),
+                "db_name": db_name,
+                "server_ip": server_ip,
+                "server_port": server_port,
+                "client_ip": client_ip,
+            }
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
