@@ -291,6 +291,56 @@ def manual_retention_cleanup():
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }), 500)
 
+@app.route("/admin/db/tables", methods=["GET"])
+def check_db_tables():
+    """Check all database tables and row counts."""
+    try:
+        # Admin auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        import psycopg2
+        db_url = os.getenv('DATABASE_URL')
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        
+        # Get all tables
+        cur.execute("""
+            SELECT tablename 
+            FROM pg_tables 
+            WHERE schemaname = 'public'
+            ORDER BY tablename;
+        """)
+        tables = {}
+        for (table_name,) in cur.fetchall():
+            cur.execute(f"SELECT COUNT(*) FROM {table_name};")
+            count = cur.fetchone()[0]
+            tables[table_name] = count
+        
+        # Check if alerts exists
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'alerts'
+            );
+        """)
+        alerts_exists = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "tables": tables,
+            "alerts_exists": alerts_exists,
+            "total_tables": len(tables)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/admin/postgis/status", methods=["GET"])
 def check_postgis_status():
     """Check PostgreSQL extensions, especially PostGIS availability."""
