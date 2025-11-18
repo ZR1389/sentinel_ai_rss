@@ -70,13 +70,15 @@ export interface AlertFeature {
 }
 
 export interface AggregateResult {
-  country: string;
+  country?: string;
+  region?: string;
+  city?: string;
   count: number;
   avg_score: number;
   severity: string;
   lat: number;
   lon: number;
-  radius_km: number;
+  radius: number; // in meters
 }
 
 export interface FetchAlertsOptions {
@@ -94,6 +96,10 @@ export class MapAdapter {
 
   /**
    * Fetch alerts from backend with optional aggregation for low zoom levels
+   * - zoom < 5: country-level aggregates (by=country)
+   * - zoom 5-10: region-level aggregates (by=region)
+   * - zoom 10-13: city-level aggregates (by=city) in dense areas
+   * - zoom >= 13: individual alerts
    */
   async fetchAlerts(opts: FetchAlertsOptions = {}) {
     const {
@@ -106,14 +112,25 @@ export class MapAdapter {
       limit = 5000
     } = opts;
 
-    // Use aggregation for low zoom (country-level)
+    // Determine aggregation level based on zoom
+    let aggregationLevel: 'country' | 'region' | 'city' | null = null;
     if (zoom < 5) {
+      aggregationLevel = 'country';
+    } else if (zoom >= 5 && zoom < 10) {
+      aggregationLevel = 'region';
+    } else if (zoom >= 10 && zoom < 13) {
+      aggregationLevel = 'city';
+    }
+
+    // Use aggregation for zoom < 13
+    if (aggregationLevel) {
       const aggregates = await this.fetchAggregates({
         days,
         severity,
         categories,
         eventTypes,
-        sources
+        sources,
+        by: aggregationLevel
       });
       return {
         features: aggregates.map(a => this.aggregateToFeature(a)),
@@ -121,7 +138,7 @@ export class MapAdapter {
       };
     }
 
-    // Fetch individual alerts for zoom >= 5
+    // Fetch individual alerts for zoom >= 13
     const params = new URLSearchParams();
     params.set('days', String(days));
     params.set('limit', String(limit));
@@ -141,19 +158,21 @@ export class MapAdapter {
   }
 
   /**
-   * Fetch country-level aggregates
+   * Fetch aggregates at specified level (country, region, or city)
    */
-  private async fetchAggregates(opts: Omit<FetchAlertsOptions, 'zoom' | 'limit'>): Promise<AggregateResult[]> {
+  private async fetchAggregates(opts: Omit<FetchAlertsOptions, 'zoom' | 'limit'> & { by: 'country' | 'region' | 'city' }): Promise<AggregateResult[]> {
     const {
       days = 30,
       severity = [],
       categories = [],
       eventTypes = [],
-      sources = ['gdelt', 'rss', 'news']
+      sources = ['gdelt', 'rss', 'news'],
+      by
     } = opts;
 
     const params = new URLSearchParams();
     params.set('days', String(days));
+    params.set('by', by);
     if (sources.length) params.set('sources', sources.join(','));
     if (severity.length) params.set('severity', severity.join(','));
     if (categories.length) params.set('category', categories.join(','));
@@ -209,6 +228,20 @@ export class MapAdapter {
     const severity = this.normalizeSeverity(agg.severity);
     const color = this.severityColor(severity);
     
+    // Build title based on aggregation level
+    let title = '';
+    let uuid = '';
+    if (agg.city) {
+      title = `${agg.city}, ${agg.country || 'Unknown'}: ${agg.count} alerts`;
+      uuid = `aggregate-city-${agg.city}-${agg.country || 'unknown'}`;
+    } else if (agg.region) {
+      title = `${agg.region}: ${agg.count} alerts`;
+      uuid = `aggregate-region-${agg.region}`;
+    } else {
+      title = `${agg.country || 'Unknown'}: ${agg.count} alerts`;
+      uuid = `aggregate-country-${agg.country || 'unknown'}`;
+    }
+    
     return {
       type: 'Feature',
       geometry: {
@@ -216,17 +249,19 @@ export class MapAdapter {
         coordinates: [agg.lon, agg.lat]
       },
       properties: {
-        uuid: `aggregate-${agg.country}`,
-        title: `${agg.country}: ${agg.count} alerts`,
+        uuid,
+        title,
         published: new Date().toISOString(),
         source: 'aggregate',
         country: agg.country,
+        city: agg.city,
+        region: agg.region,
         severity,
         score: agg.avg_score,
         confidence: 0.8,
         color,
         opacity: 0.7,
-        radius: agg.radius_km,
+        radius: agg.radius / 1000, // Convert meters to km for display
         is_aggregate: true
       }
     };
@@ -339,11 +374,15 @@ useEffect(() => {
 function onZoomChange(newZoom: number) {
   setZoom(newZoom);
   
-  // Automatically switches between aggregates (< 5) and individual alerts (>= 5)
+  // Automatically switches aggregation level based on zoom:
+  // - zoom < 5: country aggregates
+  // - zoom 5-10: region aggregates
+  // - zoom 10-13: city aggregates
+  // - zoom >= 13: individual alerts
   adapter.fetchAlerts({ days: 30, zoom: newZoom })
     .then(({ features, aggregates }) => {
-      if (newZoom < 5) {
-        // Render country-level circles with counts
+      if (newZoom < 13) {
+        // Render aggregate circles with counts
         setAggregates(aggregates);
       } else {
         // Render individual markers
@@ -363,9 +402,10 @@ function onZoomChange(newZoom: number) {
 - **Returns:** `{ ok, items, features, meta }`
 
 ### `/api/map-alerts/aggregates`
-- **Purpose:** Fetch country-level aggregates for zoom < 5
-- **Params:** `days`, `sources`, `severity`, `category`, `event_type`
-- **Returns:** `{ ok, aggregates, meta }`
+- **Purpose:** Fetch aggregates for low/mid zooms
+- **Params:** `days`, `sources`, `severity`, `category`, `event_type`, `by`
+- **by:** `country` (default, zoom < 5) | `region` (zoom 5–10) | `city` (dense areas)
+- **Returns:** `{ ok, aggregates, meta }` where each aggregate includes `lat`, `lon`, `count`, `avg_score`, `severity`, and a `radius` in meters. For `by=country` returns `{ country, ... }`, for `by=region` returns `{ region, ... }`, and for `by=city` returns `{ city, country, ... }`.
 
 ---
 
@@ -386,7 +426,7 @@ function onZoomChange(newZoom: number) {
 
 - **City-level alerts:** No radius (precise marker)
 - **Country-level alerts:** 200km default radius
-- **Aggregates:** Backend calculates radius based on lat/lon spread (50-400km)
+- **Aggregates:** Backend calculates radius based on lat/lon spread (approx. 10–400km), returned as meters in the API
 
 ---
 

@@ -62,6 +62,7 @@ from logging_config import get_logger, get_metrics_logger, setup_logging
 setup_logging("sentinel-api")
 logger = get_logger("sentinel.main")
 metrics = get_metrics_logger("sentinel.main")
+from cache_utils import HybridCache
 
 app = Flask(__name__)
 app.register_blueprint(map_api)
@@ -113,7 +114,9 @@ if 'Limiter' in globals() and Limiter and get_remote_address:
     except Exception as e:
         logger.warning(f"[main] Could not initialize limiter or apply socmint limits: {e}")
 
-# ---------- Global Error Handlers ----------
+# Hybrid caches: Redis-backed with in-process fallback for map endpoints
+_MAP_CACHE = HybridCache(prefix="map", maxsize=2048)
+_AGG_CACHE = HybridCache(prefix="agg", maxsize=1024)# ---------- Global Error Handlers ----------
 @app.errorhandler(500)
 def handle_500_error(e):
     import traceback
@@ -2536,6 +2539,20 @@ def api_map_alerts():
     lon = request.args.get("lon")
     radius = request.args.get("radius", "100")  # km
 
+    # Cache lookup (keyed by path, auth bucket, and sorted query args)
+    try:
+        cache_ttl = int(os.getenv("MAP_CACHE_TTL_SECONDS", "120"))
+    except Exception:
+        cache_ttl = 120
+    try:
+        args_key = tuple(sorted(request.args.items()))
+        cache_key = f"{request.path}|auth={'1' if is_authenticated else '0'}|{args_key}"
+        cached_payload = _MAP_CACHE.get(cache_key)
+        if cached_payload:
+            return _build_cors_response(jsonify(cached_payload))
+    except Exception:
+        pass
+
     where = []
     params = []
 
@@ -2653,12 +2670,18 @@ def api_map_alerts():
                 "properties": properties
             })
 
-        return _build_cors_response(jsonify({
+        payload = {
             "ok": True,
             "items": rows,
             "features": features,
             "meta": {"days": days, "limit": limit, "sources": sources}
-        }))
+        }
+        try:
+            if cache_ttl > 0:
+                _MAP_CACHE.set(cache_key, payload, cache_ttl)
+        except Exception:
+            pass
+        return _build_cors_response(jsonify(payload))
     except Exception as e:
         logger.error("/api/map-alerts error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
@@ -2666,11 +2689,12 @@ def api_map_alerts():
 # ---------- Map Alerts Aggregation (for zoom < 5 or mid-zoom regions) ----------
 @app.route("/api/map-alerts/aggregates", methods=["GET"])
 def api_map_alerts_aggregates():
-    """Country or region-level aggregation for map zoom < 10.
-    Returns: [{ country|region, count, avg_score, severity, lat, lon, radius }]
-    Params: same as /api/map-alerts plus optional by=country|region
+    """Country, region, or city-level aggregation for map zoom < 10.
+    Returns: [{ country|region|city(+country), count, avg_score, severity, lat, lon, radius }]
+    Params: same as /api/map-alerts plus optional by=country|region|city
     - by=country (default): country-level rollups for zoom < 5
     - by=region: region-level rollups for zoom 5-10
+    - by=city: city-level rollups for zoom >= 10 or dense areas
     """
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
@@ -2692,9 +2716,9 @@ def api_map_alerts_aggregates():
     else:
         sources = ["gdelt", "rss", "news"]
 
-    # Aggregation level: country (default) or region for mid-zoom
+    # Aggregation level: country (default), region, or city
     by = request.args.get("by", "country").lower()
-    if by not in ["country", "region"]:
+    if by not in ["country", "region", "city"]:
         by = "country"
     
     severity_param = request.args.get("severity")
@@ -2705,6 +2729,20 @@ def api_map_alerts_aggregates():
 
     event_type_param = request.args.get("event_type")
     event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
+
+    # Cache lookup (keyed by path, auth bucket, and sorted query args)
+    try:
+        agg_cache_ttl = int(os.getenv("MAP_AGG_CACHE_TTL_SECONDS", "180"))
+    except Exception:
+        agg_cache_ttl = 180
+    try:
+        args_key = tuple(sorted(request.args.items()))
+        cache_key = f"{request.path}|auth={'1' if is_authenticated else '0'}|{args_key}"
+        cached_payload = _AGG_CACHE.get(cache_key)
+        if cached_payload:
+            return _build_cors_response(jsonify(cached_payload))
+    except Exception:
+        pass
 
     where = []
     params = []
@@ -2737,41 +2775,60 @@ def api_map_alerts_aggregates():
         where.append("(" + " OR ".join(like_clauses) + ")")
         params.extend([f"%\"event_type\":\"{et}\"%" for et in event_types])
 
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    
-    # Aggregate by country or region
-    if by == "region":
-        group_field = "COALESCE(region, country)"
-        group_name = "region_or_country"
-    else:
-        group_field = "country"
-        group_name = "country"
-    
-    q = f"""
-        SELECT
-          {group_field} as grouping,
-          COUNT(*) as alert_count,
-          AVG(CAST(score AS FLOAT)) as avg_score,
-          AVG(latitude) as center_lat,
-          AVG(longitude) as center_lon,
-          MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
-          STDDEV(latitude) as lat_spread,
-          STDDEV(longitude) as lon_spread
-        FROM alerts
-        {where_sql}
-          AND {group_field} IS NOT NULL
-          AND latitude IS NOT NULL
-          AND longitude IS NOT NULL
-        GROUP BY {group_field}
-        ORDER BY alert_count DESC
-    """
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+        # Build aggregation query based on level
+        if by == "city":
+                q = f"""
+                        SELECT
+                            city,
+                            country,
+                            COUNT(*) as alert_count,
+                            AVG(CAST(score AS FLOAT)) as avg_score,
+                            AVG(latitude) as center_lat,
+                            AVG(longitude) as center_lon,
+                            MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
+                            STDDEV(latitude) as lat_spread,
+                            STDDEV(longitude) as lon_spread
+                        FROM alerts
+                        {where_sql}
+                            AND city IS NOT NULL
+                            AND latitude IS NOT NULL
+                            AND longitude IS NOT NULL
+                        GROUP BY city, country
+                        ORDER BY alert_count DESC
+                """
+        else:
+                # Aggregate by country or region
+                if by == "region":
+                        group_field = "COALESCE(region, country)"
+                else:
+                        group_field = "country"
+
+                q = f"""
+                        SELECT
+                            {group_field} as grouping,
+                            COUNT(*) as alert_count,
+                            AVG(CAST(score AS FLOAT)) as avg_score,
+                            AVG(latitude) as center_lat,
+                            AVG(longitude) as center_lon,
+                            MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
+                            STDDEV(latitude) as lat_spread,
+                            STDDEV(longitude) as lon_spread
+                        FROM alerts
+                        {where_sql}
+                            AND {group_field} IS NOT NULL
+                            AND latitude IS NOT NULL
+                            AND longitude IS NOT NULL
+                        GROUP BY {group_field}
+                        ORDER BY alert_count DESC
+                """
 
     try:
         rows = fetch_all(q, tuple(params))
-        
+
         aggregates = []
         for row in (rows or []):
-            grouping = row.get("grouping") or "Unknown"
             count = int(row.get("alert_count") or 0)
             avg_score = float(row.get("avg_score") or 0.5)
             lat = float(row.get("center_lat") or 0)
@@ -2779,34 +2836,42 @@ def api_map_alerts_aggregates():
             severity = (row.get("max_severity") or "medium").lower()
             lat_spread = float(row.get("lat_spread") or 1.0)
             lon_spread = float(row.get("lon_spread") or 1.0)
-            
+
             # Calculate uncertainty radius based on coordinate spread
             # 1 degree latitude ≈ 111 km, return in meters for frontend
-            radius_km = max(50, min(400, (lat_spread + lon_spread) * 111 / 2))
+            radius_km = max(10 if by == "city" else 50, min(400, (lat_spread + lon_spread) * 111 / 2))
             radius_meters = radius_km * 1000
-            
+
             agg_item = {
                 "count": count,
                 "avg_score": round(avg_score, 2),
                 "severity": severity,
                 "lat": round(lat, 4),
                 "lon": round(lon, 4),
-                "radius": int(radius_meters)  # in meters for frontend
+                "radius": int(radius_meters)
             }
-            
-            # Set country or region field based on by parameter
-            if by == "region":
-                agg_item["region"] = grouping
+
+            if by == "city":
+                agg_item["city"] = row.get("city") or "Unknown"
+                agg_item["country"] = row.get("country") or None
+            elif by == "region":
+                agg_item["region"] = row.get("grouping") or "Unknown"
             else:
-                agg_item["country"] = grouping
-            
+                agg_item["country"] = row.get("grouping") or "Unknown"
+
             aggregates.append(agg_item)
         
-        return _build_cors_response(jsonify({
+        payload = {
             "ok": True,
             "aggregates": aggregates,
             "meta": {"days": days, "sources": sources, "by": by}
-        }))
+        }
+        try:
+            if agg_cache_ttl > 0:
+                _AGG_CACHE.set(cache_key, payload, agg_cache_ttl)
+        except Exception:
+            pass
+        return _build_cors_response(jsonify(payload))
     except Exception as e:
         logger.error("/api/map-alerts/aggregates error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Aggregation query failed"}), 500))

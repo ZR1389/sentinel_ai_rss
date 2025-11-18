@@ -29,60 +29,104 @@ def get_conn():
         raise RuntimeError("DATABASE_URL not set")
     return psycopg2.connect(DATABASE_URL)
 
+def get_event_description(event_code: str) -> str:
+    """Translate CAMEO event code to human-readable description"""
+    if not event_code:
+        return "geopolitical event"
+    if event_code in CAMEO_CODES:
+        return CAMEO_CODES[event_code]
+    root_code = event_code[:2] if len(event_code) >= 2 else event_code
+    if root_code in CAMEO_CODES:
+        return CAMEO_CODES[root_code]
+    return "conflict event"
+
+def get_severity_label(goldstein: float) -> str:
+    """Convert Goldstein scale to plain English severity"""
+    if goldstein is None:
+        return "MODERATE"
+    goldstein = float(goldstein)
+    if goldstein <= -8:
+        return "CRITICAL"
+    elif goldstein <= -6:
+        return "HIGH"
+    elif goldstein <= -4:
+        return "MODERATE"
+    elif goldstein <= -2:
+        return "LOW"
+    else:
+        return "MINIMAL"
+
+def clean_actor(actor: str) -> Optional[str]:
+    """Clean and validate actor name"""
+    if not actor or actor in ["", ".", "---", "Unknown"]:
+        return None
+    actor = actor.strip()
+    if len(actor) <= 1:
+        return None
+    return actor
+
 def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert GDELT event to raw_alerts format (minimal schema for Threat Engine input)"""
-    # Generate UUID from global_event_id
+    """Convert GDELT event to raw_alerts format with proper client-facing text"""
     uuid = f"gdelt-{event['global_event_id']}"
-    
-    # Convert sql_date (YYYYMMDD) to timestamp
     sql_date_str = str(event['sql_date'])
     try:
         published = datetime.strptime(sql_date_str, "%Y%m%d").replace(tzinfo=timezone.utc)
     except:
         published = datetime.now(timezone.utc)
-    
-    # Extract basic metadata
-    actor1 = event.get('actor1', 'Unknown')
-    actor2 = event.get('actor2', 'Unknown')
+    actor1 = clean_actor(event.get('actor1', ''))
+    actor2 = clean_actor(event.get('actor2', ''))
     event_code = event.get('event_code', '')
+    event_description = get_event_description(event_code)
     quad_class = event.get('quad_class', 0)
     goldstein = event.get('goldstein', 0) or 0
-    
-    # Build title
-    title = f"GDELT: {actor1} → {actor2}"
-    if event_code:
-        title += f" ({event_code})"
-    
+    severity_label = get_severity_label(goldstein)
     country = event.get('action_country', 'Unknown')
-    
-    # Summary with raw metrics (Threat Engine will compute final scores)
-    summary = f"GDELT event: {actor1} and {actor2}. Goldstein: {goldstein}, Tone: {event.get('avg_tone', 0)}, Mentions: {event.get('num_mentions', 0)}"
-    
-    # Tags with rich metadata for Threat Engine context
+    num_mentions = event.get('num_mentions', 0)
+    num_articles = event.get('num_articles', 0)
+    if actor1 and actor2:
+        title = f"{actor1} {event_description} involving {actor2}"
+    elif actor1:
+        title = f"{actor1} {event_description}"
+    else:
+        title = f"Conflict event reported in {country}"
+    summary_parts = []
+    if actor1 and actor2:
+        summary_parts.append(f"{actor1} engaged in {event_description} with {actor2}")
+    elif actor1:
+        summary_parts.append(f"{actor1} {event_description}")
+    summary_parts.append(f"Severity: {severity_label}")
+    if country and country != 'Unknown':
+        summary_parts.append(f"Location: {country}")
+    if num_articles > 0:
+        summary_parts.append(f"Coverage: {num_articles} articles from {event.get('num_sources', 0)} sources")
+    summary = ". ".join(summary_parts) + "."
     import json
     tags = [{
         'source': 'gdelt',
         'event_id': event['global_event_id'],
         'quad_class': quad_class,
         'event_code': event_code,
+        'event_type': event_description,
         'goldstein': goldstein,
+        'severity': severity_label,
         'avg_tone': event.get('avg_tone'),
-        'num_mentions': event.get('num_mentions'),
+        'num_mentions': num_mentions,
         'num_sources': event.get('num_sources'),
-        'num_articles': event.get('num_articles'),
+        'num_articles': num_articles,
         'actor1': actor1,
         'actor2': actor2,
     }]
-    
+    source_url = event.get('source_url')
+    link = source_url if source_url and source_url.startswith('http') else None
     raw_alert = {
         'uuid': uuid,
         'published': published,
         'source': 'gdelt',
-        'source_kind': 'intelligence',  # Match ACLED pattern
+        'source_kind': 'intelligence',
         'source_tag': f"country:{country}" if country and country != 'Unknown' else 'country:Unknown',
         'title': title,
         'summary': summary,
-        'link': event.get('source_url') or f"https://gdeltproject.org/data/lookups/CAMEO.eventcodes.txt",
+        'link': link,
         'region': None,
         'country': country if country and country != 'Unknown' else None,
         'city': None,
@@ -90,7 +134,6 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
         'longitude': event.get('action_long'),
         'tags': json.dumps(tags),
     }
-    
     return raw_alert
 
 def process_batch(conn, batch_size: int = 100) -> int:
