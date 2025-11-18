@@ -488,6 +488,7 @@ def process_batch(conn, batch_size: int = 100) -> int:
     
     try:
         # Get unprocessed events (don't require coordinates - we'll geocode if missing/invalid)
+        # Smart prioritization: high-severity events first, then by recency
         cur.execute("""
             SELECT global_event_id, sql_date, actor1, actor2, event_code, event_root_code,
                    quad_class, goldstein, num_mentions, num_sources, num_articles, avg_tone,
@@ -495,7 +496,15 @@ def process_batch(conn, batch_size: int = 100) -> int:
             FROM gdelt_events
             WHERE processed = false
               AND quad_class IN (3, 4)  -- Only conflict events
-            ORDER BY sql_date DESC
+            ORDER BY 
+                CASE 
+                    WHEN goldstein <= -8 THEN 1  -- Critical severity first
+                    WHEN goldstein <= -5 THEN 2  -- High severity
+                    WHEN goldstein <= -3 THEN 3  -- Moderate severity
+                    ELSE 4                       -- Lower severity
+                END,
+                num_sources DESC,  -- More widely reported events prioritized
+                sql_date DESC      -- Most recent within same severity tier
             LIMIT %s
         """, (batch_size,))
         
