@@ -2495,14 +2495,18 @@ def alerts_public_latest():
 @app.route("/api/map-alerts", methods=["GET"])
 def api_map_alerts():
     """Global map alerts endpoint for frontend maps.
-    - Public, no auth
+    - Public, optional Bearer auth for extended limits
     - Defaults to 30-day window
     - Excludes ACLED by default
-    - Supports optional params: days, limit, lat, lon, radius, region, country, city, sources
-    - Returns both raw items and GeoJSON features with consistent property names
+    - Supports optional params: days, limit, lat, lon, radius, region, country, city, sources, severity, category, event_type
+    - Returns both raw items and GeoJSON features with risk_color and risk_radius
     """
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+    
+    # Optional auth - allow public access with lower caps, authenticated users get more
+    auth_header = request.headers.get("Authorization", "")
+    is_authenticated = auth_header.startswith("Bearer ") and len(auth_header) > 7
 
     # Defaults and caps
     try:
@@ -2515,7 +2519,9 @@ def api_map_alerts():
         limit = int(request.args.get("limit", 5000))
     except Exception:
         limit = 5000
-    limit = max(1, min(limit, 20000))  # hard cap to protect backend
+    # Cap based on auth: 5000 public, 20000 authenticated
+    max_limit = 20000 if is_authenticated else 5000
+    limit = max(1, min(limit, max_limit))
 
     sources_param = request.args.get("sources")  # e.g. "gdelt,rss,news"
     if sources_param:
@@ -2623,6 +2629,24 @@ def api_map_alerts():
             properties = dict(row)
             properties.pop("latitude", None)
             properties.pop("longitude", None)
+            
+            # Add frontend-expected fields
+            properties["lat"] = float(lat_val)
+            properties["lon"] = float(lon_val)
+            
+            # Compute risk_color from severity
+            severity = (properties.get("threat_label") or properties.get("threat_level") or "medium").lower()
+            severity_colors = {
+                "critical": "#DC2626",
+                "high": "#EA580C",
+                "medium": "#F59E0B",
+                "low": "#10B981"
+            }
+            properties["risk_color"] = severity_colors.get(severity, severity_colors["medium"])
+            
+            # Compute risk_radius: use 0 for city-level, 200000m (200km) for country-level
+            properties["risk_radius"] = 0 if properties.get("city") else 200000
+            
             features.append({
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": [float(lon_val), float(lat_val)]},
@@ -2639,15 +2663,21 @@ def api_map_alerts():
         logger.error("/api/map-alerts error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
 
-# ---------- Map Alerts Aggregation (for zoom < 5) ----------
+# ---------- Map Alerts Aggregation (for zoom < 5 or mid-zoom regions) ----------
 @app.route("/api/map-alerts/aggregates", methods=["GET"])
 def api_map_alerts_aggregates():
-    """Country-level aggregation for map zoom < 5.
-    Returns: [{ country, count, avg_score, severity, lat, lon, radius }]
-    Params: same as /api/map-alerts (days, sources, severity, category, event_type)
+    """Country or region-level aggregation for map zoom < 10.
+    Returns: [{ country|region, count, avg_score, severity, lat, lon, radius }]
+    Params: same as /api/map-alerts plus optional by=country|region
+    - by=country (default): country-level rollups for zoom < 5
+    - by=region: region-level rollups for zoom 5-10
     """
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+    
+    # Optional auth
+    auth_header = request.headers.get("Authorization", "")
+    is_authenticated = auth_header.startswith("Bearer ") and len(auth_header) > 7
 
     # Defaults and caps
     try:
@@ -2662,6 +2692,11 @@ def api_map_alerts_aggregates():
     else:
         sources = ["gdelt", "rss", "news"]
 
+    # Aggregation level: country (default) or region for mid-zoom
+    by = request.args.get("by", "country").lower()
+    if by not in ["country", "region"]:
+        by = "country"
+    
     severity_param = request.args.get("severity")
     severities = [s.strip().lower() for s in severity_param.split(",")] if severity_param else []
 
@@ -2704,10 +2739,17 @@ def api_map_alerts_aggregates():
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     
-    # Aggregate by country with average severity
+    # Aggregate by country or region
+    if by == "region":
+        group_field = "COALESCE(region, country)"
+        group_name = "region_or_country"
+    else:
+        group_field = "country"
+        group_name = "country"
+    
     q = f"""
         SELECT
-          country,
+          {group_field} as grouping,
           COUNT(*) as alert_count,
           AVG(CAST(score AS FLOAT)) as avg_score,
           AVG(latitude) as center_lat,
@@ -2717,10 +2759,10 @@ def api_map_alerts_aggregates():
           STDDEV(longitude) as lon_spread
         FROM alerts
         {where_sql}
-          AND country IS NOT NULL
+          AND {group_field} IS NOT NULL
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
-        GROUP BY country
+        GROUP BY {group_field}
         ORDER BY alert_count DESC
     """
 
@@ -2729,7 +2771,7 @@ def api_map_alerts_aggregates():
         
         aggregates = []
         for row in (rows or []):
-            country = row.get("country") or "Unknown"
+            grouping = row.get("grouping") or "Unknown"
             count = int(row.get("alert_count") or 0)
             avg_score = float(row.get("avg_score") or 0.5)
             lat = float(row.get("center_lat") or 0)
@@ -2738,24 +2780,32 @@ def api_map_alerts_aggregates():
             lat_spread = float(row.get("lat_spread") or 1.0)
             lon_spread = float(row.get("lon_spread") or 1.0)
             
-            # Calculate uncertainty radius (km) based on coordinate spread
-            # 1 degree latitude ≈ 111 km
+            # Calculate uncertainty radius based on coordinate spread
+            # 1 degree latitude ≈ 111 km, return in meters for frontend
             radius_km = max(50, min(400, (lat_spread + lon_spread) * 111 / 2))
+            radius_meters = radius_km * 1000
             
-            aggregates.append({
-                "country": country,
+            agg_item = {
                 "count": count,
                 "avg_score": round(avg_score, 2),
                 "severity": severity,
                 "lat": round(lat, 4),
                 "lon": round(lon, 4),
-                "radius_km": round(radius_km, 1)
-            })
+                "radius": int(radius_meters)  # in meters for frontend
+            }
+            
+            # Set country or region field based on by parameter
+            if by == "region":
+                agg_item["region"] = grouping
+            else:
+                agg_item["country"] = grouping
+            
+            aggregates.append(agg_item)
         
         return _build_cors_response(jsonify({
             "ok": True,
             "aggregates": aggregates,
-            "meta": {"days": days, "sources": sources}
+            "meta": {"days": days, "sources": sources, "by": by}
         }))
     except Exception as e:
         logger.error("/api/map-alerts/aggregates error: %s", e)
