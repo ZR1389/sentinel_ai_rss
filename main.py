@@ -2231,6 +2231,24 @@ def alerts_latest():
     lon = request.args.get("lon")
     radius = request.args.get("radius", "100")  # km
 
+    # Optional filters: severity, category, event_type, travel-only, and bbox
+    severity_param = request.args.get("severity")
+    severities = [s.strip().lower() for s in severity_param.split(",")] if severity_param else []
+
+    category_param = request.args.get("category")
+    categories = [c.strip().lower() for c in category_param.split(",")] if category_param else []
+
+    event_type_param = request.args.get("event_type")
+    event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
+
+    travel_only = str(request.args.get("travel", "0")).lower() in ("1", "true", "yes", "y")
+
+    # Optional bounding box (viewport) filter
+    min_lat = request.args.get("min_lat")
+    min_lon = request.args.get("min_lon")
+    max_lat = request.args.get("max_lat")
+    max_lon = request.args.get("max_lon")
+
     # Optional filters for frontend controls
     # severity: comma-separated labels (critical,high,medium,low)
     severity_param = request.args.get("severity")
@@ -2586,6 +2604,17 @@ def api_map_alerts():
         except Exception as e:
             logger.warning(f"Invalid lat/lon/radius params: {e}")
 
+    # Bounding box filter (if provided)
+    if min_lat and min_lon and max_lat and max_lon:
+        try:
+            min_lat_f = float(min_lat); max_lat_f = float(max_lat)
+            min_lon_f = float(min_lon); max_lon_f = float(max_lon)
+            where.append("latitude BETWEEN %s AND %s")
+            where.append("longitude BETWEEN %s AND %s")
+            params.extend([min_lat_f, max_lat_f, min_lon_f, max_lon_f])
+        except Exception as e:
+            logger.warning(f"Invalid bbox params: {e}")
+
     if region:
         where.append("(region = %s OR city = %s)")
         params.extend([region, region])
@@ -2595,6 +2624,29 @@ def api_map_alerts():
     if city:
         where.append("city = %s")
         params.append(city)
+
+    # Severity filter
+    if severities:
+        where.append("(LOWER(COALESCE(threat_label, '')) = ANY(%s) OR LOWER(COALESCE(threat_level, '')) = ANY(%s))")
+        params.extend([severities, severities])
+
+    # Category filter
+    if categories:
+        where.append("(LOWER(COALESCE(category, '')) = ANY(%s) OR LOWER(COALESCE(subcategory, '')) = ANY(%s))")
+        params.extend([categories, categories])
+
+    # Event type filter (in tags JSON)
+    if event_types:
+        like_clauses = []
+        for _ in event_types:
+            like_clauses.append("tags::text ILIKE %s")
+        where.append("(" + " OR ".join(like_clauses) + ")")
+        params.extend([f"%\"event_type\":\"{et}\"%" for et in event_types])
+
+    # Travel-only filter (requires tag travel_map_eligible true)
+    if travel_only:
+        where.append("tags::text ILIKE %s")
+        params.append("%\"travel_map_eligible\": true%")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     q = f"""
@@ -2651,6 +2703,9 @@ def api_map_alerts():
             properties["lat"] = float(lat_val)
             properties["lon"] = float(lon_val)
             
+            # Preferred display summary for popups
+            properties["display_summary"] = properties.get("gpt_summary") or properties.get("summary")
+            
             # Compute risk_color from severity
             severity = (properties.get("threat_label") or properties.get("threat_level") or "medium").lower()
             severity_colors = {
@@ -2674,7 +2729,9 @@ def api_map_alerts():
             "ok": True,
             "items": rows,
             "features": features,
-            "meta": {"days": days, "limit": limit, "sources": sources}
+            "meta": {"days": days, "limit": limit, "sources": sources, "filters": {
+                "severity": severities, "category": categories, "event_type": event_types, "travel": travel_only
+            }}
         }
         try:
             if cache_ttl > 0:
@@ -2730,6 +2787,15 @@ def api_map_alerts_aggregates():
     event_type_param = request.args.get("event_type")
     event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
 
+    # Travel-only filter
+    travel_only = str(request.args.get("travel", "0")).lower() in ("1", "true", "yes", "y")
+
+    # Optional bounding box (viewport) filter
+    min_lat = request.args.get("min_lat")
+    min_lon = request.args.get("min_lon")
+    max_lat = request.args.get("max_lat")
+    max_lon = request.args.get("max_lon")
+
     # Cache lookup (keyed by path, auth bucket, and sorted query args)
     try:
         agg_cache_ttl = int(os.getenv("MAP_AGG_CACHE_TTL_SECONDS", "180"))
@@ -2774,6 +2840,22 @@ def api_map_alerts_aggregates():
             like_clauses.append("tags::text ILIKE %s")
         where.append("(" + " OR ".join(like_clauses) + ")")
         params.extend([f"%\"event_type\":\"{et}\"%" for et in event_types])
+
+    # Travel-only filter (requires tag travel_map_eligible true)
+    if travel_only:
+        where.append("tags::text ILIKE %s")
+        params.append("%\"travel_map_eligible\": true%")
+
+    # Bounding box filter (if provided)
+    if min_lat and min_lon and max_lat and max_lon:
+        try:
+            min_lat_f = float(min_lat); max_lat_f = float(max_lat)
+            min_lon_f = float(min_lon); max_lon_f = float(max_lon)
+            where.append("latitude BETWEEN %s AND %s")
+            where.append("longitude BETWEEN %s AND %s")
+            params.extend([min_lat_f, max_lat_f, min_lon_f, max_lon_f])
+        except Exception as e:
+            logger.warning(f"Invalid bbox params (aggregates): {e}")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
@@ -2864,7 +2946,9 @@ def api_map_alerts_aggregates():
         payload = {
             "ok": True,
             "aggregates": aggregates,
-            "meta": {"days": days, "sources": sources, "by": by}
+            "meta": {"days": days, "sources": sources, "by": by, "filters": {
+                "severity": severities, "category": categories, "event_type": event_types, "travel": travel_only
+            }}
         }
         try:
             if agg_cache_ttl > 0:
