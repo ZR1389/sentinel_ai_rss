@@ -2228,6 +2228,19 @@ def alerts_latest():
     lon = request.args.get("lon")
     radius = request.args.get("radius", "100")  # km
 
+    # Optional filters for frontend controls
+    # severity: comma-separated labels (critical,high,medium,low)
+    severity_param = request.args.get("severity")
+    severities = [s.strip().lower() for s in severity_param.split(",")] if severity_param else []
+
+    # category/subcategory: comma-separated
+    category_param = request.args.get("category")
+    categories = [c.strip().lower() for c in category_param.split(",")] if category_param else []
+
+    # event_type from tags (best-effort, substring match on tags JSON text)
+    event_type_param = request.args.get("event_type")
+    event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
+
     where = []
     params = []
     
@@ -2416,6 +2429,25 @@ def alerts_public_latest():
         where.append("city = %s")
         params.append(city)
 
+    # Severity filter (match either threat_label or threat_level, case-insensitive)
+    if severities:
+        where.append("(LOWER(COALESCE(threat_label, '')) = ANY(%s) OR LOWER(COALESCE(threat_level, '')) = ANY(%s))")
+        params.extend([severities, severities])
+
+    # Category/Subcategory filter
+    if categories:
+        where.append("(LOWER(COALESCE(category, '')) = ANY(%s) OR LOWER(COALESCE(subcategory, '')) = ANY(%s))")
+        params.extend([categories, categories])
+
+    # Event type filter via tags text (best-effort contains match)
+    if event_types:
+        like_clauses = []
+        for _ in event_types:
+            like_clauses.append("tags::text ILIKE %s")
+        where.append("(" + " OR ".join(like_clauses) + ")")
+        # Match JSON substring for event_type values
+        params.extend([f"%\"event_type\":\"{et}\"%" for et in event_types])
+
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     q = f"""
         SELECT
@@ -2458,6 +2490,276 @@ def alerts_public_latest():
     except Exception as e:
         logger.error("alerts_public_latest error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+# ---------- Map Alerts (public, global, 30-day default) ----------
+@app.route("/api/map-alerts", methods=["GET"])
+def api_map_alerts():
+    """Global map alerts endpoint for frontend maps.
+    - Public, no auth
+    - Defaults to 30-day window
+    - Excludes ACLED by default
+    - Supports optional params: days, limit, lat, lon, radius, region, country, city, sources
+    - Returns both raw items and GeoJSON features with consistent property names
+    """
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
+    # Defaults and caps
+    try:
+        days = int(request.args.get("days", 30))
+    except Exception:
+        days = 30
+    days = max(1, min(days, 60))  # cap to 60 days
+
+    try:
+        limit = int(request.args.get("limit", 5000))
+    except Exception:
+        limit = 5000
+    limit = max(1, min(limit, 20000))  # hard cap to protect backend
+
+    sources_param = request.args.get("sources")  # e.g. "gdelt,rss,news"
+    if sources_param:
+        sources = [s.strip().lower() for s in sources_param.split(",") if s.strip()]
+    else:
+        sources = ["gdelt", "rss", "news"]
+
+    region = request.args.get("region")
+    country = request.args.get("country")
+    city = request.args.get("city")
+    lat = request.args.get("lat")
+    lon = request.args.get("lon")
+    radius = request.args.get("radius", "100")  # km
+
+    where = []
+    params = []
+
+    # Time window
+    where.append("published >= NOW() - make_interval(days => %s)")
+    params.append(days)
+
+    # Source filter (exclude acled by default)
+    if sources:
+        # Use ANY(array) for safe binding
+        where.append("LOWER(source) = ANY(%s)")
+        params.append(sources)
+    where.append("LOWER(source) <> 'acled'")
+
+    # Optional geographic filters
+    if lat and lon:
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+            radius_f = float(radius)
+            where.append(
+                "("
+                "  6371 * acos("
+                "    cos(radians(%s)) * cos(radians(latitude)) * "
+                "    cos(radians(longitude) - radians(%s)) + "
+                "    sin(radians(%s)) * sin(radians(latitude))"
+                "  ) <= %s"
+                ")"
+            )
+            params.extend([lat_f, lon_f, lat_f, radius_f])
+        except Exception as e:
+            logger.warning(f"Invalid lat/lon/radius params: {e}")
+
+    if region:
+        where.append("(region = %s OR city = %s)")
+        params.extend([region, region])
+    if country:
+        where.append("country = %s")
+        params.append(country)
+    if city:
+        where.append("city = %s")
+        params.append(city)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    q = f"""
+        SELECT
+          uuid,
+          published,
+          source,
+          title,
+          link,
+          region,
+          country,
+          city,
+          category,
+          subcategory,
+          threat_level,
+          threat_label,
+          score,
+          confidence,
+          gpt_summary,
+          summary,
+          en_snippet,
+          trend_direction,
+          anomaly_flag,
+          domains,
+          tags,
+          threat_score_components,
+          source_kind,
+          source_tag,
+          latitude,
+          longitude
+        FROM alerts
+        {where_sql}
+        ORDER BY published DESC NULLS LAST
+        LIMIT %s
+    """
+    params.append(limit)
+
+    try:
+        rows = fetch_all(q, tuple(params))
+
+        # Build GeoJSON features with consistent properties for maps
+        features = []
+        for row in (rows or []):
+            # rows are dicts via fetch_all
+            lat_val = row.get("latitude")
+            lon_val = row.get("longitude")
+            if lat_val is None or lon_val is None:
+                continue
+            properties = dict(row)
+            properties.pop("latitude", None)
+            properties.pop("longitude", None)
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(lon_val), float(lat_val)]},
+                "properties": properties
+            })
+
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "items": rows,
+            "features": features,
+            "meta": {"days": days, "limit": limit, "sources": sources}
+        }))
+    except Exception as e:
+        logger.error("/api/map-alerts error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
+
+# ---------- Map Alerts Aggregation (for zoom < 5) ----------
+@app.route("/api/map-alerts/aggregates", methods=["GET"])
+def api_map_alerts_aggregates():
+    """Country-level aggregation for map zoom < 5.
+    Returns: [{ country, count, avg_score, severity, lat, lon, radius }]
+    Params: same as /api/map-alerts (days, sources, severity, category, event_type)
+    """
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "DB helper unavailable"}), 503))
+
+    # Defaults and caps
+    try:
+        days = int(request.args.get("days", 30))
+    except Exception:
+        days = 30
+    days = max(1, min(days, 60))
+
+    sources_param = request.args.get("sources")
+    if sources_param:
+        sources = [s.strip().lower() for s in sources_param.split(",") if s.strip()]
+    else:
+        sources = ["gdelt", "rss", "news"]
+
+    severity_param = request.args.get("severity")
+    severities = [s.strip().lower() for s in severity_param.split(",")] if severity_param else []
+
+    category_param = request.args.get("category")
+    categories = [c.strip().lower() for c in category_param.split(",")] if category_param else []
+
+    event_type_param = request.args.get("event_type")
+    event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
+
+    where = []
+    params = []
+
+    # Time window
+    where.append("published >= NOW() - make_interval(days => %s)")
+    params.append(days)
+
+    # Source filter (exclude acled)
+    if sources:
+        where.append("LOWER(source) = ANY(%s)")
+        params.append(sources)
+    where.append("LOWER(source) <> 'acled'")
+
+    # Severity filter
+    if severities:
+        where.append("(LOWER(COALESCE(threat_label, '')) = ANY(%s) OR LOWER(COALESCE(threat_level, '')) = ANY(%s))")
+        params.extend([severities, severities])
+
+    # Category filter
+    if categories:
+        where.append("(LOWER(COALESCE(category, '')) = ANY(%s) OR LOWER(COALESCE(subcategory, '')) = ANY(%s))")
+        params.extend([categories, categories])
+
+    # Event type filter
+    if event_types:
+        like_clauses = []
+        for _ in event_types:
+            like_clauses.append("tags::text ILIKE %s")
+        where.append("(" + " OR ".join(like_clauses) + ")")
+        params.extend([f"%\"event_type\":\"{et}\"%" for et in event_types])
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    
+    # Aggregate by country with average severity
+    q = f"""
+        SELECT
+          country,
+          COUNT(*) as alert_count,
+          AVG(CAST(score AS FLOAT)) as avg_score,
+          AVG(latitude) as center_lat,
+          AVG(longitude) as center_lon,
+          MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
+          STDDEV(latitude) as lat_spread,
+          STDDEV(longitude) as lon_spread
+        FROM alerts
+        {where_sql}
+          AND country IS NOT NULL
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+        GROUP BY country
+        ORDER BY alert_count DESC
+    """
+
+    try:
+        rows = fetch_all(q, tuple(params))
+        
+        aggregates = []
+        for row in (rows or []):
+            country = row.get("country") or "Unknown"
+            count = int(row.get("alert_count") or 0)
+            avg_score = float(row.get("avg_score") or 0.5)
+            lat = float(row.get("center_lat") or 0)
+            lon = float(row.get("center_lon") or 0)
+            severity = (row.get("max_severity") or "medium").lower()
+            lat_spread = float(row.get("lat_spread") or 1.0)
+            lon_spread = float(row.get("lon_spread") or 1.0)
+            
+            # Calculate uncertainty radius (km) based on coordinate spread
+            # 1 degree latitude ≈ 111 km
+            radius_km = max(50, min(400, (lat_spread + lon_spread) * 111 / 2))
+            
+            aggregates.append({
+                "country": country,
+                "count": count,
+                "avg_score": round(avg_score, 2),
+                "severity": severity,
+                "lat": round(lat, 4),
+                "lon": round(lon, 4),
+                "radius_km": round(radius_km, 1)
+            })
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "aggregates": aggregates,
+            "meta": {"days": days, "sources": sources}
+        }))
+    except Exception as e:
+        logger.error("/api/map-alerts/aggregates error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Aggregation query failed"}), 500))
 
 # ---------- Analytics Endpoints ----------
 @app.route("/analytics/timeline", methods=["GET"])
