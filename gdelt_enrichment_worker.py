@@ -23,6 +23,209 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 BATCH_SIZE = int(os.getenv("GDELT_ENRICHMENT_BATCH_SIZE", "100"))
 POLL_INTERVAL = int(os.getenv("GDELT_ENRICHMENT_POLL_SECONDS", "300"))  # 5 minutes
 
+# COMPREHENSIVE CAMEO EVENT CODE LOOKUP - 100+ codes
+CAMEO_CODES = {
+    # ========== QUADCLASS 4: MATERIAL CONFLICT ==========
+    
+    # Category 18: Assault
+    "18": "assault",
+    "180": "use conventional military force",
+    "181": "fight with small arms and light weapons",
+    "182": "fight with artillery and tanks",
+    "183": "engage in organized violent conflict",
+    "1831": "engage in ethnic cleansing",
+    "1832": "engage in gang warfare",
+    "184": "use chemical, biological, or nuclear weapons",
+    "185": "employ aerial weapons",
+    "186": "violate ceasefire",
+    
+    # Category 19: Fight
+    "19": "engage in unconventional violence",
+    "190": "use unconventional mass violence",
+    "191": "abduct, hijack, or take hostage",
+    "192": "physically assault",
+    "193": "engage in politically motivated violence",
+    "194": "use violent repression",
+    "195": "engage in violent protest for leadership change",
+    "196": "engage in ethnic violence",
+    
+    # Category 20: Mass Violence
+    "20": "engage in mass violence",
+    "200": "use tactics of violent repression",
+    "201": "kill by physical assault",
+    "202": "inflict torture",
+    "203": "engage in ethnic cleansing",
+    "204": "use weapons of mass destruction",
+    
+    # ========== QUADCLASS 3: VERBAL CONFLICT ==========
+    
+    # Category 10: Demand
+    "10": "demand",
+    "100": "demand information",
+    "101": "demand policy change",
+    "102": "demand action",
+    "103": "demand rights",
+    "1031": "demand easing of administrative sanctions",
+    "1032": "demand easing of blockade",
+    "1033": "demand release of persons or property",
+    "1034": "demand right to asylum",
+    "104": "demand material cooperation",
+    "1041": "demand economic aid",
+    "1042": "demand military aid",
+    "1043": "demand military protection",
+    "1044": "demand peace talks",
+    "105": "demand diplomatic cooperation",
+    "1051": "demand mediation",
+    "1052": "demand peace settlement",
+    "106": "demand de-escalation",
+    "107": "demand cessation of violence",
+    
+    # Category 11: Disapprove
+    "11": "disapprove",
+    "110": "criticize or denounce",
+    "111": "accuse",
+    "1111": "accuse of crime",
+    "1112": "accuse of human rights abuse",
+    "1113": "accuse of aggression",
+    "1114": "accuse of corruption",
+    "112": "blame",
+    "113": "deny responsibility",
+    "114": "give pessimistic comment",
+    
+    # Category 12: Reject
+    "12": "reject",
+    "120": "reject request or demand",
+    "121": "reject proposal",
+    "122": "reject plan or agreement",
+    "123": "reject accusation",
+    "124": "reject conditions",
+    "125": "reject peace proposal",
+    "126": "reject calls for peace talks",
+    
+    # Category 13: Threaten
+    "13": "threaten",
+    "130": "threaten non-military pressure",
+    "131": "threaten blockade",
+    "132": "threaten sanctions",
+    "1321": "threaten economic sanctions",
+    "1322": "threaten travel restrictions",
+    "1323": "threaten arms embargo",
+    "133": "threaten to reduce relations",
+    "134": "threaten to halt negotiations",
+    "135": "threaten to halt international aid",
+    "136": "threaten to withdraw",
+    "137": "threaten with political dissent",
+    "138": "threaten to use military force",
+    "1381": "threaten unconventional violence",
+    "1382": "threaten with military attack",
+    "1383": "threaten with nuclear weapons",
+    "139": "give ultimatum",
+    
+    # Category 14: Protest
+    "14": "protest",
+    "140": "engage in political dissent",
+    "141": "demonstrate or rally",
+    "1411": "demonstrate for leadership change",
+    "1412": "demonstrate for policy change",
+    "1413": "demonstrate for rights",
+    "142": "conduct hunger strike",
+    "143": "conduct strikes or boycotts",
+    "1431": "conduct general strike",
+    "1432": "conduct labor strike",
+    "1433": "conduct boycott",
+    "144": "obstruct passage",
+    "1441": "block road or border",
+    "1442": "occupy building or area",
+    "145": "protest violently",
+    
+    # Category 15: Exhibit Military Posture
+    "15": "exhibit military posture",
+    "150": "demonstrate military capability",
+    "151": "conduct military exercise",
+    "152": "mobilize armed forces",
+    "153": "move military equipment",
+    "154": "deploy peacekeepers",
+    
+    # Category 16: Reduce Relations
+    "16": "reduce relations",
+    "160": "reduce cooperation",
+    "161": "reduce aid",
+    "162": "halt negotiations",
+    "163": "expel or withdraw",
+    "1631": "expel diplomats",
+    "1632": "expel organization",
+    "164": "reduce or break diplomatic relations",
+    
+    # Category 17: Coerce
+    "17": "coerce",
+    "170": "seize possessions",
+    "1701": "seize property",
+    "1702": "confiscate assets",
+    "171": "impose administrative sanctions",
+    "1711": "impose blockade",
+    "1712": "impose border restrictions",
+    "1713": "impose curfew",
+    "172": "impose economic sanctions",
+    "1721": "impose embargo",
+    "1722": "ban imports or exports",
+    "173": "impose restrictions on political freedoms",
+    "174": "arrest, detain, or charge",
+    "1741": "arrest or detain",
+    "1742": "charge with crime",
+    "175": "expel from country",
+    
+    # ========== QUADCLASS 2: APPEAL (Cooperative Conflict) ==========
+    
+    # Category 04: Consult
+    "04": "consult",
+    "040": "discuss by telephone",
+    "041": "make statement",
+    "042": "make appeal",
+    "043": "engage in negotiation",
+    "044": "consult on policy",
+    
+    # Category 05: Engage Diplomatically
+    "05": "engage diplomatically",
+    "050": "engage in diplomatic cooperation",
+    "051": "praise or endorse",
+    "052": "defend verbally",
+    "053": "rally support",
+    "054": "express accord",
+    
+    # Category 06: Engage in Material Cooperation
+    "06": "provide aid",
+    "060": "cooperate",
+    "061": "provide economic aid",
+    "062": "provide military aid",
+    "063": "provide humanitarian aid",
+    "064": "provide shelter or sanctuary",
+    
+    # ========== QUADCLASS 1: VERBAL COOPERATION ==========
+    
+    # Category 01: Make Public Statement
+    "01": "make public statement",
+    "010": "make statement",
+    "011": "decline comment",
+    "012": "make pessimistic comment",
+    "013": "make optimistic comment",
+    
+    # Category 02: Appeal
+    "02": "appeal",
+    "020": "make appeal",
+    "021": "appeal for material cooperation",
+    "022": "appeal for diplomatic cooperation",
+    "023": "appeal for aid",
+    "024": "appeal for change",
+    
+    # Category 03: Express Intent to Cooperate
+    "03": "express intent to cooperate",
+    "030": "express intent",
+    "031": "express intent to engage in dialogue",
+    "032": "express intent to settle dispute",
+    "033": "express intent to meet",
+    "034": "express intent to provide aid",
+}
+
 def get_conn():
     """Get database connection"""
     if not DATABASE_URL:
