@@ -2775,9 +2775,9 @@ def api_map_alerts_aggregates():
         where.append("(" + " OR ".join(like_clauses) + ")")
         params.extend([f"%\"event_type\":\"{et}\"%" for et in event_types])
 
-        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
-        # Build aggregation query based on level
+    # Build aggregation query based on level
         if by == "city":
                 q = f"""
                         SELECT
