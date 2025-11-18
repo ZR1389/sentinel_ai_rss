@@ -463,6 +463,11 @@ ENGINE_WRITE_TO_DB = str(os.getenv("ENGINE_WRITE_TO_DB", "true")).lower() in ("1
 ENGINE_FAIL_CLOSED = str(os.getenv("ENGINE_FAIL_CLOSED", "true")).lower() in ("1","true","yes","y")
 ENGINE_CACHE_DIR   = os.getenv("ENGINE_CACHE_DIR", "cache")
 ENGINE_MAX_WORKERS = int(os.getenv("ENGINE_MAX_WORKERS", "5"))
+
+# GDELT-specific safeguards
+GDELT_LLM_ENABLED = str(os.getenv("GDELT_LLM_ENABLED", "true")).lower() in ("1","true","yes","y")  # Kill switch
+GDELT_MAX_WORKERS = int(os.getenv("GDELT_MAX_WORKERS", "2"))  # Limit GDELT to 2 concurrent LLM calls (vs 5 for RSS)
+
 ENABLE_SEMANTIC_DEDUP = str(os.getenv("ENGINE_SEMANTIC_DEDUP", "true")).lower() in ("1","true","yes","y")
 SEMANTIC_DEDUP_THRESHOLD = float(os.getenv("SEMANTIC_DEDUP_THRESHOLD", "0.9"))
 TEMPERATURE = float(os.getenv("THREAT_ENGINE_TEMPERATURE", "0.4"))
@@ -1273,7 +1278,17 @@ def summarize_alerts(alerts: list[dict]) -> list[dict]:
                 failed_alerts.append(alert)
             return None
 
-    workers = max(1, min(ENGINE_MAX_WORKERS, len(new_alerts)))
+    # Apply GDELT worker limit if processing GDELT alerts
+    is_gdelt_batch = any(alert.get('source') == 'gdelt' for alert in new_alerts)
+    if is_gdelt_batch and GDELT_LLM_ENABLED:
+        workers = max(1, min(GDELT_MAX_WORKERS, len(new_alerts)))
+        logger.info(f"Processing GDELT batch with {workers} workers (GDELT limit)")
+    elif is_gdelt_batch and not GDELT_LLM_ENABLED:
+        logger.warning("GDELT LLM enrichment disabled by kill switch, skipping batch")
+        return []
+    else:
+        workers = max(1, min(ENGINE_MAX_WORKERS, len(new_alerts)))
+    
     with ThreadPoolExecutor(max_workers=workers) as executor:
         processed = list(executor.map(process, new_alerts))
 
@@ -1476,6 +1491,26 @@ def enrich_and_store_alerts(region=None, country=None, city=None, category=None,
                failed_count=len(failed_alerts),
                workers_used=workers,
                enrichment_duration_ms=round(enrich_duration, 2))
+    
+    # Track LLM usage and estimated cost per cycle
+    try:
+        llm_calls_made = len(summarized)
+        estimated_cost = llm_calls_made * 0.002  # ~$0.002 per call
+        logger.info(
+            "enrichment_cost_tracking",
+            llm_calls=llm_calls_made,
+            estimated_cost_usd=round(estimated_cost, 4),
+            cost_per_cycle=round(estimated_cost, 4)
+        )
+        if estimated_cost > 1.0:
+            logger.warning(
+                "high_llm_cost_detected",
+                cost_usd=round(estimated_cost, 4),
+                recommendation="Check dedup settings"
+            )
+    except Exception as _e:
+        # Non-fatal; cost tracking should never break enrichment
+        logger.debug("cost_tracking_error", error=str(_e))
     
     # 5. Normalize for DB
     normalized = [_normalize_for_db(x) for x in relevant_summarized]

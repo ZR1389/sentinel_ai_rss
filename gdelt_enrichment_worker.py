@@ -20,8 +20,13 @@ logging.basicConfig(
 logger = logging.getLogger("gdelt_enrichment")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-BATCH_SIZE = int(os.getenv("GDELT_ENRICHMENT_BATCH_SIZE", "100"))
-POLL_INTERVAL = int(os.getenv("GDELT_ENRICHMENT_POLL_SECONDS", "300"))  # 5 minutes
+
+# Safeguards: Process in small batches, not aggressive polling
+GDELT_ENRICHMENT_BATCH_SIZE = int(os.getenv("GDELT_ENRICHMENT_BATCH_SIZE", "100"))  # Process in small batches
+GDELT_ENRICHMENT_POLL_SECONDS = int(os.getenv("GDELT_ENRICHMENT_POLL_SECONDS", "300"))  # 5 min polling (not aggressive)
+
+BATCH_SIZE = GDELT_ENRICHMENT_BATCH_SIZE
+POLL_INTERVAL = GDELT_ENRICHMENT_POLL_SECONDS
 
 # COMPREHENSIVE CAMEO EVENT CODE LOOKUP - 100+ codes
 CAMEO_CODES = {
@@ -259,6 +264,88 @@ def get_severity_label(goldstein: float) -> str:
     else:
         return "MINIMAL"
 
+def get_threat_category(event_code: str, quad_class: int) -> str:
+    """Map CAMEO codes to user-facing threat categories"""
+    if not event_code:
+        return "Geopolitical Event"
+    
+    # Get the root category code (first 2 digits)
+    root_code = event_code[:2] if len(event_code) >= 2 else event_code
+    
+    # QuadClass 1: Material Conflict (most severe)
+    if quad_class == 1:
+        if root_code == '18':  # Assault, coercion, military force
+            return "Armed Conflict"
+        elif root_code == '19':  # Fight, unconventional violence
+            return "Terrorism / Violence"
+        elif root_code == '20':  # Mass violence, genocide
+            return "Mass Atrocity"
+        else:
+            return "Armed Conflict"  # Default for QuadClass 1
+    
+    # QuadClass 2: Verbal Conflict
+    elif quad_class == 2:
+        if root_code == '13':  # Threaten
+            return "Military Threat"
+        elif root_code == '14':  # Protest
+            return "Civil Unrest"
+        elif root_code == '15':  # Exhibit military posture
+            return "Military Posture"
+        elif root_code == '17':  # Coerce
+            return "Coercion / Sanctions"
+        else:
+            return "Diplomatic Tension"
+    
+    # QuadClass 3: Material Cooperation
+    elif quad_class == 3:
+        return "International Cooperation"
+    
+    # QuadClass 4: Verbal Cooperation
+    elif quad_class == 4:
+        return "Diplomatic Activity"
+    
+    return "Geopolitical Event"
+
+def should_show_on_travel_map(event_code: str, quad_class: int, goldstein: float) -> bool:
+    """Filter logic for travel risk map"""
+    # Only show QuadClass 1/2 (material conflict, verbal conflict)
+    if quad_class not in [1, 2]:
+        return False
+    
+    # Only show high severity
+    if goldstein > -5:
+        return False
+    
+    # Get the root category code (first 2 digits)
+    root_code = event_code[:2] if event_code and len(event_code) >= 2 else event_code
+    
+    # EXCLUDE from travel map:
+    exclude_roots = [
+        # Diplomatic statements (not physical threats)
+        '01', '02', '03',
+        # Economic sanctions (don't affect traveler safety)
+        '172', '1721', '1722',
+    ]
+    
+    if root_code in exclude_roots or event_code in ['172', '1721', '1722', '1631', '1632', '164']:
+        return False
+    
+    # INCLUDE on travel map: violent events, protests, military threats
+    include_roots = [
+        '18',  # Armed conflict
+        '19',  # Violence/terrorism
+        '20',  # Mass violence
+        '14',  # Protests (can block travel)
+        '13',  # Military threats
+        '17',  # Coercion/arrests (traveler safety)
+    ]
+    
+    if root_code in include_roots:
+        return True
+    
+    # Default: if QuadClass 1 and severe, show it
+    return quad_class == 1 and goldstein <= -6
+
 def clean_actor(actor: str) -> Optional[str]:
     """Clean and validate actor name"""
     if not actor or actor in ["", ".", "---", "Unknown"]:
@@ -267,6 +354,56 @@ def clean_actor(actor: str) -> Optional[str]:
     if len(actor) <= 1:
         return None
     return actor
+
+def build_gdelt_summary(event: Dict[str, Any]) -> str:
+    """Build contextual summary for threat engine enrichment"""
+    
+    actor1 = clean_actor(event.get('actor1', ''))
+    actor2 = clean_actor(event.get('actor2', ''))
+    event_code = event.get('event_code', '')
+    event_description = get_event_description(event_code)
+    threat_category = get_threat_category(event_code, event.get('quad_class', 0))
+    
+    country = event.get('action_country', 'Unknown')
+    goldstein = event.get('goldstein', 0) or 0
+    severity_label = get_severity_label(goldstein)
+    num_articles = event.get('num_articles', 0)
+    num_sources = event.get('num_sources', 0)
+    
+    # Build natural language summary
+    parts = []
+    
+    # Event description with location
+    if actor1 and actor2:
+        base = f"{actor1} {event_description} involving {actor2}"
+    elif actor1:
+        base = f"{actor1} {event_description}"
+    else:
+        base = f"{threat_category} reported"
+    
+    if country and country != 'Unknown':
+        base += f" in {country}"
+    
+    parts.append(base)
+    
+    # Severity assessment
+    parts.append(f"Threat level: {severity_label}")
+    
+    # Media coverage (verification indicator)
+    if num_articles > 50:
+        parts.append(f"Widely reported ({num_articles} articles from {num_sources} sources)")
+    elif num_articles > 10:
+        parts.append(f"Confirmed by {num_sources} sources")
+    elif num_articles > 0:
+        parts.append(f"Limited coverage ({num_articles} reports)")
+    
+    # Goldstein context for threat engine
+    if goldstein <= -8:
+        parts.append("Extreme negative impact")
+    elif goldstein <= -6:
+        parts.append("Significant negative impact")
+    
+    return ". ".join(parts) + "."
 
 def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
     """Convert GDELT event to raw_alerts format with proper client-facing text"""
@@ -283,6 +420,8 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
     quad_class = event.get('quad_class', 0)
     goldstein = event.get('goldstein', 0) or 0
     severity_label = get_severity_label(goldstein)
+    threat_category = get_threat_category(event_code, quad_class)
+    travel_map_eligible = should_show_on_travel_map(event_code, quad_class, goldstein)
     country = event.get('action_country', 'Unknown')
     num_mentions = event.get('num_mentions', 0)
     num_articles = event.get('num_articles', 0)
@@ -292,17 +431,10 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
         title = f"{actor1} {event_description}"
     else:
         title = f"Conflict event reported in {country}"
-    summary_parts = []
-    if actor1 and actor2:
-        summary_parts.append(f"{actor1} engaged in {event_description} with {actor2}")
-    elif actor1:
-        summary_parts.append(f"{actor1} {event_description}")
-    summary_parts.append(f"Severity: {severity_label}")
-    if country and country != 'Unknown':
-        summary_parts.append(f"Location: {country}")
-    if num_articles > 0:
-        summary_parts.append(f"Coverage: {num_articles} articles from {event.get('num_sources', 0)} sources")
-    summary = ". ".join(summary_parts) + "."
+    
+    # Use improved summary generation
+    summary = build_gdelt_summary(event)
+    
     import json
     tags = [{
         'source': 'gdelt',
@@ -312,6 +444,8 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
         'event_type': event_description,
         'goldstein': goldstein,
         'severity': severity_label,
+        'category': threat_category,
+        'travel_map_eligible': travel_map_eligible,
         'avg_tone': event.get('avg_tone'),
         'num_mentions': num_mentions,
         'num_sources': event.get('num_sources'),
@@ -468,6 +602,17 @@ def process_batch(conn, batch_size: int = 100) -> int:
             """, (processed_ids,))
         
         conn.commit()
+        
+        # Cost estimation: Track alerts processed (LLM enrichment happens in threat_engine)
+        estimated_llm_calls = inserted_count  # Each alert will trigger 1 LLM call in threat_engine
+        estimated_cost_usd = estimated_llm_calls * 0.002  # ~$0.002 per LLM call
+        
+        logger.info(
+            "gdelt_enrichment_cost_estimate",
+            alerts_processed=inserted_count,
+            estimated_llm_calls=estimated_llm_calls,
+            estimated_cost_usd=round(estimated_cost_usd, 4)
+        )
         logger.info(f"✓ Processed {inserted_count} GDELT events into raw_alerts (will be enriched by Threat Engine)")
         
         return inserted_count
