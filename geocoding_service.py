@@ -14,6 +14,12 @@ import requests
 
 logger = logging.getLogger("geocoding")
 
+try:
+    from logging_config import get_metrics_logger
+    metrics = get_metrics_logger("geocoding")
+except Exception:
+    metrics = None
+
 OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
 OPENCAGE_URL = "https://api.opencagedata.com/geocode/v1/json"
 
@@ -83,9 +89,16 @@ def _check_redis_cache(location: str) -> Optional[Dict]:
         cached = redis_client.get(key)
         if cached:
             logger.info(f"[geocoding] Redis HIT: {location}")
+            if metrics:
+                metrics.increment("geocoding.cache.redis.hit")
             return json.loads(cached)
+        else:
+            if metrics:
+                metrics.increment("geocoding.cache.redis.miss")
     except Exception as e:
         logger.warning(f"[geocoding] Redis read error: {e}")
+        if metrics:
+            metrics.increment("geocoding.cache.redis.error")
     
     return None
 
@@ -128,6 +141,8 @@ def _check_db_cache(location: str) -> Optional[Dict]:
             
             if row:
                 logger.info(f"[geocoding] DB HIT: {location}")
+                if metrics:
+                    metrics.increment("geocoding.cache.db.hit")
                 return {
                     'lat': float(row[0]),
                     'lon': float(row[1]),
@@ -137,8 +152,13 @@ def _check_db_cache(location: str) -> Optional[Dict]:
                     'admin_level_2': row[5],
                     'source': 'db_cache'
                 }
+            else:
+                if metrics:
+                    metrics.increment("geocoding.cache.db.miss")
     except Exception as e:
         logger.warning(f"[geocoding] DB read error: {e}")
+        if metrics:
+            metrics.increment("geocoding.cache.db.error")
     
     return None
 
@@ -234,12 +254,18 @@ def _call_nominatim(location: str) -> Optional[Dict]:
                     "formatted": item.get("display_name")
                 }
                 logger.info(f"[geocoding] Nominatim: {location}")
+                if metrics:
+                    metrics.increment("geocoding.api.nominatim.success")
                 return geocoded
             else:
                 logger.debug(f"[geocoding] Nominatim no results: {location}")
+                if metrics:
+                    metrics.increment("geocoding.api.nominatim.no_results")
                 return None
         except Exception as e:
             logger.warning(f"[geocoding] Nominatim error: {e}")
+            if metrics:
+                metrics.increment("geocoding.api.nominatim.error")
             return None
 
 
@@ -260,6 +286,8 @@ def _call_opencage(location: str) -> Optional[Dict]:
     # Check quota
     if _daily_requests >= _daily_limit:
         logger.warning(f"[geocoding] Daily quota exceeded ({_daily_limit})")
+        if metrics:
+            metrics.increment("geocoding.api.opencage.quota_exceeded")
         return None
     
     try:
@@ -294,13 +322,21 @@ def _call_opencage(location: str) -> Optional[Dict]:
             }
             
             logger.info(f"[geocoding] OpenCage API ({_daily_requests}/{_daily_limit}): {location}")
+            if metrics:
+                metrics.increment("geocoding.api.opencage.success")
+                metrics.gauge("geocoding.api.opencage.quota_used", _daily_requests)
+                metrics.gauge("geocoding.api.opencage.quota_remaining", _daily_limit - _daily_requests)
             return geocoded
         else:
             logger.warning(f"[geocoding] No results from OpenCage: {location}")
+            if metrics:
+                metrics.increment("geocoding.api.opencage.no_results")
             return None
             
     except Exception as e:
         logger.error(f"[geocoding] OpenCage API error: {e}")
+        if metrics:
+            metrics.increment("geocoding.api.opencage.error")
         return None
 
 
@@ -407,6 +443,15 @@ def batch_geocode(locations: List[str], max_api_calls: int = 100) -> Dict[str, D
             seen[norm] = None
     
     logger.info(f"[geocoding] Batch: {len(results)}/{len(locations)} geocoded, {api_calls_used} API calls")
+    
+    if metrics:
+        metrics.increment("geocoding.batch.total", len(locations))
+        metrics.increment("geocoding.batch.success", len(results))
+        metrics.increment("geocoding.batch.api_calls", api_calls_used)
+        if len(locations) > 0:
+            cache_hit_rate = ((len(results) - api_calls_used) / len(locations)) * 100
+            metrics.gauge("geocoding.batch.cache_hit_rate_pct", cache_hit_rate)
+    
     return results
 
 
