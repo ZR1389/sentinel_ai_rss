@@ -2778,51 +2778,51 @@ def api_map_alerts_aggregates():
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
     # Build aggregation query based on level
-        if by == "city":
-                q = f"""
-                        SELECT
-                            city,
-                            country,
-                            COUNT(*) as alert_count,
-                            AVG(CAST(score AS FLOAT)) as avg_score,
-                            AVG(latitude) as center_lat,
-                            AVG(longitude) as center_lon,
-                            MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
-                            STDDEV(latitude) as lat_spread,
-                            STDDEV(longitude) as lon_spread
-                        FROM alerts
-                        {where_sql}
-                            AND city IS NOT NULL
-                            AND latitude IS NOT NULL
-                            AND longitude IS NOT NULL
-                        GROUP BY city, country
-                        ORDER BY alert_count DESC
-                """
+    if by == "city":
+        q = f"""
+            SELECT
+              city,
+              country,
+              COUNT(*) as alert_count,
+              AVG(CAST(score AS FLOAT)) as avg_score,
+              AVG(latitude) as center_lat,
+              AVG(longitude) as center_lon,
+              MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
+              STDDEV(latitude) as lat_spread,
+              STDDEV(longitude) as lon_spread
+            FROM alerts
+            {where_sql}
+              AND city IS NOT NULL
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+            GROUP BY city, country
+            ORDER BY alert_count DESC
+        """
+    else:
+        # Aggregate by country or region
+        if by == "region":
+            group_field = "COALESCE(region, country)"
         else:
-                # Aggregate by country or region
-                if by == "region":
-                        group_field = "COALESCE(region, country)"
-                else:
-                        group_field = "country"
+            group_field = "country"
 
-                q = f"""
-                        SELECT
-                            {group_field} as grouping,
-                            COUNT(*) as alert_count,
-                            AVG(CAST(score AS FLOAT)) as avg_score,
-                            AVG(latitude) as center_lat,
-                            AVG(longitude) as center_lon,
-                            MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
-                            STDDEV(latitude) as lat_spread,
-                            STDDEV(longitude) as lon_spread
-                        FROM alerts
-                        {where_sql}
-                            AND {group_field} IS NOT NULL
-                            AND latitude IS NOT NULL
-                            AND longitude IS NOT NULL
-                        GROUP BY {group_field}
-                        ORDER BY alert_count DESC
-                """
+        q = f"""
+            SELECT
+              {group_field} as grouping,
+              COUNT(*) as alert_count,
+              AVG(CAST(score AS FLOAT)) as avg_score,
+              AVG(latitude) as center_lat,
+              AVG(longitude) as center_lon,
+              MAX(COALESCE(threat_label, threat_level, 'medium')) as max_severity,
+              STDDEV(latitude) as lat_spread,
+              STDDEV(longitude) as lon_spread
+            FROM alerts
+            {where_sql}
+              AND {group_field} IS NOT NULL
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+            GROUP BY {group_field}
+            ORDER BY alert_count DESC
+        """
 
     try:
         rows = fetch_all(q, tuple(params))
