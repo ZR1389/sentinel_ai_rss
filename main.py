@@ -2598,8 +2598,8 @@ def api_map_alerts():
     where.append("latitude BETWEEN -90 AND 90")
     where.append("longitude BETWEEN -180 AND 180")
 
-    # Time window
-    where.append("published_at >= NOW() - make_interval(days => %s)")
+    # Time window (use existing published column)
+    where.append("published >= NOW() - make_interval(days => %s)")
     params.append(days)
 
     # Source filter (exclude acled by default)
@@ -2849,8 +2849,8 @@ def api_map_alerts_aggregates():
     where.append("latitude BETWEEN -90 AND 90")
     where.append("longitude BETWEEN -180 AND 180")
 
-    # Time window
-    where.append("published_at >= NOW() - make_interval(days => %s)")
+    # Time window (use existing published column)
+    where.append("published >= NOW() - make_interval(days => %s)")
     params.append(days)
 
     # Source filter (exclude acled)
