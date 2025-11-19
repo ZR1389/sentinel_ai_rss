@@ -10,6 +10,7 @@ import hashlib
 import json
 from typing import Optional, Dict, List
 from datetime import datetime, timedelta
+from datetime import timezone as _timezone
 import requests
 
 logger = logging.getLogger("geocoding")
@@ -22,6 +23,7 @@ except Exception:
 
 OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
 OPENCAGE_URL = "https://api.opencagedata.com/geocode/v1/json"
+OPENCAGE_DAILY_LIMIT = int(os.getenv("OPENCAGE_DAILY_LIMIT", "2500"))
 
 # Nominatim configuration (respect usage policy)
 NOMINATIM_URL = os.getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
@@ -33,7 +35,7 @@ NOMINATIM_ENABLED = os.getenv("NOMINATIM_ENABLED", "true").lower() in ("1","true
 
 # Daily quota tracking
 _daily_requests = 0
-_daily_limit = 2500
+_daily_limit = OPENCAGE_DAILY_LIMIT
 _last_reset = datetime.utcnow().date()
 
 
@@ -60,6 +62,74 @@ def _get_redis():
     except Exception as e:
         logger.debug("[geocoding] Redis unavailable: %s", e)
         return None
+
+
+def _seconds_until_midnight_utc() -> int:
+    now = datetime.now(tz=_timezone.utc)
+    tomorrow = (now + timedelta(days=1)).date()
+    midnight = datetime.combine(tomorrow, datetime.min.time(), tzinfo=_timezone.utc)
+    return max(1, int((midnight - now).total_seconds()))
+
+
+def _redis_opencage_try_reserve() -> bool:
+    """Atomically reserve one OpenCage request in Redis. Returns True if allowed."""
+    r = _get_redis()
+    if not r:
+        # Fallback to in-memory counters if Redis not available
+        global _daily_requests, _last_reset
+        today = datetime.utcnow().date()
+        if today > _last_reset:
+            _daily_requests = 0
+            _last_reset = today
+        if _daily_requests >= _daily_limit:
+            return False
+        _daily_requests += 1
+        return True
+    key = "geocoding:opencage:count"
+    ttl = _seconds_until_midnight_utc()
+    try:
+        new_val = r.incr(key)
+        if new_val == 1:
+            r.expire(key, ttl)
+        if new_val > _daily_limit:
+            # roll back and deny
+            r.decr(key)
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"[geocoding] Redis quota reserve error: {e}")
+        return False
+
+
+def _redis_opencage_get_usage() -> int:
+    r = _get_redis()
+    if not r:
+        return _daily_requests
+    try:
+        val = r.get("geocoding:opencage:count")
+        return int(val or 0)
+    except Exception:
+        return _daily_requests
+
+
+def _redis_nominatim_pace_wait(min_interval: float) -> None:
+    """Coordinate Nominatim 1 req/sec across workers via Redis."""
+    r = _get_redis()
+    if not r:
+        # Fallback: best-effort local sleep handled below
+        return
+    key = "geocoding:nominatim:last_call"
+    try:
+        import time
+        last = r.get(key)
+        if last:
+            last_ts = float(last)
+            now_ts = time.time()
+            wait = (last_ts + min_interval) - now_ts
+            if wait > 0:
+                time.sleep(wait)
+    except Exception:
+        pass
 
 
 def _normalize_location(location: str) -> str:
@@ -213,6 +283,8 @@ def _call_nominatim(location: str) -> Optional[Dict]:
         if elapsed < _nominatim_min_interval:
             import time
             time.sleep(_nominatim_min_interval - elapsed)
+        # Cross-process pacing via Redis
+        _redis_nominatim_pace_wait(_nominatim_min_interval)
 
         headers = {
             "User-Agent": USER_AGENT_APP,
@@ -283,8 +355,8 @@ def _call_opencage(location: str) -> Optional[Dict]:
         _daily_requests = 0
         _last_reset = today
     
-    # Check quota
-    if _daily_requests >= _daily_limit:
+    # Check and reserve quota (Redis-coordinated)
+    if not _redis_opencage_try_reserve():
         logger.warning(f"[geocoding] Daily quota exceeded ({_daily_limit})")
         if metrics:
             metrics.increment("geocoding.api.opencage.quota_exceeded")
@@ -300,8 +372,6 @@ def _call_opencage(location: str) -> Optional[Dict]:
         
         response = requests.get(OPENCAGE_URL, params=params, timeout=10)
         response.raise_for_status()
-        
-        _daily_requests += 1
         
         data = response.json()
         
@@ -321,11 +391,12 @@ def _call_opencage(location: str) -> Optional[Dict]:
                 'formatted': result.get('formatted')
             }
             
-            logger.info(f"[geocoding] OpenCage API ({_daily_requests}/{_daily_limit}): {location}")
+            current_usage = _redis_opencage_get_usage()
+            logger.info(f"[geocoding] OpenCage API ({current_usage}/{_daily_limit}): {location}")
             if metrics:
                 metrics.increment("geocoding.api.opencage.success")
-                metrics.gauge("geocoding.api.opencage.quota_used", _daily_requests)
-                metrics.gauge("geocoding.api.opencage.quota_remaining", _daily_limit - _daily_requests)
+                metrics.gauge("geocoding.api.opencage.quota_used", current_usage)
+                metrics.gauge("geocoding.api.opencage.quota_remaining", _daily_limit - current_usage)
             return geocoded
         else:
             logger.warning(f"[geocoding] No results from OpenCage: {location}")
@@ -440,6 +511,11 @@ def batch_geocode(locations: List[str], max_api_calls: int = 100) -> Dict[str, D
                 api_calls_used += 1
             seen[norm] = result
         else:
+            # API budget reached: enqueue for later processing via worker
+            try:
+                enqueue_geocode(location, priority=0)
+            except Exception:
+                pass
             seen[norm] = None
     
     logger.info(f"[geocoding] Batch: {len(results)}/{len(locations)} geocoded, {api_calls_used} API calls")
@@ -458,11 +534,51 @@ def batch_geocode(locations: List[str], max_api_calls: int = 100) -> Dict[str, D
 def get_quota_status() -> Dict:
     """Return current OpenCage API quota usage"""
     return {
-        'requests_today': _daily_requests,
+        'requests_today': _redis_opencage_get_usage(),
         'daily_limit': _daily_limit,
-        'remaining': _daily_limit - _daily_requests,
-        'reset_date': _last_reset.isoformat()
+        'remaining': _daily_limit - _redis_opencage_get_usage(),
+        'reset_in_seconds': _seconds_until_midnight_utc()
     }
+
+
+# --- Queue integration (Redis + RQ) ---
+def enqueue_geocode(location: str, priority: int = 0, delay_seconds: Optional[int] = None) -> bool:
+    """Enqueue a geocoding job for later processing.
+    Dedupe per-normalized location using a Redis set with TTL.
+    """
+    if not location or not location.strip():
+        return False
+    try:
+        r = _get_redis()
+        if not r:
+            logger.warning("[geocoding] Redis not available, cannot enqueue")
+            return False
+        norm = _normalize_location(location)
+        loc_hash = hashlib.md5(norm.encode()).hexdigest()[:12]
+        inflight_key = "geocoding:inflight"
+        member = loc_hash
+        # If already inflight, skip
+        if r.sismember(inflight_key, member):
+            return False
+        # Mark inflight with a TTL (~2 days)
+        r.sadd(inflight_key, member)
+        r.expire(inflight_key, 2 * 24 * 3600)
+
+        # Enqueue job
+        from rq import Queue
+        q = Queue('geocoding', connection=r, default_timeout=120)
+        job_id = f"geocode:{loc_hash}"
+        kwargs = {'location': location, 'priority': priority}
+        if delay_seconds and delay_seconds > 0:
+            from datetime import timedelta as _td
+            q.enqueue_in(_td(seconds=delay_seconds), 'workers.geocode_worker.process_geocode', **kwargs, job_id=job_id, at_front=(priority>0))
+        else:
+            q.enqueue('workers.geocode_worker.process_geocode', **kwargs, job_id=job_id, at_front=(priority>0))
+        logger.info(f"[geocoding] Enqueued geocode job for '{location}' (prio={priority})")
+        return True
+    except Exception as e:
+        logger.error(f"[geocoding] Failed to enqueue geocode for '{location}': {e}")
+        return False
 
 
 def geocode_and_update_table(table_name: str, id_column: str, location_column: str, 

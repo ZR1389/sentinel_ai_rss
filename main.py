@@ -39,7 +39,7 @@ try:
 except Exception:
     submit_fallback_job = get_fallback_job_status = list_fallback_jobs = job_queue_enabled = None
 
-from flask import Flask, request, jsonify, make_response, g
+from flask import Flask, request, jsonify, make_response, g, render_template
 
 # Rate limiting (optional)
 try:
@@ -3959,6 +3959,154 @@ def geocoding_notify():
     except Exception as e:
         logger.error(f"/admin/geocoding/notify error: {e}")
         return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
+@app.route("/admin/geocoding/queue-status", methods=["GET", "OPTIONS"])
+def geocoding_queue_status():
+    """Show geocoding queue depth and quota status (Redis/RQ)."""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+
+    try:
+        from geocoding_service import get_quota_status, _get_redis
+        from rq import Queue
+        from rq.registry import StartedJobRegistry, FailedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry
+
+        r = _get_redis()
+        if not r:
+            return _build_cors_response(make_response(jsonify({
+                "ok": False,
+                "error": "Redis not configured",
+            }), 503))
+
+        q = Queue('geocoding', connection=r)
+        started_reg = StartedJobRegistry('geocoding', connection=r)
+        failed_reg = FailedJobRegistry('geocoding', connection=r)
+        scheduled_reg = ScheduledJobRegistry('geocoding', connection=r)
+        deferred_reg = DeferredJobRegistry('geocoding', connection=r)
+
+        try:
+            inflight = int(r.scard('geocoding:inflight'))
+        except Exception:
+            inflight = None
+
+        quota = get_quota_status()
+
+        payload = {
+            "ok": True,
+            "queue": {
+                "queued": q.count,
+                "started": len(started_reg.get_job_ids()),
+                "scheduled": len(scheduled_reg.get_job_ids()),
+                "failed": len(failed_reg.get_job_ids()),
+                "deferred": len(deferred_reg.get_job_ids()),
+                "inflight_dedup": inflight,
+            },
+            "quota": quota
+        }
+
+        return _build_cors_response(jsonify(payload))
+    except Exception as e:
+        logger.error(f"/admin/geocoding/queue-status error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
+@app.route("/admin/geocoding/dashboard", methods=["GET", "OPTIONS"])
+def geocoding_dashboard():
+    """Compact dashboard combining coverage/backlog, queue depth, and quota status."""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+
+    try:
+        # Coverage/backlog
+        from geocoding_monitor import get_geocoding_status
+        from db_utils import _get_db_connection
+        with _get_db_connection() as conn:
+            coverage = get_geocoding_status(conn)
+
+        # Queue + quota
+        from geocoding_service import get_quota_status, _get_redis
+        from rq import Queue
+        from rq.registry import StartedJobRegistry, FailedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry
+
+        r = _get_redis()
+        queue_payload = None
+        if r:
+            q = Queue('geocoding', connection=r)
+            started_reg = StartedJobRegistry('geocoding', connection=r)
+            failed_reg = FailedJobRegistry('geocoding', connection=r)
+            scheduled_reg = ScheduledJobRegistry('geocoding', connection=r)
+            deferred_reg = DeferredJobRegistry('geocoding', connection=r)
+            try:
+                inflight = int(r.scard('geocoding:inflight'))
+            except Exception:
+                inflight = None
+            queue_payload = {
+                "queued": q.count,
+                "started": len(started_reg.get_job_ids()),
+                "scheduled": len(scheduled_reg.get_job_ids()),
+                "failed": len(failed_reg.get_job_ids()),
+                "deferred": len(deferred_reg.get_job_ids()),
+                "inflight_dedup": inflight,
+            }
+
+        quota = get_quota_status()
+
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "coverage": coverage,
+            "queue": queue_payload or {"error": "Redis not configured"},
+            "quota": quota
+        }))
+    except Exception as e:
+        logger.error(f"/admin/geocoding/dashboard error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
+@app.route("/admin/geocoding/dashboard/view", methods=["GET"]) 
+def geocoding_dashboard_view():
+    """Server-rendered HTML view of geocoding coverage, queue, and quota."""
+    try:
+        # Coverage/backlog
+        from geocoding_monitor import get_geocoding_status
+        from db_utils import _get_db_connection
+        with _get_db_connection() as conn:
+            coverage = get_geocoding_status(conn)
+
+        # Queue + quota
+        from geocoding_service import get_quota_status, _get_redis
+        from rq import Queue
+        from rq.registry import StartedJobRegistry, FailedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry
+
+        r = _get_redis()
+        queue_payload = None
+        if r:
+            q = Queue('geocoding', connection=r)
+            started_reg = StartedJobRegistry('geocoding', connection=r)
+            failed_reg = FailedJobRegistry('geocoding', connection=r)
+            scheduled_reg = ScheduledJobRegistry('geocoding', connection=r)
+            deferred_reg = DeferredJobRegistry('geocoding', connection=r)
+            try:
+                inflight = int(r.scard('geocoding:inflight'))
+            except Exception:
+                inflight = None
+            queue_payload = {
+                "queued": q.count,
+                "started": len(started_reg.get_job_ids()),
+                "scheduled": len(scheduled_reg.get_job_ids()),
+                "failed": len(failed_reg.get_job_ids()),
+                "deferred": len(deferred_reg.get_job_ids()),
+                "inflight_dedup": inflight,
+            }
+
+        quota = get_quota_status()
+
+        return render_template(
+            "admin_geocoding_dashboard.html",
+            coverage=coverage,
+            queue=queue_payload,
+            quota=quota,
+        )
+    except Exception as e:
+        logger.error(f"/admin/geocoding/dashboard/view error: {e}")
+        return make_response(f"Dashboard error: {e}", 500)
 
 @app.route("/admin/gdelt/reprocess", methods=["POST", "OPTIONS"])
 def gdelt_reprocess_coords():
