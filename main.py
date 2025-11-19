@@ -2979,12 +2979,22 @@ def api_map_alerts_aggregates():
 
             aggregates.append(agg_item)
         
+        # Debug: count pre-filter rows to diagnose empty results
+        debug_pre_filter = fetch_all(f"SELECT COUNT(*) as cnt FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL", tuple())
+        debug_recent = fetch_all(f"SELECT COUNT(*) as cnt FROM alerts WHERE published >= NOW() - INTERVAL '{days} days' AND latitude IS NOT NULL AND longitude IS NOT NULL", tuple())
+        debug_source = fetch_all(f"SELECT LOWER(source) as src, COUNT(*) as cnt FROM alerts WHERE published >= NOW() - INTERVAL '{days} days' AND latitude IS NOT NULL AND longitude IS NOT NULL GROUP BY LOWER(source) LIMIT 10", tuple())
+        
         payload = {
             "ok": True,
             "aggregates": aggregates,
             "meta": {"days": days, "sources": sources, "by": by, "filters": {
                 "severity": severities, "category": categories, "event_type": event_types, "travel": travel_only
-            }}
+            }},
+            "debug": {
+                "total_with_coords": debug_pre_filter[0]['cnt'] if debug_pre_filter else 0,
+                "recent_with_coords": debug_recent[0]['cnt'] if debug_recent else 0,
+                "sources_breakdown": [{"source": r['src'], "count": r['cnt']} for r in (debug_source or [])]
+            }
         }
         try:
             if agg_cache_ttl > 0:
