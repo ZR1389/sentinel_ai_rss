@@ -2557,6 +2557,24 @@ def api_map_alerts():
     lon = request.args.get("lon")
     radius = request.args.get("radius", "100")  # km
 
+    # Filter parameters (severity, category, event_type, travel, bbox)
+    severity_param = request.args.get("severity")
+    severities = [s.strip().lower() for s in severity_param.split(",")] if severity_param else []
+    
+    category_param = request.args.get("category")
+    categories = [c.strip().lower() for c in category_param.split(",")] if category_param else []
+    
+    event_type_param = request.args.get("event_type")
+    event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
+    
+    travel_only = str(request.args.get("travel", "0")).lower() in ("1", "true", "yes", "y")
+    
+    # Bounding box parameters
+    min_lat = request.args.get("min_lat")
+    min_lon = request.args.get("min_lon")
+    max_lat = request.args.get("max_lat")
+    max_lon = request.args.get("max_lon")
+
     # Cache lookup (keyed by path, auth bucket, and sorted query args)
     try:
         cache_ttl = int(os.getenv("MAP_CACHE_TTL_SECONDS", "120"))
@@ -2574,8 +2592,14 @@ def api_map_alerts():
     where = []
     params = []
 
+    # Require valid coordinates for map display
+    where.append("latitude IS NOT NULL")
+    where.append("longitude IS NOT NULL")
+    where.append("latitude BETWEEN -90 AND 90")
+    where.append("longitude BETWEEN -180 AND 180")
+
     # Time window
-    where.append("published >= NOW() - make_interval(days => %s)")
+    where.append("published_at >= NOW() - make_interval(days => %s)")
     params.append(days)
 
     # Source filter (exclude acled by default)
@@ -2703,8 +2727,14 @@ def api_map_alerts():
             properties["lat"] = float(lat_val)
             properties["lon"] = float(lon_val)
             
-            # Preferred display summary for popups
-            properties["display_summary"] = properties.get("gpt_summary") or properties.get("summary")
+            # Preferred display summary for popups (fallback chain: gpt_summary -> summary -> en_snippet -> title)
+            properties["display_summary"] = (
+                properties.get("gpt_summary") 
+                or properties.get("summary") 
+                or properties.get("en_snippet") 
+                or properties.get("title") 
+                or "No description available"
+            )
             
             # Compute risk_color from severity
             severity = (properties.get("threat_label") or properties.get("threat_level") or "medium").lower()
@@ -2813,8 +2843,14 @@ def api_map_alerts_aggregates():
     where = []
     params = []
 
+    # Require valid coordinates for map display
+    where.append("latitude IS NOT NULL")
+    where.append("longitude IS NOT NULL")
+    where.append("latitude BETWEEN -90 AND 90")
+    where.append("longitude BETWEEN -180 AND 180")
+
     # Time window
-    where.append("published >= NOW() - make_interval(days => %s)")
+    where.append("published_at >= NOW() - make_interval(days => %s)")
     params.append(days)
 
     # Source filter (exclude acled)
