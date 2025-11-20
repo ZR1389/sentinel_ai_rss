@@ -3677,6 +3677,17 @@ def admin_gdelt_enrich():
         
         batch_size = int(request.args.get("batch_size", 1000))
         conn = get_conn()
+        processed = process_batch(conn, batch_size)
+        conn.close()
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "processed": processed,
+            "batch_size": batch_size
+        }))
+    except Exception as e:
+        logger.error(f"/admin/gdelt/enrich error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
 @app.route("/admin/gdelt/filter-stats", methods=["GET", "OPTIONS"])
 def admin_gdelt_filter_stats():
