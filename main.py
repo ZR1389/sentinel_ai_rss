@@ -2410,6 +2410,16 @@ def alerts_public_latest():
     radius = request.args.get("radius", "100")  # km
     days = request.args.get("days", "7")
 
+    # Optional filters: severity, category, event_type (public variant)
+    severity_param = request.args.get("severity")
+    severities = [s.strip().lower() for s in severity_param.split(",")] if severity_param else []
+
+    category_param = request.args.get("category")
+    categories = [c.strip().lower() for c in category_param.split(",")] if category_param else []
+
+    event_type_param = request.args.get("event_type")
+    event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
+
     where = []
     params = []
 
@@ -2989,6 +2999,16 @@ def api_map_alerts_aggregates():
                 "armed conflict": "#DC2626",
                 "material conflict": "#EA580C"
             }
+            # Build a stable group label for popup titles
+            if by == "city":
+                _city = row.get("city") or "Unknown"
+                _country = row.get("country")
+                group_label = f"{_city}, {_country}" if _country else _city
+            elif by == "region":
+                group_label = row.get("grouping") or "Unknown"
+            else:
+                group_label = row.get("grouping") or "Unknown"
+            safe_title = f"{group_label} - {count} alerts"
             
             feature = {
                 "type": "Feature",
@@ -3006,7 +3026,7 @@ def api_map_alerts_aggregates():
                     "risk_color": severity_colors.get(severity.lower(), severity_colors["medium"]),
                     "risk_radius": int(radius_meters),
                     "display_summary": f"{count} alerts in this area",
-                    "title": f"{agg_item.get('city') or agg_item.get('region') or agg_item.get('country', 'Unknown')} - {count} alerts"
+                    "title": safe_title
                 }
             }
             
@@ -3018,6 +3038,13 @@ def api_map_alerts_aggregates():
                 feature["properties"]["region"] = row.get("grouping") or "Unknown"
             else:
                 feature["properties"]["country"] = row.get("grouping") or "Unknown"
+            # Final guards to ensure popup consistency
+            props = feature["properties"]
+            if not props.get("title"):
+                props["title"] = safe_title
+            rc = props.get("risk_color")
+            if not rc or not isinstance(rc, str) or not rc.startswith("#"):
+                props["risk_color"] = severity_colors.get(severity.lower(), "#F59E0B")
             
             features.append(feature)
         
@@ -3025,6 +3052,11 @@ def api_map_alerts_aggregates():
         debug_pre_filter = fetch_all(f"SELECT COUNT(*) as cnt FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL", tuple())
         debug_recent = fetch_all(f"SELECT COUNT(*) as cnt FROM alerts WHERE published >= NOW() - INTERVAL '{days} days' AND latitude IS NOT NULL AND longitude IS NOT NULL", tuple())
         debug_source = fetch_all(f"SELECT LOWER(source) as src, COUNT(*) as cnt FROM alerts WHERE published >= NOW() - INTERVAL '{days} days' AND latitude IS NOT NULL AND longitude IS NOT NULL GROUP BY LOWER(source) LIMIT 10", tuple())
+        
+        # Log sample feature for frontend debugging
+        if features:
+            logger.info(f"[AGGREGATES] Sample feature structure: {features[0]}")
+            logger.info(f"[AGGREGATES] Total features: {len(features)}, Total aggregates: {len(aggregates)}")
         
         payload = {
             "ok": True,
@@ -3036,7 +3068,9 @@ def api_map_alerts_aggregates():
             "debug": {
                 "total_with_coords": debug_pre_filter[0]['cnt'] if debug_pre_filter else 0,
                 "recent_with_coords": debug_recent[0]['cnt'] if debug_recent else 0,
-                "sources_breakdown": [{"source": r['src'], "count": r['cnt']} for r in (debug_source or [])]
+                "sources_breakdown": [{"source": r['src'], "count": r['cnt']} for r in (debug_source or [])],
+                "sample_feature": features[0] if features else None,
+                "sample_aggregate": aggregates[0] if aggregates else None
             }
         }
         try:
