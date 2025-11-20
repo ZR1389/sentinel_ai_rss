@@ -11,6 +11,7 @@ Environment Variables (optional):
   GDELT_POLL_INTERVAL_MIN=15      # minutes between polls
   GDELT_RETRY_ATTEMPTS=3          # max retries for 404/network errors
   GDELT_RETRY_BACKOFF=5           # seconds between retries
+  GDELT_ENABLE_FILTERS=true       # enable aggressive filtering (see gdelt_filters.py)
 
 Schema (created automatically if missing):
   gdelt_events(
@@ -64,10 +65,14 @@ _poll_thread_started = False
 GDELT_RETRY_ATTEMPTS = int(os.getenv("GDELT_RETRY_ATTEMPTS", "3"))
 GDELT_RETRY_BACKOFF = int(os.getenv("GDELT_RETRY_BACKOFF", "5"))
 
+# Enable aggressive filtering (gdelt_filters.py)
+GDELT_ENABLE_FILTERS = os.getenv("GDELT_ENABLE_FILTERS", "false").lower() in ("true", "1", "yes")
+
 # Metrics tracking
 _ingest_metrics = {
     "total_rows_processed": 0,
     "skipped_rows": 0,
+    "filtered_rows": 0,  # New: track filter rejections
     "retries_performed": 0,
     "successful_ingests": 0,
     "failed_ingests": 0
@@ -326,6 +331,18 @@ def _parse_and_store_export(zip_bytes: bytes, filename: str) -> int:
                             'action_long': safe_float(gv(60)),  # FIXED: Column 60 is ActionGeo_Long
                             'raw': row
                         }
+                        
+                        # Apply aggressive filtering if enabled
+                        if GDELT_ENABLE_FILTERS:
+                            try:
+                                from gdelt_filters import should_ingest_gdelt_event
+                                if not should_ingest_gdelt_event(mapped, stage="ingest"):
+                                    skipped_this_run += 1
+                                    _ingest_metrics["filtered_rows"] += 1
+                                    continue
+                            except ImportError:
+                                logger.warning("[gdelt] gdelt_filters.py not found; filter disabled")
+                        
                         rows_batch.append(mapped)
                         if len(rows_batch) >= batch_size:
                             inserted += _flush_batch(cur, rows_batch)

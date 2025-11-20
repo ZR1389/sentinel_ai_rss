@@ -3677,6 +3677,46 @@ def admin_gdelt_enrich():
         
         batch_size = int(request.args.get("batch_size", 1000))
         conn = get_conn()
+
+@app.route("/admin/gdelt/filter-stats", methods=["GET", "OPTIONS"])
+def admin_gdelt_filter_stats():
+    """Get current GDELT filter configuration and metrics"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    api_key = request.headers.get("X-API-Key")
+    expected = os.getenv("ADMIN_API_KEY") or os.getenv("API_KEY")
+    if expected and api_key != expected:
+        return _build_cors_response(make_response(jsonify({"error": "Unauthorized"}), 401))
+    
+    try:
+        from gdelt_filters import get_filter_stats
+        from gdelt_ingest import get_ingest_metrics
+        
+        filter_config = get_filter_stats()
+        ingest_metrics = get_ingest_metrics()
+        
+        # Check if filtering is enabled
+        filters_enabled = os.getenv("GDELT_ENABLE_FILTERS", "false").lower() in ("true", "1", "yes")
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "filters_enabled": filters_enabled,
+            "filter_config": filter_config,
+            "ingest_metrics": ingest_metrics,
+            "env_vars": {
+                "GDELT_ENABLE_FILTERS": os.getenv("GDELT_ENABLE_FILTERS", "false"),
+                "GDELT_MIN_GOLDSTEIN": os.getenv("GDELT_MIN_GOLDSTEIN", "-5.0"),
+                "GDELT_MIN_MENTIONS": os.getenv("GDELT_MIN_MENTIONS", "3"),
+                "GDELT_MIN_TONE": os.getenv("GDELT_MIN_TONE", "-5.0"),
+                "GDELT_MAX_AGE_HOURS": os.getenv("GDELT_MAX_AGE_HOURS", "72"),
+                "GDELT_REQUIRE_SOURCE_URL": os.getenv("GDELT_REQUIRE_SOURCE_URL", "false"),
+                "GDELT_REQUIRE_PRECISE_COORDS": os.getenv("GDELT_REQUIRE_PRECISE_COORDS", "false")
+            }
+        }))
+    except Exception as e:
+        logger.error(f"/admin/gdelt/filter-stats error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
         
         total_processed = 0
         batches = 0

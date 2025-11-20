@@ -28,6 +28,9 @@ GDELT_ENRICHMENT_POLL_SECONDS = int(os.getenv("GDELT_ENRICHMENT_POLL_SECONDS", "
 BATCH_SIZE = GDELT_ENRICHMENT_BATCH_SIZE
 POLL_INTERVAL = GDELT_ENRICHMENT_POLL_SECONDS
 
+# Enable aggressive filtering (gdelt_filters.py)
+GDELT_ENABLE_FILTERS = os.getenv("GDELT_ENABLE_FILTERS", "false").lower() in ("true", "1", "yes")
+
 # COMPREHENSIVE CAMEO EVENT CODE LOOKUP - 100+ codes
 CAMEO_CODES = {
     # ========== QUADCLASS 4: MATERIAL CONFLICT ==========
@@ -517,9 +520,21 @@ def process_batch(conn, batch_size: int = 100) -> int:
         
         processed_ids = []
         inserted_count = 0
+        filtered_count = 0
         
         for event in events:
             try:
+                # Apply aggressive filtering if enabled (before conversion to raw_alert)
+                if GDELT_ENABLE_FILTERS:
+                    try:
+                        from gdelt_filters import should_ingest_gdelt_event
+                        if not should_ingest_gdelt_event(dict(event), stage="enrichment"):
+                            filtered_count += 1
+                            processed_ids.append(event['global_event_id'])  # Mark as processed to avoid reprocessing
+                            continue
+                    except ImportError:
+                        logger.warning("[gdelt_enrichment] gdelt_filters.py not found; filter disabled")
+                
                 raw_alert = gdelt_to_raw_alert(dict(event))
                 
                 # Validate and fix coordinates
@@ -615,6 +630,8 @@ def process_batch(conn, batch_size: int = 100) -> int:
         # Cost estimation: Track alerts processed (LLM enrichment happens in threat_engine)
         estimated_llm_calls = inserted_count  # Each alert will trigger 1 LLM call in threat_engine
         estimated_cost_usd = estimated_llm_calls * 0.002  # ~$0.002 per LLM call
+        
+        logger.info(f"✓ Batch enrichment complete: {inserted_count} inserted, {filtered_count} filtered (${estimated_cost_usd:.4f} estimated LLM cost)")
         
         logger.info(
             "gdelt_enrichment_cost_estimate",
