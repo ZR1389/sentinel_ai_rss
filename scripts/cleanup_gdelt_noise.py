@@ -19,12 +19,31 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from gdelt_filters import should_ingest_gdelt_event
 
-load_dotenv()
+# Load production environment for database access
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+production_env = os.path.join(project_root, '.env.production')
+
+if not os.path.exists(production_env):
+    print(f"ERROR: {production_env} not found")
+    sys.exit(1)
+
+# Override any existing environment with production values
+load_dotenv(production_env, override=True)
 
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
-    print("ERROR: DATABASE_URL not set")
+    print("ERROR: DATABASE_URL not set in .env.production")
     sys.exit(1)
+
+# Validate it's a PostgreSQL URL
+if not DATABASE_URL.startswith('postgresql://'):
+    print(f"ERROR: DATABASE_URL must be PostgreSQL, got: {DATABASE_URL[:30]}...")
+    print("This script requires .env.production with PostgreSQL connection")
+    sys.exit(1)
+
+print(f"✓ Connected to PostgreSQL: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'database'}")
+print()
 
 
 def get_connection():
@@ -55,11 +74,18 @@ def extract_gdelt_metadata(alert: Dict[str, Any]) -> Dict[str, Any]:
     import json
     
     tags = alert.get('tags')
+    
+    # Handle different tag formats
+    # Tags can be: string (JSON), list of dicts [{...}], or dict {...}
     if isinstance(tags, str):
         try:
             tags = json.loads(tags)
         except:
-            tags = {}
+            tags = []
+    
+    # If tags is a list, get first element (GDELT stores as [{...}])
+    if isinstance(tags, list) and len(tags) > 0:
+        tags = tags[0] if isinstance(tags[0], dict) else {}
     elif not isinstance(tags, dict):
         tags = {}
     
@@ -81,6 +107,13 @@ def cleanup_gdelt_alerts(dry_run=True, batch_size=1000):
     """
     Remove GDELT alerts that don't pass new filters.
     
+    NOTE: Existing GDELT alerts in the `alerts` table lack rich metadata
+    (goldstein, num_mentions, etc.) needed for filtering. They only have
+    simple string tags like ['gdelt', 'quad_3', '110'].
+    
+    Since we can't properly filter them, this script will DELETE ALL GDELT alerts
+    from the alerts table. New alerts will be properly filtered going forward.
+    
     Args:
         dry_run: If True, only simulate deletion (safe mode)
         batch_size: Number of alerts to process per batch
@@ -89,6 +122,9 @@ def cleanup_gdelt_alerts(dry_run=True, batch_size=1000):
     print(f"\n{'=' * 70}")
     print(f"GDELT Noise Cleanup {'(DRY RUN - Safe Mode)' if dry_run else '(LIVE MODE)'}")
     print(f"{'=' * 70}")
+    print("\n⚠️  WARNING: Existing GDELT alerts lack metadata for filtering")
+    print("   This script will DELETE ALL GDELT alerts from alerts table.")
+    print("   New alerts will be properly filtered going forward.\n")
     print(f"Started: {datetime.now().isoformat()}")
     
     conn = get_connection()
