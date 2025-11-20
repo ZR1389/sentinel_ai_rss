@@ -165,13 +165,13 @@ def cleanup_gdelt_heuristic(dry_run=True, batch_size=1000):
     
     noise_count = 0
     signal_count = 0
-    offset = 0
     batch_num = 0
     
     noise_reasons = {}
     
+    # IMPORTANT: Do NOT use OFFSET while deleting rows; it causes skips.
+    # Instead, repeatedly select the next batch of remaining rows until none left.
     while True:
-        # Fetch batch
         cur.execute("""
             SELECT 
                 uuid, title, summary, gpt_summary, confidence, score,
@@ -179,9 +179,8 @@ def cleanup_gdelt_heuristic(dry_run=True, batch_size=1000):
             FROM alerts
             WHERE LOWER(source) = 'gdelt'
             ORDER BY published DESC
-            LIMIT %s OFFSET %s
-        """, (batch_size, offset))
-        
+            LIMIT %s
+        """, (batch_size,))
         alerts = cur.fetchall()
         if not alerts:
             break
@@ -203,7 +202,8 @@ def cleanup_gdelt_heuristic(dry_run=True, batch_size=1000):
                 batch_signal += 1
                 signal_count += 1
         
-        print(f"Batch {batch_num}: Processing {len(alerts)} alerts (offset {offset})")
+        remaining_estimate = max(total_count - (noise_count + signal_count), 0)
+        print(f"Batch {batch_num}: Processing {len(alerts)} alerts (estimated remaining before batch: {remaining_estimate:,})")
         print(f"  Keep: {batch_signal}, Delete: {batch_noise}")
         
         # Execute batch deletion
@@ -221,10 +221,13 @@ def cleanup_gdelt_heuristic(dry_run=True, batch_size=1000):
             else:
                 print(f"  → Would delete {batch_noise} alerts")
         
-        progress_pct = ((offset + len(alerts)) / total_count * 100)
-        print(f"  Progress: {offset + len(alerts):,}/{total_count:,} ({progress_pct:.1f}%)\n")
-        
-        offset += batch_size
+        progress_pct = ((noise_count + signal_count) / total_count * 100)
+        shown_processed = min(noise_count + signal_count, total_count)
+        print(f"  Progress: {shown_processed:,}/{total_count:,} ({min(progress_pct,100):.1f}%)\n")
+
+        # In dry-run mode we only want one pass to avoid looping same batch repeatedly.
+        if dry_run:
+            break
     
     cur.close()
     conn.close()
