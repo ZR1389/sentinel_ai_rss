@@ -2946,6 +2946,7 @@ def api_map_alerts_aggregates():
         rows = fetch_all(q, tuple(params))
 
         aggregates = []
+        features = []
         for row in (rows or []):
             count = int(row.get("alert_count") or 0)
             avg_score = float(row.get("avg_score") or 0.5)
@@ -2978,6 +2979,47 @@ def api_map_alerts_aggregates():
                 agg_item["country"] = row.get("grouping") or "Unknown"
 
             aggregates.append(agg_item)
+            
+            # Also create GeoJSON feature for Leaflet rendering
+            severity_colors = {
+                "critical": "#DC2626",
+                "high": "#EA580C", 
+                "medium": "#F59E0B",
+                "low": "#10B981",
+                "armed conflict": "#DC2626",
+                "material conflict": "#EA580C"
+            }
+            
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [round(lon, 4), round(lat, 4)]
+                },
+                "properties": {
+                    "count": count,
+                    "avg_score": round(avg_score, 2),
+                    "severity": severity,
+                    "lat": round(lat, 4),
+                    "lon": round(lon, 4),
+                    "radius": int(radius_meters),
+                    "risk_color": severity_colors.get(severity.lower(), severity_colors["medium"]),
+                    "risk_radius": int(radius_meters),
+                    "display_summary": f"{count} alerts in this area",
+                    "title": f"{agg_item.get('city') or agg_item.get('region') or agg_item.get('country', 'Unknown')} - {count} alerts"
+                }
+            }
+            
+            # Copy location fields to properties
+            if by == "city":
+                feature["properties"]["city"] = row.get("city") or "Unknown"
+                feature["properties"]["country"] = row.get("country") or None
+            elif by == "region":
+                feature["properties"]["region"] = row.get("grouping") or "Unknown"
+            else:
+                feature["properties"]["country"] = row.get("grouping") or "Unknown"
+            
+            features.append(feature)
         
         # Debug: count pre-filter rows to diagnose empty results
         debug_pre_filter = fetch_all(f"SELECT COUNT(*) as cnt FROM alerts WHERE latitude IS NOT NULL AND longitude IS NOT NULL", tuple())
@@ -2987,6 +3029,7 @@ def api_map_alerts_aggregates():
         payload = {
             "ok": True,
             "aggregates": aggregates,
+            "features": features,
             "meta": {"days": days, "sources": sources, "by": by, "filters": {
                 "severity": severities, "category": categories, "event_type": event_types, "travel": travel_only
             }},
