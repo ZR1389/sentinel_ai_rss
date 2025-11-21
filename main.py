@@ -3181,6 +3181,201 @@ def analytics_timeline():
         logger.error("analytics_timeline error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Timeline query failed"}), 500))
 
+# ---------- Stats Overview Endpoint ----------
+STATS_OVERVIEW_CACHE_SECONDS = int(os.getenv("STATS_OVERVIEW_CACHE_SECONDS", "120"))
+_STATS_OVERVIEW_CACHE = {}
+
+@app.route("/api/stats/overview", methods=["GET"])
+@login_required
+def stats_overview():
+    """Return consolidated stats for dashboard.
+    Query params:
+      days=7|30|90 (optional) controls window for weekly_trends, severity_breakdown, top_regions
+      Plan-based limits: FREE=7, PRO=30, ENTERPRISE/VIP=90
+    Response:
+      {
+        ok, updated_at, threats_7d, threats_30d, trend_7d,
+        active_monitors, tracked_locations, chat_messages_month,
+        weekly_trends: [{date, count}], top_regions: [{region,count,percentage}],
+        severity_breakdown: {critical, high, medium, low, critical_pct, high_pct, medium_pct, low_pct, total},
+        window_days, max_window_days (plan limit)
+      }
+    """
+    if fetch_all is None or fetch_one is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+
+    try:
+        # Get user plan limits
+        email = get_logged_in_email()
+        from plan_utils import get_plan_limits
+        limits = get_plan_limits(email) or {}
+        max_window_days = limits.get("statistics_days", 7)
+        
+        # Validate days param against plan limit
+        days_param = request.args.get("days", str(max_window_days))
+        try:
+            requested_days = int(days_param)
+        except ValueError:
+            requested_days = max_window_days
+        
+        # Clamp to plan limit
+        window_days = min(requested_days, max_window_days)
+        if window_days not in (7, 30, 90):
+            # Round to nearest valid window
+            if window_days <= 7:
+                window_days = 7
+            elif window_days <= 30:
+                window_days = 30
+            else:
+                window_days = 90
+
+        # Simple cache key with email for user-specific data
+        cache_key = f"stats:{email}:{window_days}"
+        now_ts = int(time.time())
+        cached = _STATS_OVERVIEW_CACHE.get(cache_key)
+        if cached and (now_ts - cached.get("cached_at", 0)) < STATS_OVERVIEW_CACHE_SECONDS:
+            return _build_cors_response(jsonify(cached["payload"]))
+
+        # Threat counts (fixed 7d / 30d regardless of window_days)
+        q_threat_7d = "SELECT COUNT(*) AS cnt FROM alerts WHERE published >= NOW() - make_interval(days => 7)"
+        q_threat_30d = "SELECT COUNT(*) AS cnt FROM alerts WHERE published >= NOW() - make_interval(days => 30)"
+        row_7d = fetch_one(q_threat_7d, ()) or {}
+        row_30d = fetch_one(q_threat_30d, ()) or {}
+        threats_7d = int(row_7d.get("cnt", 0)) if isinstance(row_7d, dict) else int(row_7d[0]) if row_7d else 0
+        threats_30d = int(row_30d.get("cnt", 0)) if isinstance(row_30d, dict) else int(row_30d[0]) if row_30d else 0
+
+        # Trend: Compare current 7d vs previous 7d window
+        q_prev_7d = (
+            "SELECT COUNT(*) AS cnt FROM alerts WHERE published >= NOW() - make_interval(days => 14) "
+            "AND published < NOW() - make_interval(days => 7)"
+        )
+        prev_row = fetch_one(q_prev_7d, ()) or {}
+        prev_cnt = int(prev_row.get("cnt", 0)) if isinstance(prev_row, dict) else int(prev_row[0]) if prev_row else 0
+        trend_7d = 0
+        if prev_cnt > 0:
+            trend_7d = round(((threats_7d - prev_cnt) / prev_cnt) * 100)
+
+        # Weekly (or 30-day) trends: build full sequence including missing days
+        q_trends = (
+            "SELECT DATE(published) AS d, COUNT(*) AS c FROM alerts "
+            "WHERE published >= NOW() - make_interval(days => %s) "
+            "GROUP BY DATE(published) ORDER BY d ASC"
+        )
+        trend_rows = fetch_all(q_trends, (window_days,)) or []
+        # Map existing counts by date
+        counts_by_date = {}
+        for r in trend_rows:
+            if isinstance(r, dict):
+                counts_by_date[str(r.get("d"))] = int(r.get("c", 0))
+            else:
+                counts_by_date[str(r[0])] = int(r[1]) if len(r) > 1 else 0
+
+        # Generate complete date list (chronological)
+        today = datetime.utcnow().date()
+        date_list = [today - timedelta(days=offset) for offset in reversed(range(window_days))]
+        weekly_trends = [
+            {"date": d.isoformat(), "count": counts_by_date.get(d.isoformat(), 0)}
+            for d in date_list
+        ]
+
+        # Severity breakdown for window_days with percentages
+        q_severity = (
+            "SELECT threat_level, COUNT(*) AS cnt FROM alerts "
+            "WHERE published >= NOW() - make_interval(days => %s) GROUP BY threat_level"
+        )
+        severity_rows = fetch_all(q_severity, (window_days,)) or []
+        severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for r in severity_rows:
+            level = (r.get("threat_level") if isinstance(r, dict) else r[0]) or ""
+            cnt = int(r.get("cnt") if isinstance(r, dict) else r[1])
+            key = level.lower()
+            if key in severity_breakdown:
+                severity_breakdown[key] += cnt
+            else:
+                # Treat unknown/minor as low bucket
+                severity_breakdown["low"] += cnt
+        
+        # Calculate percentages for severity
+        total_severity = sum(severity_breakdown.values())
+        severity_breakdown["total"] = total_severity
+        if total_severity > 0:
+            severity_breakdown["critical_pct"] = round((severity_breakdown["critical"] / total_severity) * 100, 1)
+            severity_breakdown["high_pct"] = round((severity_breakdown["high"] / total_severity) * 100, 1)
+            severity_breakdown["medium_pct"] = round((severity_breakdown["medium"] / total_severity) * 100, 1)
+            severity_breakdown["low_pct"] = round((severity_breakdown["low"] / total_severity) * 100, 1)
+        else:
+            severity_breakdown["critical_pct"] = 0.0
+            severity_breakdown["high_pct"] = 0.0
+            severity_breakdown["medium_pct"] = 0.0
+            severity_breakdown["low_pct"] = 0.0
+
+        # Top regions within window_days (limit 5)
+        q_regions = (
+            "SELECT COALESCE(region, 'Unknown') AS region, COUNT(*) AS cnt FROM alerts "
+            "WHERE published >= NOW() - make_interval(days => %s) GROUP BY region ORDER BY cnt DESC LIMIT 5"
+        )
+        region_rows = fetch_all(q_regions, (window_days,)) or []
+        top_regions = []
+        total_regions = 0
+        for r in region_rows:
+            region = r.get("region") if isinstance(r, dict) else r[0]
+            cnt = int(r.get("cnt") if isinstance(r, dict) else r[1])
+            total_regions += cnt
+            top_regions.append({"region": region or "Unknown", "count": cnt})
+        for tr in top_regions:
+            pct = 0.0
+            if total_regions > 0:
+                pct = round((tr["count"] / total_regions) * 100, 2)
+            tr["percentage"] = pct
+
+        # Active monitors (traveler_profiles active=true)
+        q_monitors = "SELECT COUNT(*) AS cnt FROM traveler_profiles WHERE active = true"
+        monitors_row = fetch_one(q_monitors, ()) or {}
+        active_monitors = int(monitors_row.get("cnt", 0)) if isinstance(monitors_row, dict) else int(monitors_row[0]) if monitors_row else 0
+
+        # Tracked locations: distinct locations from alerts with coordinates (within window_days)
+        q_tracked = """
+            SELECT COUNT(DISTINCT COALESCE(city, country)) AS cnt 
+            FROM alerts 
+            WHERE published >= NOW() - make_interval(days => %s)
+            AND lat IS NOT NULL AND lon IS NOT NULL
+        """
+        tracked_row = fetch_one(q_tracked, (window_days,)) or {}
+        tracked_locations = int(tracked_row.get("cnt", 0)) if isinstance(tracked_row, dict) else int(tracked_row[0]) if tracked_row else 0
+
+        # Chat messages (current user month usage)
+        email = get_logged_in_email()
+        chat_messages_month = 0
+        try:
+            from plan_utils import get_usage
+            usage = get_usage(email) or {}
+            chat_messages_month = int(usage.get("chat_messages_used", 0))
+        except Exception:
+            pass
+
+        payload = {
+            "ok": True,
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "threats_7d": threats_7d,
+            "threats_30d": threats_30d,
+            "trend_7d": trend_7d,
+            "active_monitors": active_monitors,
+            "tracked_locations": tracked_locations,
+            "chat_messages_month": chat_messages_month,
+            "weekly_trends": weekly_trends,
+            "top_regions": top_regions,
+            "severity_breakdown": severity_breakdown,
+            "window_days": window_days,
+            "max_window_days": max_window_days,
+        }
+
+        # Cache result
+        _STATS_OVERVIEW_CACHE[cache_key] = {"cached_at": now_ts, "payload": payload}
+        return _build_cors_response(jsonify(payload))
+    except Exception as e:
+        logger.error("stats_overview error: %s", e)
+        return _build_cors_response(make_response(jsonify({"error": "Stats overview failed"}), 500))
+
 @app.route("/analytics/statistics", methods=["GET"])
 @login_required
 def analytics_statistics():
