@@ -2631,10 +2631,10 @@ def api_map_alerts():
         params.append(days)
 
     # Source filter (exclude acled by default)
-    if sources:
-        # Use ANY(array) for safe binding
-        where.append("LOWER(source) = ANY(%s)")
-        params.append(sources)
+    # NOTE: Disabled - source column contains domains (krebsonsecurity.com) not categories (rss)
+    # if sources:
+    #     where.append("LOWER(source) = ANY(%s)")
+    #     params.append(sources)
     where.append("LOWER(source) <> 'acled'")
 
     # Optional geographic filters
@@ -2900,9 +2900,10 @@ def api_map_alerts_aggregates():
         params.append(days)
 
     # Source filter (exclude acled)
-    if sources:
-        where.append("LOWER(source) = ANY(%s)")
-        params.append(sources)
+    # NOTE: Disabled - source column contains domains (krebsonsecurity.com) not categories (rss)
+    # if sources:
+    #     where.append("LOWER(source) = ANY(%s)")
+    #     params.append(sources)
     where.append("LOWER(source) <> 'acled'")
 
     # Severity filter
