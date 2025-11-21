@@ -2602,6 +2602,21 @@ def api_map_alerts():
     where = []
     params = []
 
+    # Quality filter: only show alerts with reliable geocoding (Tier 1)
+    TIER1_METHODS = [
+        'coordinates',           # Original RSS with coords
+        'nlp_nominatim',        # Phase 2 NLP extraction + Nominatim
+        'nlp_opencage',         # Phase 2 NLP extraction + OpenCage
+        'production_stack',     # Phase 3 production geocoding stack
+        'nominatim',            # Direct Nominatim geocoding
+        'opencage',             # Direct OpenCage geocoding
+        'db_cache',             # PostgreSQL cache hits (123 alerts)
+        'legacy_precise',       # Backfilled unknown with city coords (250 alerts)
+        'moderate',             # Moderate confidence extraction
+    ]
+    where.append("location_method = ANY(%s)")
+    params.append(TIER1_METHODS)
+
     # Require valid coordinates for map display
     where.append("latitude IS NOT NULL")
     where.append("longitude IS NOT NULL")
@@ -2852,6 +2867,21 @@ def api_map_alerts_aggregates():
 
     where = []
     params = []
+
+    # Quality filter: only show alerts with reliable geocoding (Tier 1)
+    TIER1_METHODS = [
+        'coordinates',           # Original RSS with coords
+        'nlp_nominatim',        # Phase 2 NLP extraction + Nominatim
+        'nlp_opencage',         # Phase 2 NLP extraction + OpenCage
+        'production_stack',     # Phase 3 production geocoding stack
+        'nominatim',            # Direct Nominatim geocoding
+        'opencage',             # Direct OpenCage geocoding
+        'db_cache',             # PostgreSQL cache hits (123 alerts)
+        'legacy_precise',       # Backfilled unknown with city coords (250 alerts)
+        'moderate',             # Moderate confidence extraction
+    ]
+    where.append("location_method = ANY(%s)")
+    params.append(TIER1_METHODS)
 
     # Require valid coordinates for map display
     where.append("latitude IS NOT NULL")
