@@ -2544,7 +2544,9 @@ def api_map_alerts():
         days = int(request.args.get("days", 30))
     except Exception:
         days = 30
-    days = max(1, min(days, 60))  # cap to 60 days
+    # Allow days=0 for all historical data, otherwise cap to 365 days
+    if days > 0:
+        days = max(1, min(days, 365))
 
     try:
         limit = int(request.args.get("limit", 5000))
@@ -2623,9 +2625,10 @@ def api_map_alerts():
     where.append("latitude BETWEEN -90 AND 90")
     where.append("longitude BETWEEN -180 AND 180")
 
-    # Time window (use existing published column)
-    where.append("published >= NOW() - make_interval(days => %s)")
-    params.append(days)
+    # Time window (use existing published column - skip if days=0 for all historical)
+    if days > 0:
+        where.append("published >= NOW() - make_interval(days => %s)")
+        params.append(days)
 
     # Source filter (exclude acled by default)
     if sources:
@@ -2820,7 +2823,9 @@ def api_map_alerts_aggregates():
         days = int(request.args.get("days", 30))
     except Exception:
         days = 30
-    days = max(1, min(days, 60))
+    # Allow days=0 for all historical data, otherwise cap to 365 days
+    if days > 0:
+        days = max(1, min(days, 365))
 
     sources_param = request.args.get("sources")
     if sources_param:
@@ -2889,9 +2894,10 @@ def api_map_alerts_aggregates():
     where.append("latitude BETWEEN -90 AND 90")
     where.append("longitude BETWEEN -180 AND 180")
 
-    # Time window (use existing published column)
-    where.append("published >= NOW() - make_interval(days => %s)")
-    params.append(days)
+    # Time window (use existing published column - skip if days=0 for all historical)
+    if days > 0:
+        where.append("published >= NOW() - make_interval(days => %s)")
+        params.append(days)
 
     # Source filter (exclude acled)
     if sources:
