@@ -2544,9 +2544,9 @@ def api_map_alerts():
         days = int(request.args.get("days", 30))
     except Exception:
         days = 30
-    # Allow days=0 for all historical data, otherwise cap to 365 days
-    if days > 0:
-        days = max(1, min(days, 365))
+    # Allow days=0 for all historical data (no cap)
+    if days < 0:
+        days = 0
 
     try:
         limit = int(request.args.get("limit", 5000))
@@ -2823,9 +2823,9 @@ def api_map_alerts_aggregates():
         days = int(request.args.get("days", 30))
     except Exception:
         days = 30
-    # Allow days=0 for all historical data, otherwise cap to 365 days
-    if days > 0:
-        days = max(1, min(days, 365))
+    # Allow days=0 for all historical data (no cap)
+    if days < 0:
+        days = 0
 
     sources_param = request.args.get("sources")
     if sources_param:
