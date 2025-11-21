@@ -149,6 +149,34 @@ class MetricsLogger:
             cache_hit=cache_hit,
             **kwargs
         )
+    
+    # Generic metrics methods for compatibility with counter-style interfaces
+    def increment(self, metric_name: str, value: int = 1, **kwargs):
+        """Generic counter increment (for compatibility with statsd-style interfaces)"""
+        self.logger.info(
+            "metric_increment",
+            metric=metric_name,
+            value=value,
+            **kwargs
+        )
+    
+    def gauge(self, metric_name: str, value: float, **kwargs):
+        """Generic gauge metric (for compatibility)"""
+        self.logger.info(
+            "metric_gauge",
+            metric=metric_name,
+            value=value,
+            **kwargs
+        )
+    
+    def timing(self, metric_name: str, duration_ms: int, **kwargs):
+        """Generic timing metric (for compatibility)"""
+        self.logger.info(
+            "metric_timing",
+            metric=metric_name,
+            duration_ms=duration_ms,
+            **kwargs
+        )
 
 def get_metrics_logger(name: str) -> MetricsLogger:
     """Get a metrics logger instance"""

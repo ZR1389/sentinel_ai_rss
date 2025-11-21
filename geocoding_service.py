@@ -15,11 +15,21 @@ import requests
 
 logger = logging.getLogger("geocoding")
 
+# Metrics logger with safe null object pattern
+class _NullMetrics:
+    """Null object for metrics when logger unavailable"""
+    def increment(self, *args, **kwargs):
+        pass
+    def gauge(self, *args, **kwargs):
+        pass
+    def timing(self, *args, **kwargs):
+        pass
+
 try:
     from logging_config import get_metrics_logger
     metrics = get_metrics_logger("geocoding")
 except Exception:
-    metrics = None
+    metrics = _NullMetrics()
 
 OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")
 OPENCAGE_URL = "https://api.opencagedata.com/geocode/v1/json"

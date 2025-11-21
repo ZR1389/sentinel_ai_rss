@@ -73,10 +73,14 @@ def geocode_with_production_stack(title: str, summary: str, gpt_summary: str, en
         
         geo_result = geocode(location_string)
         
-        if geo_result and geo_result.get('latitude') and geo_result.get('longitude'):
+        # Handle both lat/lon (from geocoding_service) and latitude/longitude naming
+        lat = geo_result.get('latitude') or geo_result.get('lat') if geo_result else None
+        lon = geo_result.get('longitude') or geo_result.get('lon') if geo_result else None
+        
+        if geo_result and lat and lon:
             return {
-                'latitude': geo_result['latitude'],
-                'longitude': geo_result['longitude'],
+                'latitude': float(lat),
+                'longitude': float(lon),
                 'city': geo_result.get('city') or location_result.city,
                 'country': geo_result.get('country') or location_result.country,
                 'location_method': geo_result.get('source', 'production_stack'),
