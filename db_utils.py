@@ -690,8 +690,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
                     tags.append(tag_line)
             if meta_candidates and not any(t.startswith("gdelt_meta=") for t in tags):
                 compact = ",".join([f"{k}:{meta_candidates[k]}" for k in sorted(meta_candidates)])
-                tags.append(f"gdelt_meta={compact}
-")
+                tags.append(f"gdelt_meta={compact}")
 
         ewi     = a.get("early_warning_indicators") or []
         domains = a.get("domains") or []
