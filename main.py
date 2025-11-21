@@ -5607,6 +5607,233 @@ def batch_geocode_smart_endpoint():
         return jsonify({'error': str(e)}), 500
 
 # -------------------------------------------------------------------
+# User Context Endpoints (for Sentinel AI Chat, Threat Map, Travel Risk Map)
+# -------------------------------------------------------------------
+
+@app.route("/api/context", methods=["GET", "OPTIONS"])
+def context_get_options():
+    """Handle OPTIONS preflight for GET /api/context"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return context_get()
+
+@app.route("/api/context", methods=["GET"])
+@login_required
+def context_get():
+    """Get user's current context across all Sentinel AI products"""
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+    
+    try:
+        email = get_logged_in_email()
+        
+        # Get user ID
+        user_row = fetch_one("SELECT id FROM users WHERE email = %s", (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({"error": "User not found"}), 404))
+        
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        # Get context
+        ctx_row = fetch_one("SELECT * FROM user_context WHERE user_id = %s", (user_id,))
+        
+        if not ctx_row:
+            # Return empty context
+            return _build_cors_response(jsonify({
+                "ok": True,
+                "investigation": None,
+                "recent": [],
+                "locations": []
+            }))
+        
+        # Parse JSONB fields
+        investigation = ctx_row.get('active_investigation') if isinstance(ctx_row, dict) else None
+        recent_queries = ctx_row.get('recent_queries', []) if isinstance(ctx_row, dict) else []
+        saved_locations = ctx_row.get('saved_locations', []) if isinstance(ctx_row, dict) else []
+        
+        # Limit recent queries to last 10
+        if isinstance(recent_queries, list):
+            recent_queries = recent_queries[-10:]
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "investigation": investigation,
+            "recent": recent_queries,
+            "locations": saved_locations
+        }))
+        
+    except Exception as e:
+        logger.error(f"context_get error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Failed to fetch context"}), 500))
+
+@app.route("/api/context", methods=["POST"])
+@login_required
+def context_post():
+    """Update user context (investigation, query, location, or clear)"""
+    if execute is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+    
+    try:
+        email = get_logged_in_email()
+        payload = _json_request()
+        
+        context_type = payload.get("type", "").lower()
+        data = payload.get("data", {})
+        
+        if not context_type:
+            return _build_cors_response(make_response(jsonify({"error": "Missing type field"}), 400))
+        
+        # Get user ID
+        user_row = fetch_one("SELECT id FROM users WHERE email = %s", (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({"error": "User not found"}), 404))
+        
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        if context_type == "investigation":
+            # Set active investigation for Sentinel AI Chat
+            execute("""
+                INSERT INTO user_context (user_id, active_investigation, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (user_id) 
+                DO UPDATE SET active_investigation = EXCLUDED.active_investigation, updated_at = NOW()
+            """, (user_id, Json(data)))
+            
+        elif context_type == "query":
+            # Append to recent queries array (keep last 10)
+            execute("""
+                INSERT INTO user_context (user_id, recent_queries, updated_at)
+                VALUES (%s, jsonb_build_array(%s), NOW())
+                ON CONFLICT (user_id)
+                DO UPDATE SET 
+                    recent_queries = (
+                        SELECT jsonb_agg(elem ORDER BY (elem->>'timestamp') DESC)
+                        FROM (
+                            SELECT elem 
+                            FROM jsonb_array_elements(
+                                COALESCE(user_context.recent_queries, '[]'::jsonb) || %s::jsonb
+                            ) elem
+                            LIMIT 10
+                        ) sub
+                    ),
+                    updated_at = NOW()
+            """, (user_id, Json(data), Json([data])))
+            
+        elif context_type == "location":
+            # Add to saved locations (avoid duplicates by checking location name)
+            execute("""
+                INSERT INTO user_context (user_id, saved_locations, updated_at)
+                VALUES (%s, jsonb_build_array(%s), NOW())
+                ON CONFLICT (user_id)
+                DO UPDATE SET 
+                    saved_locations = (
+                        CASE 
+                            WHEN user_context.saved_locations @> %s::jsonb 
+                            THEN user_context.saved_locations
+                            ELSE user_context.saved_locations || %s::jsonb
+                        END
+                    ),
+                    updated_at = NOW()
+            """, (user_id, Json(data), Json([data]), Json([data])))
+            
+        elif context_type == "clear":
+            # Clear active investigation
+            execute("""
+                UPDATE user_context 
+                SET active_investigation = NULL, updated_at = NOW()
+                WHERE user_id = %s
+            """, (user_id,))
+            
+        else:
+            return _build_cors_response(make_response(jsonify({"error": f"Invalid type: {context_type}"}), 400))
+        
+        return _build_cors_response(jsonify({"ok": True, "message": "Context updated"}))
+        
+    except Exception as e:
+        logger.error(f"context_post error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Failed to update context"}), 500))
+
+@app.route("/api/context/search", methods=["GET", "OPTIONS"])
+def context_search_options():
+    """Handle OPTIONS preflight for GET /api/context/search"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    return context_search()
+
+@app.route("/api/context/search", methods=["GET"])
+@login_required
+def context_search():
+    """Unified search across locations/threats for Threat Map and Travel Risk Map"""
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+    
+    try:
+        query = request.args.get("q", "").strip()
+        
+        if len(query) < 3:
+            return _build_cors_response(jsonify({
+                "ok": True,
+                "locations": [],
+                "travel": None
+            }))
+        
+        # Search alerts for location matches
+        locations = fetch_all("""
+            SELECT 
+                COALESCE(city, country) as location,
+                COUNT(*) as count,
+                AVG(lat) as lat,
+                AVG(lon) as lon
+            FROM alerts
+            WHERE 
+                (city ILIKE %s OR country ILIKE %s OR title ILIKE %s)
+                AND lat IS NOT NULL AND lon IS NOT NULL
+            GROUP BY COALESCE(city, country)
+            ORDER BY count DESC
+            LIMIT 5
+        """, (f"%{query}%", f"%{query}%", f"%{query}%"))
+        
+        # For travel assessment, use first location match
+        travel = None
+        if locations and len(locations) > 0:
+            first = locations[0]
+            travel = {
+                "label": first.get('location') if isinstance(first, dict) else first[0],
+                "lat": float(first.get('lat') if isinstance(first, dict) else first[2]),
+                "lon": float(first.get('lon') if isinstance(first, dict) else first[3])
+            }
+        
+        # Format location results
+        location_results = []
+        for row in (locations or []):
+            if isinstance(row, dict):
+                location_results.append({
+                    "location": row.get('location', 'Unknown'),
+                    "count": int(row.get('count', 0)),
+                    "lat": float(row.get('lat', 0)),
+                    "lon": float(row.get('lon', 0)),
+                    "zoom": 12
+                })
+            else:
+                location_results.append({
+                    "location": row[0] if row[0] else 'Unknown',
+                    "count": int(row[1]) if len(row) > 1 else 0,
+                    "lat": float(row[2]) if len(row) > 2 else 0,
+                    "lon": float(row[3]) if len(row) > 3 else 0,
+                    "zoom": 12
+                })
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "locations": location_results,
+            "travel": travel
+        }))
+        
+    except Exception as e:
+        logger.error(f"context_search error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": "Search failed"}), 500))
+
+# -------------------------------------------------------------------
 # Local development entrypoint
 # -------------------------------------------------------------------
 if __name__ == "__main__":
