@@ -35,6 +35,10 @@ HIGH_QUALITY_METHODS = {
     'nlp_nominatim',        # NLP extraction + Nominatim geocoding
     'nlp_opencage',         # NLP extraction + OpenCage geocoding  
     'production_stack',     # Full production geocoding stack
+    'nominatim',            # Direct Nominatim geocoding
+    'opencage',             # Direct OpenCage geocoding
+    'db_cache',             # Database cache hit (pre-validated)
+    'legacy_precise',       # Legacy city-level coordinates (re-classified from unknown)
     'moderate',             # Moderate confidence extraction
 }
 
