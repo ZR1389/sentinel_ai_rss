@@ -3380,7 +3380,7 @@ def stats_overview():
 @login_required
 def analytics_statistics():
     """Return aggregated statistics for alerts within user's statistics_days window.
-    Returns: { summary: {...}, top_countries: [...], avg_score: number }
+    Returns: { summary, distribution, regions, severity_percentiles, top_countries, avg_score }
     """
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
@@ -3419,32 +3419,93 @@ def analytics_statistics():
                 summary[level_key] = count
             summary["total"] += count
         
-        # Top countries
-        countries_q = """
+        # Distribution (clean copy without "total" and "unknown")
+        distribution = {
+            "critical": summary["critical"],
+            "high": summary["high"],
+            "medium": summary["medium"],
+            "low": summary["low"]
+        }
+        
+        # Regions with risk levels (based on avg score per country)
+        regions_q = """
             SELECT 
                 country,
-                COUNT(*) as count
+                COUNT(*) as count,
+                AVG(score) as avg_score
             FROM alerts
             WHERE published >= NOW() - make_interval(days => %s)
               AND country IS NOT NULL
+              AND score IS NOT NULL
             GROUP BY country
             ORDER BY count DESC
-            LIMIT 10
+            LIMIT 20
         """
-        countries_rows = fetch_all(countries_q, (statistics_days,))
+        regions_rows = fetch_all(regions_q, (statistics_days,))
         
-        top_countries = []
-        for row in (countries_rows or []):
+        regions = []
+        for row in (regions_rows or []):
             if isinstance(row, dict):
-                top_countries.append({
-                    "country": row.get("country", "Unknown"),
-                    "count": int(row.get("count", 0))
-                })
+                country = row.get("country", "Unknown")
+                count = int(row.get("count", 0))
+                score = float(row.get("avg_score", 0))
             else:
-                top_countries.append({
-                    "country": row[0] if row[0] else "Unknown",
-                    "count": int(row[1]) if len(row) > 1 else 0
-                })
+                country = row[0] if row[0] else "Unknown"
+                count = int(row[1]) if len(row) > 1 else 0
+                score = float(row[2]) if len(row) > 2 else 0.0
+            
+            # Categorize risk level based on average score
+            if score >= 70:
+                risk = "critical"
+            elif score >= 50:
+                risk = "high"
+            elif score >= 30:
+                risk = "medium"
+            else:
+                risk = "low"
+            
+            regions.append({
+                "name": country,
+                "risk": risk,
+                "count": count,
+                "avg_score": round(score, 2)
+            })
+        
+        # Severity percentiles
+        percentiles_q = """
+            SELECT 
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY score) as p50,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY score) as p75,
+                PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY score) as p90,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY score) as p95
+            FROM alerts
+            WHERE published >= NOW() - make_interval(days => %s)
+              AND score IS NOT NULL
+        """
+        percentiles_row = fetch_all(percentiles_q, (statistics_days,))
+        
+        severity_percentiles = {
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+        }
+        
+        if percentiles_row and len(percentiles_row) > 0:
+            row = percentiles_row[0]
+            if isinstance(row, dict):
+                severity_percentiles["p50"] = round(float(row.get("p50", 0) or 0), 2)
+                severity_percentiles["p75"] = round(float(row.get("p75", 0) or 0), 2)
+                severity_percentiles["p90"] = round(float(row.get("p90", 0) or 0), 2)
+                severity_percentiles["p95"] = round(float(row.get("p95", 0) or 0), 2)
+            else:
+                severity_percentiles["p50"] = round(float(row[0] or 0), 2)
+                severity_percentiles["p75"] = round(float(row[1] or 0), 2)
+                severity_percentiles["p90"] = round(float(row[2] or 0), 2)
+                severity_percentiles["p95"] = round(float(row[3] or 0), 2)
+        
+        # Top countries (backward compatibility)
+        top_countries = [{"country": r["name"], "count": r["count"]} for r in regions[:10]]
         
         # Average threat score
         avg_q = """
@@ -3462,6 +3523,9 @@ def analytics_statistics():
         return _build_cors_response(jsonify({
             "ok": True,
             "summary": summary,
+            "distribution": distribution,
+            "regions": regions,
+            "severity_percentiles": severity_percentiles,
             "top_countries": top_countries,
             "avg_score": round(avg_score, 2),
             "window_days": statistics_days
