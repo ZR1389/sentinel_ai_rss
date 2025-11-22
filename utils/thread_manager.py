@@ -57,8 +57,8 @@ def get_usage_stats(user_id: int, plan: str) -> Dict[str, Any]:
         counts = cur.fetchone()
         
         # Monthly message count
-        cur.execute("SELECT get_monthly_message_count(%s)", (user_id,))
-        monthly_used = cur.fetchone()[0]
+        cur.execute("SELECT get_monthly_message_count(%s) as count", (user_id,))
+        monthly_used = cur.fetchone()['count']
     
     limits = get_thread_limits(plan)
     monthly_remaining = None
@@ -105,8 +105,8 @@ def create_thread(user_id: int, plan: str, title: str, messages: List[Dict],
         # Check 3: Monthly quota
         monthly_limit = limits['messages_monthly']
         if monthly_limit:
-            cur.execute("SELECT get_monthly_message_count(%s)", (user_id,))
-            monthly_used = cur.fetchone()[0]
+            cur.execute("SELECT get_monthly_message_count(%s) as count", (user_id,))
+            monthly_used = cur.fetchone()['count']
             if monthly_used + len(messages) > monthly_limit:
                 raise ValueError(f"Monthly message quota ({monthly_limit}) exceeded")
         
@@ -316,8 +316,8 @@ def add_messages(user_id: int, plan: str, thread_uuid: str,
         # Check monthly quota
         monthly_limit = limits['messages_monthly']
         if monthly_limit:
-            cur.execute("SELECT get_monthly_message_count(%s)", (user_id,))
-            monthly_used = cur.fetchone()[0]
+            cur.execute("SELECT get_monthly_message_count(%s) as count", (user_id,))
+            monthly_used = cur.fetchone()['count']
             if monthly_used + len(messages) > monthly_limit:
                 raise ValueError(f"Monthly message quota ({monthly_limit}) exceeded")
         
