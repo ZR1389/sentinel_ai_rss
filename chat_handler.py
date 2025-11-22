@@ -1207,6 +1207,82 @@ def handle_user_query(
     
     quota_obj = _build_quota_obj(email, plan_name)
     
+    # ============ NEW: Response Quality Metadata ============
+    # Calculate confidence score from alert confidence values
+    confidence_scores = []
+    for alert in db_alerts:
+        try:
+            conf = float(alert.get("confidence") or 0)
+            confidence_scores.append(conf)
+        except (TypeError, ValueError):
+            continue
+    
+    avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+    
+    # Get most recent alert timestamp for last_updated
+    last_updated_str = None
+    try:
+        valid_dates: List[datetime] = []
+        for alert in db_alerts:
+            iso = _iso_date(alert)
+            if not iso:
+                continue
+            try:
+                if iso.endswith("Z"):
+                    iso = iso[:-1] + "+00:00"
+                dt = datetime.fromisoformat(iso)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                valid_dates.append(dt.astimezone(timezone.utc))
+            except Exception:
+                continue
+        
+        if valid_dates:
+            latest_dt = max(valid_dates)
+            last_updated_str = latest_dt.isoformat().replace('+00:00', 'Z')
+        else:
+            # Fallback to current time if no valid dates
+            last_updated_str = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    except Exception as e:
+        log.warning("Error calculating last_updated: %s", e)
+        last_updated_str = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    
+    # Determine if refresh is possible (data older than 1 hour)
+    can_refresh = False
+    try:
+        if valid_dates:
+            latest_dt = max(valid_dates)
+            current_time = datetime.now(timezone.utc)
+            hours_old = (current_time - latest_dt).total_seconds() / 3600
+            can_refresh = hours_old > 1.0  # Allow refresh if data is >1 hour old
+        else:
+            can_refresh = True  # No data means we can try to refresh
+    except Exception as e:
+        log.warning("Error calculating can_refresh: %s", e)
+        can_refresh = False
+    
+    # Calculate processing time in milliseconds
+    overall_elapsed_ms = int((time.perf_counter() - overall_start) * 1000)
+    
+    # Build response quality metadata
+    response_metadata = {
+        "sources_count": len(db_alerts),
+        "confidence_score": round(avg_confidence, 2),
+        "last_updated": last_updated_str,
+        "can_refresh": can_refresh,
+        "processing_time_ms": overall_elapsed_ms
+    }
+    
+    log.info("Response quality metadata: sources=%d confidence=%.2f last_updated=%s can_refresh=%s processing_time=%dms | user=%s",
+             response_metadata["sources_count"],
+             response_metadata["confidence_score"],
+             response_metadata["last_updated"],
+             response_metadata["can_refresh"],
+             response_metadata["processing_time_ms"],
+             _short_id(email))
+    
+    # ============ END Response Quality Metadata ============
+    
     payload = {
         "reply": reply_text,
         "plan": plan_name,
@@ -1214,7 +1290,7 @@ def handle_user_query(
         "alerts": results,
         "usage": usage_info,
         "session_id": session_id,
-        "metadata": advisory_result if isinstance(advisory_result, dict) else {}
+        "metadata": response_metadata  # NEW: Include response quality metadata
     }
     set_cache(cache_key, payload)
     overall_elapsed = time.perf_counter() - overall_start

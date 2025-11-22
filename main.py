@@ -6139,7 +6139,14 @@ def sentinel_chat():
     """Chat endpoint with FREE lifetime quota and paid monthly quota.
     FREE plan: uses users.lifetime_chat_messages against PLAN_FEATURES['FREE']['chat_messages_lifetime'].
     Paid plans: use feature_usage monthly counter 'chat_messages_monthly'.
+    
+    Returns response with quality metadata for transparency.
     """
+    import time
+    from datetime import datetime, timezone
+    
+    request_start = time.perf_counter()
+    
     try:
         email = get_logged_in_email()
         from plan_utils import get_plan_limits
@@ -6151,6 +6158,7 @@ def sentinel_chat():
             return _build_cors_response(make_response(jsonify({'error': 'Message required'}), 400))
         if fetch_one is None or execute is None:
             return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+        
         # FREE plan lifetime gating
         if plan == 'FREE':
             lifetime_limit = get_plan_feature(plan, 'chat_messages_lifetime') or 0
@@ -6168,10 +6176,29 @@ def sentinel_chat():
                     'required_plan': 'PRO',
                     'usage': {'used': lifetime_used,'limit': lifetime_limit,'scope': 'lifetime'}
                 }), 403))
+            
             # Produce advisory then increment lifetime counter
             advisory = f"Echo: {message[:512]}"
             execute('UPDATE users SET lifetime_chat_messages = COALESCE(lifetime_chat_messages,0)+1 WHERE id=%s', (user_id,))
-            return _build_cors_response(jsonify({'ok': True,'advisory': advisory,'usage': {'used': lifetime_used + 1,'limit': lifetime_limit,'scope': 'lifetime'},'plan': plan}))
+            
+            # Add metadata for FREE tier echo responses
+            processing_time_ms = int((time.perf_counter() - request_start) * 1000)
+            current_time = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            
+            return _build_cors_response(jsonify({
+                'ok': True,
+                'reply': advisory,
+                'usage': {'used': lifetime_used + 1,'limit': lifetime_limit,'scope': 'lifetime'},
+                'plan': plan,
+                'metadata': {
+                    'sources_count': 0,
+                    'confidence_score': 0.0,
+                    'last_updated': current_time,
+                    'can_refresh': False,
+                    'processing_time_ms': processing_time_ms
+                }
+            }))
+        
         # Paid plan monthly gating
         monthly_limit = get_plan_feature(plan, 'chat_messages_monthly')
         user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
@@ -6187,13 +6214,55 @@ def sentinel_chat():
                 'required_plan': 'BUSINESS' if plan == 'PRO' else ('ENTERPRISE' if plan == 'BUSINESS' else plan),
                 'usage': {'used': used,'limit': monthly_limit,'scope': 'monthly'}
             }), 403))
-        # Produce advisory then increment monthly usage via function
-        advisory = f"Echo: {message[:512]}"
+        
+        # For paid plans, call the full chat handler which now includes metadata
+        # This will return proper intelligence with sources and confidence
         try:
-            execute('SELECT increment_feature_usage(%s,%s)', (user_id, 'chat_messages_monthly'))
-        except Exception:
-            pass
-        return _build_cors_response(jsonify({'ok': True,'advisory': advisory,'usage': {'used': used + 1,'limit': monthly_limit,'scope': 'monthly'},'plan': plan}))
+            from chat_handler import handle_user_query
+            response = handle_user_query(
+                message=message,
+                email=email,
+                body=payload
+            )
+            
+            # Increment monthly usage via function
+            try:
+                execute('SELECT increment_feature_usage(%s,%s)', (user_id, 'chat_messages_monthly'))
+            except Exception:
+                pass
+            
+            # The response already includes metadata from handle_user_query
+            return _build_cors_response(jsonify({
+                'ok': True,
+                **response
+            }))
+            
+        except Exception as e:
+            logger.error('chat_handler call failed: %s', e)
+            # Fallback to echo with metadata
+            advisory = f"Echo: {message[:512]}"
+            try:
+                execute('SELECT increment_feature_usage(%s,%s)', (user_id, 'chat_messages_monthly'))
+            except Exception:
+                pass
+            
+            processing_time_ms = int((time.perf_counter() - request_start) * 1000)
+            current_time = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            
+            return _build_cors_response(jsonify({
+                'ok': True,
+                'reply': advisory,
+                'usage': {'used': used + 1,'limit': monthly_limit,'scope': 'monthly'},
+                'plan': plan,
+                'metadata': {
+                    'sources_count': 0,
+                    'confidence_score': 0.0,
+                    'last_updated': current_time,
+                    'can_refresh': False,
+                    'processing_time_ms': processing_time_ms
+                }
+            }))
+            
     except Exception as e:
         logger.error('sentinel_chat error: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Chat failed'}), 500))
