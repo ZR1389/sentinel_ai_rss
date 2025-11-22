@@ -12,16 +12,30 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger("gdelt_filters")
 
 # Environment-configurable thresholds (for easy tuning in production)
-MIN_GOLDSTEIN = float(os.getenv("GDELT_MIN_GOLDSTEIN", "-5.0"))  # Default: -5.0 (highly negative)
-MIN_MENTIONS = int(os.getenv("GDELT_MIN_MENTIONS", "3"))  # Default: 3 sources
-MIN_TONE = float(os.getenv("GDELT_MIN_TONE", "-5.0"))  # Default: -5.0 (negative tone)
-MAX_AGE_HOURS = int(os.getenv("GDELT_MAX_AGE_HOURS", "72"))  # Default: 72h (3 days)
+# RELAXED THRESHOLDS: More permissive to allow broader event coverage
+MIN_GOLDSTEIN = float(os.getenv("GDELT_MIN_GOLDSTEIN", "-2.0"))  # Relaxed: -2.0 (moderately negative)
+MIN_MENTIONS = int(os.getenv("GDELT_MIN_MENTIONS", "2"))  # Relaxed: 2 sources (down from 3)
+MIN_TONE = float(os.getenv("GDELT_MIN_TONE", "-2.0"))  # Relaxed: -2.0 (moderately negative tone)
+MAX_AGE_HOURS = int(os.getenv("GDELT_MAX_AGE_HOURS", "168"))  # Relaxed: 168h (7 days, up from 3 days)
 REQUIRE_SOURCE_URL = os.getenv("GDELT_REQUIRE_SOURCE_URL", "false").lower() in ("true", "1", "yes")
 REQUIRE_PRECISE_COORDS = os.getenv("GDELT_REQUIRE_PRECISE_COORDS", "false").lower() in ("true", "1", "yes")
 
-# CAMEO event code whitelist (violence/conflict/protest only)
-# Based on QuadClass 4 (Material Conflict) and high-impact QuadClass 2 (Verbal Conflict)
+# CAMEO event code whitelist (expanded for better coverage)
+# Includes: threats, protests, assaults, fights, and high-impact verbal conflicts
 ALLOWED_EVENT_CODES = [
+    # Category 13: Threaten (verbal threats)
+    "13",    # Generic threat
+    "130",   # Threaten
+    "131",   # Threaten with force
+    "1311",  # Threaten with military force
+    "1312",  # Threaten with nuclear weapons
+    "132",   # Threaten to occupy territory
+    "133",   # Threaten to blockade
+    "134",   # Threaten to use unconventional violence
+    "1341",  # Threaten with violence
+    "1343",  # Threaten with terror attack
+    "138",   # Threaten to reduce relations
+    
     # Category 14: Protest (high-signal dissent)
     "14",    # Generic protest
     "140",   # Engage in political dissent
@@ -37,11 +51,28 @@ ALLOWED_EVENT_CODES = [
     "1442",  # Occupy building or area
     "145",   # Protest violently (riot)
     
+    # Category 17: Coerce (force without violence)
+    "17",    # Generic coerce
+    "170",   # Coerce
+    "171",   # Seize or damage property
+    "1711",  # Confiscate property
+    "172",   # Impose administrative sanctions
+    "173",   # Arrest, detain
+    "174",   # Expel or deport
+    
     # Category 18: Assault
     "18",    # Generic assault
     "180",   # Use unconventional violence
     "181",   # Abduct, hijack, take hostage
+    "1811",  # Kidnap
+    "1812",  # Hijack vehicle or plane
+    "1813",  # Take hostage
     "182",   # Use physical assault
+    "1821",  # Sexually assault
+    "1822",  # Torture
+    "1823",  # Kill by physical assault
+    "183",   # Conduct suicide bombing
+    "184",   # Use weapons of mass destruction
     
     # Category 19: Fight (conventional military force)
     "19",    # Generic fight
