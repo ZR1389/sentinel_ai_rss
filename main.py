@@ -817,6 +817,38 @@ try:
 except Exception:
     Json = lambda x: x  # best-effort fallback if extras is unavailable
 
+# Feature gating & plan feature access
+try:
+    from config.plans import PLAN_FEATURES, get_plan_feature, get_feature_limit, has_feature
+except Exception as e:
+    logger.warning("config.plans import failed: %s", e)
+    PLAN_FEATURES = {}
+    def get_plan_feature(plan, feature, default=None):
+        return default
+    def get_feature_limit(plan, feature):
+        return 0
+    def has_feature(plan, feature):
+        return False
+try:
+    from utils.feature_gates import (
+        requires_feature,
+        check_usage_limit,
+        check_feature_access,
+        check_feature_limit,
+    )
+except Exception as e:
+    logger.warning("feature_gates import failed: %s", e)
+    def requires_feature(name):
+        def deco(fn):
+            return fn
+        return deco
+    def check_usage_limit(name, increment=False):
+        def deco(fn):
+            return fn
+        return deco
+    check_feature_access = requires_feature
+    check_feature_limit = requires_feature
+
 # ---------- Rate limiter setup ----------
 # Use Redis for storage in multi-worker deployments: set RATE_LIMIT_STORAGE to a redis:// URL
 RATE_LIMIT_STORAGE = os.getenv("RATE_LIMIT_STORAGE", None)
@@ -6096,6 +6128,800 @@ def context_search():
     except Exception as e:
         logger.error(f"context_search error: {e}")
         return _build_cors_response(make_response(jsonify({"error": "Search failed"}), 500))
+
+# -------------------------------------------------------------------
+# New Feature-Gated Endpoints (plans + usage) — incremental rollout
+# -------------------------------------------------------------------
+
+@app.route('/api/sentinel-chat', methods=['POST'])
+@login_required
+def sentinel_chat():
+    """Chat endpoint with FREE lifetime quota and paid monthly quota.
+    FREE plan: uses users.lifetime_chat_messages against PLAN_FEATURES['FREE']['chat_messages_lifetime'].
+    Paid plans: use feature_usage monthly counter 'chat_messages_monthly'.
+    """
+    try:
+        email = get_logged_in_email()
+        from plan_utils import get_plan_limits
+        limits = get_plan_limits(email)
+        plan = limits['plan']
+        payload = request.get_json(silent=True) or {}
+        message = (payload.get('message') or '').strip()
+        if not message:
+            return _build_cors_response(make_response(jsonify({'error': 'Message required'}), 400))
+        if fetch_one is None or execute is None:
+            return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+        # FREE plan lifetime gating
+        if plan == 'FREE':
+            lifetime_limit = get_plan_feature(plan, 'chat_messages_lifetime') or 0
+            user_row = fetch_one('SELECT id, lifetime_chat_messages FROM users WHERE email=%s', (email,))
+            if not user_row:
+                return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+            if isinstance(user_row, dict):
+                user_id = user_row['id']; lifetime_used = int(user_row.get('lifetime_chat_messages') or 0)
+            else:
+                user_id = user_row[0]; lifetime_used = int(user_row[1] or 0) if len(user_row)>1 else 0
+            if lifetime_used >= lifetime_limit:
+                return _build_cors_response(make_response(jsonify({
+                    'error': 'Free tier chat quota reached',
+                    'feature_locked': True,
+                    'required_plan': 'PRO',
+                    'usage': {'used': lifetime_used,'limit': lifetime_limit,'scope': 'lifetime'}
+                }), 403))
+            # Produce advisory then increment lifetime counter
+            advisory = f"Echo: {message[:512]}"
+            execute('UPDATE users SET lifetime_chat_messages = COALESCE(lifetime_chat_messages,0)+1 WHERE id=%s', (user_id,))
+            return _build_cors_response(jsonify({'ok': True,'advisory': advisory,'usage': {'used': lifetime_used + 1,'limit': lifetime_limit,'scope': 'lifetime'},'plan': plan}))
+        # Paid plan monthly gating
+        monthly_limit = get_plan_feature(plan, 'chat_messages_monthly')
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        used_row = fetch_one("SELECT usage_count FROM feature_usage WHERE user_id=%s AND feature='chat_messages_monthly' AND period_start=date_trunc('month', current_date)::date", (user_id,))
+        used = used_row['usage_count'] if isinstance(used_row, dict) else (used_row[0] if used_row else 0)
+        if monthly_limit is not None and monthly_limit != float('inf') and used >= monthly_limit:
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Monthly chat quota reached',
+                'feature_locked': True,
+                'required_plan': 'BUSINESS' if plan == 'PRO' else ('ENTERPRISE' if plan == 'BUSINESS' else plan),
+                'usage': {'used': used,'limit': monthly_limit,'scope': 'monthly'}
+            }), 403))
+        # Produce advisory then increment monthly usage via function
+        advisory = f"Echo: {message[:512]}"
+        try:
+            execute('SELECT increment_feature_usage(%s,%s)', (user_id, 'chat_messages_monthly'))
+        except Exception:
+            pass
+        return _build_cors_response(jsonify({'ok': True,'advisory': advisory,'usage': {'used': used + 1,'limit': monthly_limit,'scope': 'monthly'},'plan': plan}))
+    except Exception as e:
+        logger.error('sentinel_chat error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Chat failed'}), 500))
+
+@app.route('/api/map-alerts/gated', methods=['GET'])
+@login_required
+def map_alerts_gated():
+    """Map alerts with plan-based historical window gating."""
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
+    try:
+        email = get_logged_in_email()
+        from plan_utils import get_plan_limits
+        limits = get_plan_limits(email)
+        plan = limits['plan']
+        requested_days = int(request.args.get('days', limits.get('map_days', 2)))
+        max_days = get_plan_feature(plan, 'map_access_days') or limits.get('map_days', 2)
+        if requested_days > max_days:
+            return _build_cors_response(make_response(jsonify({'error': f'Plan {plan} allows up to {max_days} days','feature_locked': True,'required_plan': 'PRO' if plan == 'FREE' else ('BUSINESS' if plan == 'PRO' else 'ENTERPRISE')}), 403))
+        q = """
+            SELECT uuid, published, source, title, link, region, country, city,
+                   threat_level, score, confidence, lat, lon
+            FROM alerts
+            WHERE published >= NOW() - make_interval(days => %s)
+            ORDER BY published DESC NULLS LAST
+            LIMIT 500
+        """
+        rows = fetch_all(q, (requested_days,)) or []
+        features = []
+        for r in rows:
+            d = r if isinstance(r, dict) else None
+            lat_val = (d.get('lat') if d else (r[11] if len(r) > 11 else None))
+            lon_val = (d.get('lon') if d else (r[12] if len(r) > 12 else None))
+            if lat_val is None or lon_val is None:
+                continue
+            props = dict(d) if d else {
+                'uuid': r[0],'published': r[1],'source': r[2],'title': r[3],'link': r[4],'region': r[5],'country': r[6],'city': r[7],'threat_level': r[8],'score': r[9],'confidence': r[10]
+            }
+            props.pop('lat', None); props.pop('lon', None)
+            features.append({'type': 'Feature','geometry': {'type': 'Point','coordinates': [float(lon_val), float(lat_val)]},'properties': props})
+        return _build_cors_response(jsonify({'ok': True,'items': rows,'features': features,'window_days': requested_days,'plan_limit_days': max_days,'plan': plan}))
+    except Exception as e:
+        logger.error('map_alerts_gated error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Map alerts failed'}), 500))
+
+@app.route('/api/travel-risk/assess', methods=['POST'])
+@login_required
+@check_usage_limit('travel_assessments_monthly', increment=True)
+def travel_risk_assess():
+    """Simple travel risk assessment stub (usage gated)."""
+    payload = request.get_json(silent=True) or {}
+    destination = (payload.get('destination') or '').strip()
+    if not destination:
+        return _build_cors_response(make_response(jsonify({'error': 'destination required'}), 400))
+    # Placeholder scoring logic
+    assessment = {
+        'destination': destination,
+        'risk_level': 'medium',
+        'score': 55,
+        'factors': ['Political stability moderate','Health infrastructure adequate']
+    }
+    return _build_cors_response(jsonify({'ok': True,'assessment': assessment}))
+
+@app.route('/api/timeline', methods=['GET'])
+@login_required
+@requires_feature('timeline_access')
+def timeline_gated():
+    """Delegates to existing analytics_timeline with feature gate."""
+    return analytics_timeline()
+
+@app.route('/api/stats/overview/gated', methods=['GET'])
+@login_required
+def stats_overview_gated():
+    """Extended stats with tiered detail level."""
+    try:
+        email = get_logged_in_email()
+        from plan_utils import get_plan_limits
+        limits = get_plan_limits(email)
+        level = get_plan_feature(limits['plan'], 'statistics_dashboard')
+        if not level:
+            return _build_cors_response(make_response(jsonify({'error': 'Statistics require PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
+        # Call base stats overview
+        base_resp = stats_overview()
+        data = base_resp.get_json() if hasattr(base_resp, 'get_json') else {}
+        enriched = dict(data)
+        if level in ('advanced','custom'):
+            enriched.setdefault('top_regions', data.get('top_regions', []))
+            enriched.setdefault('weekly_trends', data.get('weekly_trends', []))
+        if level == 'custom':
+            enriched['custom_metrics'] = {'proprietary_index': 87.3}
+        enriched['dashboard_level'] = level
+        return _build_cors_response(jsonify(enriched))
+    except Exception as e:
+        logger.error('stats_overview_gated error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Stats failed'}), 500))
+
+@app.route('/api/monitoring/searches', methods=['GET'])
+@login_required
+def saved_searches_list():
+    """List saved searches with plan limit info."""
+    if fetch_all is None:
+        return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
+    email = get_logged_in_email()
+    user_row = fetch_one('SELECT id, plan FROM users WHERE email=%s', (email,)) if fetch_one else None
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
+    rows = fetch_all('SELECT id, name, query, alert_enabled, alert_frequency, created_at FROM saved_searches WHERE user_id=%s ORDER BY created_at DESC', (user_id,)) or []
+    limit = get_plan_feature(plan, 'saved_searches')
+    return _build_cors_response(jsonify({'ok': True,'searches': rows,'limit': limit,'used': len(rows),'plan': plan}))
+
+@app.route('/api/monitoring/searches', methods=['POST'])
+@login_required
+def saved_searches_create():
+    """Create saved search respecting plan limit."""
+    if fetch_one is None or execute is None:
+        return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
+    email = get_logged_in_email()
+    user_row = fetch_one('SELECT id, plan FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
+    limit = get_plan_feature(plan, 'saved_searches')
+    count_row = fetch_one('SELECT COUNT(*) AS c FROM saved_searches WHERE user_id=%s', (user_id,))
+    current = (count_row['c'] if isinstance(count_row, dict) else count_row[0]) if count_row else 0
+    if limit is not None and limit != 0 and current >= limit:
+        return _build_cors_response(make_response(jsonify({'error': f'Max saved searches ({limit}) reached','feature_locked': True,'required_plan': 'BUSINESS' if plan == 'PRO' else 'PRO'}), 403))
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get('name') or '').strip()
+    query = payload.get('query') or {}
+    alert_enabled = bool(payload.get('alert_enabled', True))
+    alert_frequency = (payload.get('alert_frequency') or 'daily').lower()
+    if not name:
+        return _build_cors_response(make_response(jsonify({'error': 'name required'}), 400))
+    try:
+        execute('INSERT INTO saved_searches (user_id, name, query, alert_enabled, alert_frequency) VALUES (%s,%s,%s,%s,%s)', (user_id, name, Json(query), alert_enabled, alert_frequency))
+        new_id_row = fetch_one('SELECT id FROM saved_searches WHERE user_id=%s AND name=%s ORDER BY id DESC LIMIT 1', (user_id, name))
+        new_id = new_id_row['id'] if isinstance(new_id_row, dict) else new_id_row[0]
+        return _build_cors_response(jsonify({'ok': True,'id': new_id}))
+    except Exception as e:
+        logger.error('saved_searches_create error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'create failed'}), 500))
+
+@app.route('/api/export/alerts', methods=['POST'])
+@login_required
+def export_alerts():
+    """Export alerts in formats gated by plan."""
+    email = get_logged_in_email()
+    from plan_utils import get_plan_limits
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    payload = request.get_json(silent=True) or {}
+    fmt = (payload.get('format') or 'csv').lower()
+    allowed = get_plan_feature(plan, 'map_export')
+    if not allowed:
+        return _build_cors_response(make_response(jsonify({'error': 'Export requires PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
+    if allowed == 'csv' and fmt != 'csv':
+        return _build_cors_response(make_response(jsonify({'error': f'{fmt.upper()} export requires BUSINESS plan','feature_locked': True,'required_plan': 'BUSINESS'}), 403))
+    # Placeholder export processing (replace with actual file generation)
+    alert_ids = payload.get('alert_ids') or []
+    file_url = f"/downloads/alerts_export_{fmt}_{len(alert_ids)}.dat"
+    return _build_cors_response(jsonify({'ok': True,'download_url': file_url,'format': fmt,'plan': plan}))
+
+@app.route('/api/user/plan', methods=['GET'])
+@login_required
+def user_plan_info():
+    """Return current user plan + feature snapshot."""
+    email = get_logged_in_email()
+    user_row = fetch_one('SELECT id, plan, is_trial, trial_ends_at FROM users WHERE email=%s', (email,)) if fetch_one else None
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
+    trial_ends = user_row.get('trial_ends_at') if isinstance(user_row, dict) else None
+    features = PLAN_FEATURES.get(plan, {})
+    usage_chat_row = fetch_one("SELECT usage_count FROM feature_usage WHERE user_id=(SELECT id FROM users WHERE email=%s) AND feature='chat_messages_monthly' AND period_start=date_trunc('month', current_date)::date", (email,)) if fetch_one else None
+    usage_chat = usage_chat_row['usage_count'] if isinstance(usage_chat_row, dict) else (usage_chat_row[0] if usage_chat_row else 0)
+    return _build_cors_response(jsonify({'ok': True,'plan': plan,'is_trial': bool(user_row.get('is_trial') if isinstance(user_row, dict) else False),'trial_ends_at': trial_ends.isoformat() if trial_ends else None,'features': features,'usage': {'chat_messages_monthly_used': usage_chat,'chat_messages_monthly_limit': get_plan_feature(plan,'chat_messages_monthly')}}))
+
+@app.route('/api/user/upgrade', methods=['POST'])
+@login_required
+def user_plan_upgrade():
+    """Upgrade plan (records in plan_changes)."""
+    payload = request.get_json(silent=True) or {}
+    target = (payload.get('plan') or '').upper()
+    if target not in ('PRO','BUSINESS','ENTERPRISE'):
+        return _build_cors_response(make_response(jsonify({'error': 'Invalid plan'}), 400))
+    email = get_logged_in_email()
+    current_row = fetch_one('SELECT id, plan FROM users WHERE email=%s', (email,)) if fetch_one else None
+    if not current_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = current_row['id'] if isinstance(current_row, dict) else current_row[0]
+    old_plan = (current_row['plan'] if isinstance(current_row, dict) else current_row[1] or 'FREE').upper()
+    if old_plan == target:
+        return _build_cors_response(jsonify({'ok': True,'message': 'Already on requested plan','plan': old_plan}))
+    try:
+        if execute:
+            execute('INSERT INTO plan_changes (user_id, from_plan, to_plan, reason) VALUES (%s,%s,%s,%s)', (user_id, old_plan, target, 'upgrade'))
+            execute('UPDATE users SET plan=%s WHERE id=%s', (target, user_id))
+        return _build_cors_response(jsonify({'ok': True,'message': f'Upgraded from {old_plan} to {target}','new_plan': target}))
+    except Exception as e:
+        logger.error('user_plan_upgrade error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Upgrade failed'}), 500))
+
+@app.route('/api/user/trial/start', methods=['POST'])
+@login_required
+def user_trial_start():
+    """Start a trial for the authenticated FREE user (default PRO)."""
+    try:
+        from utils.trial_manager import start_trial
+    except Exception as e:
+        logger.error('trial_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Trial system unavailable'}), 500))
+    data = request.get_json(silent=True) or {}
+    plan = (data.get('plan') or 'PRO').upper()
+    email = get_logged_in_email()
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    user_row = fetch_one('SELECT id, email, plan, is_trial FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user = user_row if isinstance(user_row, dict) else {
+        'id': user_row[0], 'email': email, 'plan': user_row[2] if len(user_row)>2 else 'FREE', 'is_trial': user_row[3] if len(user_row)>3 else False
+    }
+    try:
+        result = start_trial(user, plan=plan)
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except ValueError as ve:
+        return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
+    except Exception as e:
+        logger.error('user_trial_start error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Trial start failed'}), 500))
+
+@app.route('/api/user/trial/end', methods=['POST'])
+@login_required
+def user_trial_end():
+    """End current trial; optionally convert to paid (keep plan)."""
+    try:
+        from utils.trial_manager import end_trial
+    except Exception as e:
+        logger.error('trial_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Trial system unavailable'}), 500))
+    data = request.get_json(silent=True) or {}
+    convert = bool(data.get('convert_to_paid', False))
+    email = get_logged_in_email()
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    user_row = fetch_one('SELECT id, email, plan, is_trial FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user = user_row if isinstance(user_row, dict) else {
+        'id': user_row[0], 'email': email, 'plan': user_row[2] if len(user_row)>2 else 'FREE', 'is_trial': user_row[3] if len(user_row)>3 else False
+    }
+    try:
+        result = end_trial(user, convert_to_paid=convert)
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except ValueError as ve:
+        return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
+    except Exception as e:
+        logger.error('user_trial_end error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Trial end failed'}), 500))
+
+@app.route('/api/user/trial/status', methods=['GET'])
+@login_required
+def user_trial_status():
+    """Return trial status snapshot for authenticated user."""
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    email = get_logged_in_email()
+    row = fetch_one('SELECT plan, is_trial, trial_started_at, trial_ends_at FROM users WHERE email=%s', (email,))
+    if not row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    if isinstance(row, dict):
+        plan = row.get('plan') or 'FREE'
+        is_trial = bool(row.get('is_trial'))
+        started = row.get('trial_started_at')
+        ends = row.get('trial_ends_at')
+    else:
+        plan = row[0] if len(row)>0 else 'FREE'
+        is_trial = bool(row[1]) if len(row)>1 else False
+        started = row[2] if len(row)>2 else None
+        ends = row[3] if len(row)>3 else None
+    return _build_cors_response(jsonify({
+        'ok': True,
+        'plan': (plan or 'FREE').upper(),
+        'is_trial': is_trial,
+        'trial_started_at': started.isoformat() + 'Z' if started else None,
+        'trial_ends_at': ends.isoformat() + 'Z' if ends else None,
+        'can_start_trial': (not is_trial) and ((plan or 'FREE').upper() in ['FREE',''])
+    }))
+
+@app.route('/api/cron/check-trials', methods=['POST'])
+def cron_check_trials():
+    """Cron endpoint to check and expire trials. Secured via X-Cron-Secret header."""
+    from utils.trial_manager import check_expired_trials
+    secret_header = request.headers.get('X-Cron-Secret')
+    expected = os.environ.get('CRON_SECRET')
+    if not expected or secret_header != expected:
+        return _build_cors_response(make_response(jsonify({'error': 'Unauthorized'}), 401))
+    try:
+        expired_count = check_expired_trials()
+        return _build_cors_response(jsonify({'ok': True, 'expired_trials': expired_count}))
+    except Exception as e:
+        logger.error('cron_check_trials error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Cron execution failed'}), 500))
+
+# ============================================
+# Chat Thread Management (10 Comprehensive Endpoints)
+# ============================================
+
+@app.route('/api/chat/threads', methods=['POST'])
+@login_required
+def chat_threads_create():
+    """1. Create thread with dual-limit validation."""
+    try:
+        from utils.thread_manager import create_thread
+        from plan_utils import get_plan_limits
+        from config.plans import get_plan_feature
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    payload = request.get_json(silent=True) or {}
+    title = (payload.get('title') or '').strip()
+    investigation_topic = payload.get('investigation_topic')
+    messages = payload.get('messages') or []
+    
+    if not title:
+        return _build_cors_response(make_response(jsonify({'error': 'title required'}), 400))
+    if not messages:
+        return _build_cors_response(make_response(jsonify({'error': 'messages required'}), 400))
+    
+    try:
+        result = create_thread(user_id, plan, title, messages, investigation_topic)
+        return _build_cors_response(jsonify({'ok': True, **result}), 201)
+    except ValueError as ve:
+        msg = str(ve)
+        can_archive = get_plan_feature(plan, 'can_archive_threads', False)
+        
+        # Detect error type
+        if 'active threads' in msg.lower():
+            suggestion = "Archive old threads to continue." if can_archive else "Delete an old thread or upgrade to PRO for 50 threads + archiving."
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True,
+                'required_plan': 'PRO',
+                'can_archive': can_archive,
+                'suggestion': suggestion
+            }), 403))
+        elif 'per-thread limit' in msg.lower():
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True,
+                'required_plan': 'PRO'
+            }), 403))
+        elif 'monthly' in msg.lower():
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True
+            }), 403))
+        return _build_cors_response(make_response(jsonify({'error': msg}), 403))
+    except Exception as e:
+        logger.error('chat_threads_create error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread creation failed'}), 500))
+
+@app.route('/api/chat/threads', methods=['GET'])
+@login_required
+def chat_threads_list():
+    """2. List threads with pagination and filtering."""
+    try:
+        from utils.thread_manager import list_threads
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    archived = request.args.get('archived', 'false').lower()
+    page = int(request.args.get('page', 1))
+    limit = int(request.args.get('limit', 20))
+    
+    try:
+        result = list_threads(user_id, plan, archived, page, limit)
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except Exception as e:
+        logger.error('chat_threads_list error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread list failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>', methods=['GET'])
+@login_required
+def chat_threads_get(thread_uuid):
+    """3. Get full thread with all messages."""
+    try:
+        from utils.thread_manager import get_thread
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = get_thread(user_id, plan, thread_uuid)
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found'}), 404))
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except Exception as e:
+        logger.error('chat_threads_get error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread retrieval failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>/messages', methods=['POST'])
+@login_required
+def chat_threads_add_messages(thread_uuid):
+    """4. Add messages to existing thread."""
+    try:
+        from utils.thread_manager import add_messages, get_usage_stats, get_thread_limits
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    payload = request.get_json(silent=True) or {}
+    messages = payload.get('messages') or []
+    
+    if not messages:
+        return _build_cors_response(make_response(jsonify({'error': 'messages required'}), 400))
+    
+    try:
+        result = add_messages(user_id, plan, thread_uuid, messages)
+        return _build_cors_response(jsonify({'ok': True, **result}), 201)
+    except ValueError as ve:
+        msg = str(ve)
+        
+        if 'message limit' in msg.lower() or 'thread has reached' in msg.lower():
+            # Thread full error
+            usage = get_usage_stats(user_id, plan)
+            thread_limits = get_thread_limits(plan)
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True,
+                'thread_full': True,
+                'usage': {
+                    'active_threads': usage['active_threads'],
+                    'threads_limit': thread_limits['threads_max']
+                },
+                'suggestion': "Save this thread and start a new conversation, or upgrade to PRO for 50 messages per thread."
+            }), 403))
+        elif 'monthly' in msg.lower():
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True
+            }), 403))
+        elif 'not found' in msg.lower():
+            return _build_cors_response(make_response(jsonify({'error': msg}), 404))
+        return _build_cors_response(make_response(jsonify({'error': msg}), 400))
+    except Exception as e:
+        logger.error('chat_threads_add_messages error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Message append failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>', methods=['PATCH'])
+@login_required
+def chat_threads_update_title(thread_uuid):
+    """5. Update thread title (metadata only)."""
+    try:
+        from utils.thread_manager import update_title
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    payload = request.get_json(silent=True) or {}
+    title = (payload.get('title') or '').strip()
+    
+    if not title:
+        return _build_cors_response(make_response(jsonify({'error': 'title required'}), 400))
+    
+    try:
+        result = update_title(user_id, thread_uuid, title)
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found'}), 404))
+        return _build_cors_response(jsonify({'ok': True, 'thread': result}))
+    except Exception as e:
+        logger.error('chat_threads_update_title error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Title update failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>/archive', methods=['POST'])
+@login_required
+def chat_threads_archive(thread_uuid):
+    """6. Archive thread (PRO+ only)."""
+    try:
+        from utils.thread_manager import archive_thread
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = archive_thread(user_id, plan, thread_uuid)
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found or already archived'}), 404))
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except ValueError as ve:
+        msg = str(ve)
+        if 'requires PRO' in msg:
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True,
+                'required_plan': 'PRO'
+            }), 403))
+        return _build_cors_response(make_response(jsonify({'error': msg}), 400))
+    except Exception as e:
+        logger.error('chat_threads_archive error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread archive failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>/unarchive', methods=['POST'])
+@login_required
+def chat_threads_unarchive(thread_uuid):
+    """7. Restore thread from archive."""
+    try:
+        from utils.thread_manager import unarchive_thread
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = unarchive_thread(user_id, plan, thread_uuid)
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found in archive'}), 404))
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except ValueError as ve:
+        msg = str(ve)
+        if 'Max active' in msg:
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'feature_locked': True
+            }), 403))
+        return _build_cors_response(make_response(jsonify({'error': msg}), 400))
+    except Exception as e:
+        logger.error('chat_threads_unarchive error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread unarchive failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>', methods=['DELETE'])
+@login_required
+def chat_threads_delete(thread_uuid):
+    """8. Soft delete thread (30-day restore window)."""
+    try:
+        from utils.thread_manager import delete_thread
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = delete_thread(user_id, plan, thread_uuid)
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found'}), 404))
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except Exception as e:
+        logger.error('chat_threads_delete error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread deletion failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>/restore', methods=['POST'])
+@login_required
+def chat_threads_restore(thread_uuid):
+    """9. Restore soft-deleted thread (within 30 days)."""
+    try:
+        from utils.thread_manager import restore_thread, get_usage_stats
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = restore_thread(user_id, plan, thread_uuid)
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found'}), 404))
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except ValueError as ve:
+        msg = str(ve)
+        if 'permanently deleted' in msg.lower():
+            return _build_cors_response(make_response(jsonify({'error': msg}), 410))
+        elif 'Max active' in msg:
+            usage = get_usage_stats(user_id, plan)
+            return _build_cors_response(make_response(jsonify({
+                'error': msg,
+                'usage': {
+                    'active_threads': usage['active_threads'],
+                    'threads_limit': limits.get('conversation_threads')
+                }
+            }), 403))
+        return _build_cors_response(make_response(jsonify({'error': msg}), 400))
+    except Exception as e:
+        logger.error('chat_threads_restore error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread restore failed'}), 500))
+
+@app.route('/api/chat/threads/usage', methods=['GET'])
+@login_required
+def chat_threads_usage():
+    """10. Get comprehensive usage statistics."""
+    try:
+        from utils.thread_manager import get_usage_overview
+        from plan_utils import get_plan_limits
+    except Exception as e:
+        logger.error('thread_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    limits = get_plan_limits(email)
+    plan = limits['plan']
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = get_usage_overview(user_id, plan)
+        return _build_cors_response(jsonify({'ok': True, **result}))
+    except Exception as e:
+        logger.error('chat_threads_usage error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Usage stats failed'}), 500))
 
 # -------------------------------------------------------------------
 # Local development entrypoint

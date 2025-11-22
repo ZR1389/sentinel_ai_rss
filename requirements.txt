@@ -91,4 +91,7 @@ rq>=1.16.2
 # Background job scheduler for cron tasks
 APScheduler>=3.10.4
 
+# Testing
+pytest>=8.3.2
+
 # Note: FastAPI removed - using Flask app in main.py with health_check.py functions

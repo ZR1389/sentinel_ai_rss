@@ -17,45 +17,48 @@ PAID_PLANS = set(
     p.strip().upper() for p in CONFIG.app.paid_plans.split(",") if p.strip()
 )
 
-# Feature limits per plan (data window in days, max results)
-PLAN_FEATURE_LIMITS = {
-    "FREE": {
-        "chat_messages_per_month": 3,
-        "alerts_days": 7,          # Last 7 days of data
-        "alerts_max_results": 30,   # Max 30 alerts per query
-        "map_days": 7,
-        "timeline_days": 7,
-        "statistics_days": 7,
-        "monitoring_days": 7,
-    },
-    "PRO": {
-        "chat_messages_per_month": 1000,
-        "alerts_days": 30,
-        "alerts_max_results": 100,
-        "map_days": 30,
-        "timeline_days": 30,
-        "statistics_days": 30,
-        "monitoring_days": 30,
-    },
-    "ENTERPRISE": {
-        "chat_messages_per_month": 5000,
-        "alerts_days": 90,
-        "alerts_max_results": 500,
-        "map_days": 90,
-        "timeline_days": 90,
-        "statistics_days": 90,
-        "monitoring_days": 90,
-    },
-    "VIP": {  # Alias for ENTERPRISE
-        "chat_messages_per_month": 5000,
-        "alerts_days": 90,
-        "alerts_max_results": 500,
-        "map_days": 90,
-        "timeline_days": 90,
-        "statistics_days": 90,
-        "monitoring_days": 90,
-    },
-}
+"""Legacy quantitative window limits are now derived from config.plans.PLAN_FEATURES.
+The mapping below translates new feature names to legacy keys consumed by existing endpoints.
+"""
+try:
+    from config.plans import PLAN_FEATURES, get_plan_feature
+except ImportError:
+    # Fallback minimal structure if plans.py not present
+    PLAN_FEATURES = {
+        "FREE": {"map_access_days": 7, "timeline_days": 7, "chat_messages_monthly": 3},
+        "PRO": {"map_access_days": 30, "timeline_days": 30, "chat_messages_monthly": 1000},
+        "BUSINESS": {"map_access_days": 90, "timeline_days": 90, "chat_messages_monthly": 3000},
+        "ENTERPRISE": {"map_access_days": 365, "timeline_days": 365, "chat_messages_monthly": 10000},
+    }
+    def get_plan_feature(plan: str, feature: str, default=None):
+        plan = (plan or "FREE").upper()
+        return PLAN_FEATURES.get(plan, PLAN_FEATURES["FREE"]).get(feature, default)
+
+LEGACY_LIMIT_KEYS = (
+    "alerts_days",
+    "alerts_max_results",
+    "map_days",
+    "timeline_days",
+    "statistics_days",
+    "monitoring_days",
+    "chat_messages_per_month",
+)
+
+def _derive_legacy_limits(plan: str) -> dict:
+    """Build legacy limit dictionary from PLAN_FEATURES for backward compatibility."""
+    pf = PLAN_FEATURES.get(plan, PLAN_FEATURES.get("FREE", {}))
+    limits = {
+        # Windows: if feature missing, fall back to FREE defaults
+        "alerts_days": pf.get("map_access_days", 2),  # Use map_access_days for alert window
+        "alerts_max_results": 50 if plan == "FREE" else (150 if plan == "PRO" else (300 if plan == "BUSINESS" else 1000)),
+        "map_days": pf.get("map_access_days", 2),
+        "timeline_days": pf.get("timeline_days", 0),
+        "statistics_days": pf.get("timeline_days", 0),  # Align stats with timeline
+        "monitoring_days": pf.get("timeline_days", 0),
+        "chat_messages_per_month": pf.get("chat_messages_monthly", 0),
+    }
+    limits["plan"] = plan
+    return limits
 
 logging.basicConfig(
     level=logging.INFO,
@@ -173,16 +176,13 @@ def get_plan_limits(email: str) -> dict:
             
             plan = (row[0] or "FREE").upper()
             
-            # Get limits from PLAN_FEATURE_LIMITS constant
-            limits = PLAN_FEATURE_LIMITS.get(plan, PLAN_FEATURE_LIMITS["FREE"]).copy()
-            limits["plan"] = plan
-            
-            return limits
+            # Build legacy mapping from new plan feature structure
+            return _derive_legacy_limits(plan)
             
     except Exception as e:
         logger.error("get_plan_limits error: %s", e)
         log_security_event(event_type="plan_limits_error", email=email, details=str(e))
-        return {**PLAN_FEATURE_LIMITS["FREE"], "plan": "FREE"}
+        return _derive_legacy_limits("FREE")
 
 
 # ---------------------------- Usage (chat-only metering) ----------------------------
