@@ -5907,11 +5907,16 @@ def context_get():
         
         # Parse JSONB fields
         investigation = ctx_row.get('active_investigation') if isinstance(ctx_row, dict) else None
-        recent_queries = ctx_row.get('recent_queries', []) if isinstance(ctx_row, dict) else []
-        saved_locations = ctx_row.get('saved_locations', []) if isinstance(ctx_row, dict) else []
+            recent_queries = ctx_row.get('recent_queries') if isinstance(ctx_row, dict) else None
+            saved_locations = ctx_row.get('saved_locations') if isinstance(ctx_row, dict) else None
+        
+            # Ensure arrays are always lists, never None
+            if not isinstance(recent_queries, list):
+                recent_queries = []
+            if not isinstance(saved_locations, list):
+                saved_locations = []
         
         # Limit recent queries to last 10
-        if isinstance(recent_queries, list):
             recent_queries = recent_queries[-10:]
         
         return _build_cors_response(jsonify({
