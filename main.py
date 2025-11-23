@@ -560,16 +560,87 @@ def check_db_tables():
         """)
         alerts_exists = cur.fetchone()[0]
         
+        # Get users table columns
+        cur.execute("""
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = 'users' 
+            ORDER BY ordinal_position;
+        """)
+        users_columns = {col: dtype for col, dtype in cur.fetchall()}
+        
         cur.close()
         conn.close()
         
         return jsonify({
             "tables": tables,
             "alerts_exists": alerts_exists,
-            "total_tables": len(tables)
+            "total_tables": len(tables),
+            "users_columns": users_columns
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/admin/user/plan", methods=["POST"])
+def update_user_plan():
+    """Update user's plan (admin only)."""
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        data = request.json or {}
+        email = data.get("email")
+        new_plan = data.get("plan")
+        
+        if not email or not new_plan:
+            return jsonify({"error": "Missing email or plan"}), 400
+        
+        new_plan = new_plan.upper()
+        allowed_plans = ["FREE", "PRO", "BUSINESS", "ENTERPRISE"]
+        if new_plan not in allowed_plans:
+            return jsonify({"error": f"Invalid plan. Must be one of: {allowed_plans}"}), 400
+        
+        from db_utils import get_connection_pool
+        pool = get_connection_pool()
+        conn = pool.getconn()
+        
+        try:
+            cur = conn.cursor()
+            
+            # Check if user exists
+            cur.execute("SELECT id, plan FROM users WHERE email = %s", (email,))
+            row = cur.fetchone()
+            
+            if not row:
+                return jsonify({"error": f"User not found: {email}"}), 404
+            
+            user_id, old_plan = row
+            
+            # Update plan
+            cur.execute(
+                "UPDATE users SET plan = %s WHERE email = %s",
+                (new_plan, email)
+            )
+            conn.commit()
+            
+            logger.info(f"[ADMIN] Plan updated for {email}: {old_plan} → {new_plan}")
+            
+            return jsonify({
+                "status": "success",
+                "email": email,
+                "old_plan": old_plan,
+                "new_plan": new_plan,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            })
+        finally:
+            pool.putconn(conn)
+            
+    except Exception as e:
+        logger.error(f"[ADMIN] Update plan error: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 @app.route("/admin/postgis/status", methods=["GET"])
 def check_postgis_status():
