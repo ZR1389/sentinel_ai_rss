@@ -114,10 +114,10 @@ def create_thread(user_id: int, plan: str, title: str, messages: List[Dict],
         # Create thread
         thread_uuid = str(uuid.uuid4())
         cur.execute("""
-            INSERT INTO chat_threads (user_id, thread_uuid, title, investigation_topic, message_count)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO chat_threads (user_id, thread_uuid, title, investigation_topic, message_count, thread_messages_count)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id, thread_uuid, created_at, updated_at
-        """, (user_id, thread_uuid, title, investigation_topic, len(messages)))
+        """, (user_id, thread_uuid, title, investigation_topic, len(messages), len(messages)))
         thread = cur.fetchone()
         thread_id = thread['id']
         
@@ -292,7 +292,7 @@ def add_messages(user_id: int, plan: str, thread_uuid: str,
     with _conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         # Get thread
         cur.execute("""
-            SELECT id, message_count, is_archived
+            SELECT id, message_count, thread_messages_count, is_archived
             FROM chat_threads
             WHERE thread_uuid=%s AND user_id=%s AND is_deleted=FALSE
         """, (thread_uuid, user_id))
@@ -305,7 +305,7 @@ def add_messages(user_id: int, plan: str, thread_uuid: str,
             raise ValueError("Cannot add messages to archived thread")
         
         thread_id = thread['id']
-        current_count = thread['message_count']
+        current_count = thread['thread_messages_count']  # Use denormalized counter for performance
         
         limits = get_thread_limits(plan)
         
@@ -335,11 +335,13 @@ def add_messages(user_id: int, plan: str, thread_uuid: str,
         # Update thread
         cur.execute("""
             UPDATE chat_threads
-            SET message_count = message_count + %s, updated_at = NOW()
+            SET message_count = message_count + %s, 
+                thread_messages_count = thread_messages_count + %s,
+                updated_at = NOW()
             WHERE id = %s
-            RETURNING message_count
-        """, (len(messages), thread_id))
-        new_count = cur.fetchone()['message_count']
+            RETURNING thread_messages_count
+        """, (len(messages), len(messages), thread_id))
+        new_count = cur.fetchone()['thread_messages_count']
         
         conn.commit()
         

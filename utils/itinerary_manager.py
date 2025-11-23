@@ -70,18 +70,23 @@ def create_itinerary(
         except Exception:
             pass
 
+    # Calculate destinations count from waypoints for denormalized column
+    destinations_count = 0
+    if 'waypoints' in data and isinstance(data['waypoints'], list):
+        destinations_count = len(data['waypoints'])
+
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 INSERT INTO travel_itineraries 
-                (user_id, title, description, data)
-                VALUES (%s, %s, %s, %s)
+                (user_id, title, description, data, destinations_count)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING 
                     id, itinerary_uuid, user_id, title, description, 
                     data, created_at, updated_at, version,
-                    last_alert_sent_at, alerts_sent_count
-            """, (user_id, title, description, Json(data)))
+                    last_alert_sent_at, alerts_sent_count, destinations_count
+            """, (user_id, title, description, Json(data), destinations_count))
             
             result = cur.fetchone()
             conn.commit()
@@ -231,8 +236,15 @@ def update_itinerary(
             params = []
             
             if data is not None:
+                # Calculate new destinations_count when data changes
+                destinations_count = 0
+                if 'waypoints' in data and isinstance(data['waypoints'], list):
+                    destinations_count = len(data['waypoints'])
+                
                 updates.append("data = %s")
                 params.append(Json(data))
+                updates.append("destinations_count = %s")
+                params.append(destinations_count)
             if title is not None:
                 updates.append("title = %s")
                 params.append(title)
@@ -252,19 +264,33 @@ def update_itinerary(
                         existing_data = row_cur[0] if not isinstance(row_cur, dict) else row_cur['data']
                         if isinstance(existing_data, dict):
                             existing_data['alerts_config'] = alerts_config
+                            # Recalculate destinations_count from merged data
+                            destinations_count = 0
+                            if 'waypoints' in existing_data and isinstance(existing_data['waypoints'], list):
+                                destinations_count = len(existing_data['waypoints'])
+                            
                             updates.append("data = %s")
                             params.append(Json(existing_data))
+                            updates.append("destinations_count = %s")
+                            params.append(destinations_count)
                     except Exception:
                         pass
             elif alerts_config is not None and data is not None:
                 # data already provided; merge alerts_config directly
                 try:
                     data['alerts_config'] = alerts_config
+                    # Recalculate destinations_count from merged data
+                    destinations_count = 0
+                    if 'waypoints' in data and isinstance(data['waypoints'], list):
+                        destinations_count = len(data['waypoints'])
                     # Need to replace last Json(data) param we previously appended
-                    # Simpler: remove last param & re-append
+                    # Find both data and destinations_count params and update
                     for i in range(len(params)-1, -1, -1):
                         if isinstance(params[i], Json):
                             params[i] = Json(data)
+                            # Update destinations_count param (should be next after Json)
+                            if i+1 < len(params):
+                                params[i+1] = destinations_count
                             break
                 except Exception:
                     pass
@@ -285,7 +311,7 @@ def update_itinerary(
                 RETURNING 
                     id, itinerary_uuid, user_id, title, description,
                     data, created_at, updated_at, version,
-                    last_alert_sent_at, alerts_sent_count
+                    last_alert_sent_at, alerts_sent_count, destinations_count
             """, params)
             
             result = cur.fetchone()
