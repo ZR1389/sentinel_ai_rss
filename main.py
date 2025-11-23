@@ -7691,7 +7691,7 @@ def create_travel_itinerary():
     description = data.get('description')
     alerts_raw = data.get('alerts_config')
 
-    # Resolve plan for conditional route analysis gating
+    # Resolve plan for conditional route analysis gating (if routes embedded in itinerary data)
     try:
         jwt_plan = getattr(g, 'user_plan', None)
     except Exception:
@@ -7707,7 +7707,8 @@ def create_travel_itinerary():
         except Exception:
             user_plan = os.getenv('DEFAULT_PLAN', 'FREE').strip().upper()
 
-    # Conditional route analysis gating (destination limit now handled by decorator)
+    # Check if route analysis data embedded (backward compatibility)
+    # Clients should use /api/travel-risk/route-analysis endpoint instead
     try:
         from config_data.plans import get_plan_feature
         wants_route = False
@@ -7719,7 +7720,7 @@ def create_travel_itinerary():
         if wants_route and not get_plan_feature(user_plan, 'route_analysis', False):
             return _build_cors_response(make_response(jsonify({'error': 'Route analysis requires BUSINESS plan','feature_locked': True,'required_plan': 'BUSINESS'}), 403))
     except Exception as e:
-        logger.warning(f"Itinerary gating check failed: {e}")
+        logger.warning(f"Itinerary route analysis check failed: {e}")
 
     # Validate alerts_config if provided
     alerts_config = None
@@ -7876,6 +7877,52 @@ def get_travel_itinerary(itinerary_uuid):
     except Exception as e:
         logger.error(f'get_travel_itinerary error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get itinerary'}), 500))
+
+
+@app.route('/api/travel-risk/route-analysis', methods=['POST', 'OPTIONS'])
+@login_required
+@feature_required('route_analysis', required_plan='BUSINESS')
+def analyze_route_risk():
+    """Analyze route risk for provided waypoints/segments (gated by route_analysis feature).
+    
+    Accepts:
+        waypoints: List of waypoint objects with lat/lon
+        routes: Optional list of route segment data
+        
+    Returns:
+        Risk analysis results without persisting itinerary
+    """
+    if request.method == 'OPTIONS':
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        data = request.json or {}
+        waypoints = data.get('waypoints', [])
+        routes = data.get('routes', [])
+        
+        if not waypoints:
+            return _build_cors_response(make_response(jsonify({'error': 'waypoints required'}), 400))
+        
+        # Placeholder route risk analysis logic
+        # In production, this would call actual route analysis service
+        risk_summary = {
+            'overall_risk': 'moderate',
+            'waypoint_count': len(waypoints),
+            'route_segments': len(routes) if routes else 0,
+            'risk_factors': [],
+            'recommendations': ['Monitor travel advisories', 'Review local security conditions']
+        }
+        
+        # Could integrate with threat_engine, location_service, etc.
+        # For now, return structured placeholder
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'analysis': risk_summary,
+            'note': 'Route analysis service - BUSINESS plan feature'
+        }))
+    except Exception as e:
+        logger.error(f'analyze_route_risk error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Route analysis failed'}), 500))
 
 
 @app.route('/api/travel-risk/itinerary/<itinerary_uuid>', methods=['PATCH'])
