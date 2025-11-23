@@ -217,14 +217,30 @@ def auth_status():
         # Resolve usage + full feature limits
         chat_used = 0
         all_limits = {}
+        plan_features = {}
         try:
             from plan_utils import get_usage, get_plan_limits
+            from config.plans import get_plan_feature
             u = get_usage(email) if get_usage else None
             if isinstance(u, dict):
                 chat_used = int(u.get("chat_messages_used", 0))
 
             # Get all plan limits (chat + feature access)
             all_limits = get_plan_limits(email) or {}
+            
+            # Get full plan features from plans.py
+            plan_features = {
+                "chat_messages_lifetime": get_plan_feature(plan_name, "chat_messages_lifetime"),
+                "conversation_threads": get_plan_feature(plan_name, "conversation_threads"),
+                "messages_per_thread": get_plan_feature(plan_name, "messages_per_thread"),
+                "trip_planner_destinations": get_plan_feature(plan_name, "trip_planner_destinations"),
+                "saved_searches": get_plan_feature(plan_name, "saved_searches"),
+                "email_alerts": get_plan_feature(plan_name, "email_alerts", False),
+                "sms_alerts": get_plan_feature(plan_name, "sms_alerts", False),
+                "geofenced_alerts": get_plan_feature(plan_name, "geofenced_alerts", False),
+                "route_analysis": get_plan_feature(plan_name, "route_analysis", False),
+                "briefing_packages": get_plan_feature(plan_name, "briefing_packages", False),
+            }
         except Exception as e:
             logger.warning("Failed to resolve usage in /auth/status: %s", e)
             all_limits = {"chat_messages_per_month": 3, "alerts_days": 7, "alerts_max_results": 30}
@@ -243,9 +259,21 @@ def auth_status():
                 "map_days": all_limits.get("map_days", 7),
                 "timeline_days": all_limits.get("timeline_days", 7),
                 "statistics_days": all_limits.get("statistics_days", 7),
-                    "monitoring_days": all_limits.get("monitoring_days", 7),
-                    # Added for frontend debug/limits page convenience
-                    "chat_messages_per_month": all_limits.get("chat_messages_per_month", 3),
+                "monitoring_days": all_limits.get("monitoring_days", 7),
+                "chat_messages_per_month": all_limits.get("chat_messages_per_month", 3),
+                # Add detailed plan features
+                "chat_messages_lifetime": plan_features.get("chat_messages_lifetime"),
+                "conversation_threads": plan_features.get("conversation_threads"),
+                "messages_per_thread": plan_features.get("messages_per_thread"),
+                "trip_planner_destinations": plan_features.get("trip_planner_destinations"),
+                "saved_searches": plan_features.get("saved_searches"),
+            },
+            "features": {
+                "email_alerts": plan_features.get("email_alerts", False),
+                "sms_alerts": plan_features.get("sms_alerts", False),
+                "geofenced_alerts": plan_features.get("geofenced_alerts", False),
+                "route_analysis": plan_features.get("route_analysis", False),
+                "briefing_packages": plan_features.get("briefing_packages", False),
             },
         }))
     except Exception as e:

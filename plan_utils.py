@@ -38,9 +38,9 @@ except ImportError:
             "chat_messages_monthly": 500,
         },
         "BUSINESS": {
-            "map_access_days": 60,
-            "timeline_days": 60,
-            "chat_messages_monthly": 1500,
+            "map_access_days": 90,
+            "timeline_days": 90,
+            "chat_messages_monthly": 1000,
         },
         "ENTERPRISE": {
             "map_access_days": 90,
