@@ -181,10 +181,11 @@ def update_itinerary(
     itinerary_uuid: str,
     data: Optional[Dict[str, Any]] = None,
     title: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    expected_version: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Update an existing itinerary.
+    Update an existing itinerary with optimistic locking.
     
     Args:
         user_id: User ID (for authorization)
@@ -192,13 +193,29 @@ def update_itinerary(
         data: Optional new JSONB data
         title: Optional new title
         description: Optional new description
+        expected_version: Optional version for conflict detection (optimistic locking)
         
     Returns:
         Updated itinerary dict or None if not found
+        
+    Raises:
+        ValueError: If expected_version provided and doesn't match current version (409 conflict)
     """
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Check version if provided (optimistic locking)
+            if expected_version is not None:
+                cur.execute("""
+                    SELECT version FROM travel_itineraries
+                    WHERE user_id = %s AND itinerary_uuid = %s AND is_deleted = FALSE
+                """, (user_id, itinerary_uuid))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                if row['version'] != expected_version:
+                    raise ValueError(f"Version conflict: expected {expected_version}, current is {row['version']}")
+            
             # Build dynamic UPDATE query
             updates = []
             params = []
@@ -293,14 +310,14 @@ def get_itinerary_stats(user_id: int) -> Dict[str, int]:
         user_id: User ID
         
     Returns:
-        Dict with counts: {total, active, deleted}
+        Dict with counts: {count, active, deleted} (count = total)
     """
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT 
-                    COUNT(*) as total,
+                    COUNT(*) as count,
                     COUNT(*) FILTER (WHERE is_deleted = FALSE) as active,
                     COUNT(*) FILTER (WHERE is_deleted = TRUE) as deleted
                 FROM travel_itineraries
@@ -308,7 +325,7 @@ def get_itinerary_stats(user_id: int) -> Dict[str, int]:
             """, (user_id,))
             
             result = cur.fetchone()
-            return dict(result) if result else {'total': 0, 'active': 0, 'deleted': 0}
+            return dict(result) if result else {'count': 0, 'active': 0, 'deleted': 0}
     except Exception as e:
         logger.error(f"Failed to get itinerary stats: {e}")
         raise

@@ -7149,7 +7149,8 @@ def list_travel_itineraries():
         
         return _build_cors_response(jsonify({
             'ok': True,
-            'itineraries': results,
+            'items': results,  # Frontend expects 'items'
+            'itineraries': results,  # Keep for backward compatibility
             'count': len(results),
             'limit': limit,
             'offset': offset
@@ -7194,7 +7195,7 @@ def get_travel_itinerary(itinerary_uuid):
 @app.route('/api/travel-risk/itinerary/<itinerary_uuid>', methods=['PATCH'])
 @login_required
 def update_travel_itinerary(itinerary_uuid):
-    """Update a travel itinerary."""
+    """Update a travel itinerary with optimistic locking support."""
     try:
         from utils.itinerary_manager import update_itinerary
     except Exception as e:
@@ -7212,6 +7213,7 @@ def update_travel_itinerary(itinerary_uuid):
     user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
     
     data = request.json or {}
+    expected_version = data.get('version')  # For conflict detection
     
     try:
         result = update_itinerary(
@@ -7219,14 +7221,23 @@ def update_travel_itinerary(itinerary_uuid):
             itinerary_uuid=itinerary_uuid,
             data=data.get('data'),
             title=data.get('title'),
-            description=data.get('description')
+            description=data.get('description'),
+            expected_version=expected_version
         )
         
         if not result:
             return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
         
-        logger.info(f"Itinerary updated: {itinerary_uuid} by {email}")
+        logger.info(f"Itinerary updated: {itinerary_uuid} by {email} (v{result['version']})")
         return _build_cors_response(jsonify({'ok': True, 'itinerary': result}))
+    except ValueError as ve:
+        # Version conflict
+        if 'Version conflict' in str(ve):
+            return _build_cors_response(make_response(jsonify({
+                'error': str(ve),
+                'conflict': True
+            }), 409))
+        return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
     except Exception as e:
         logger.error(f'update_travel_itinerary error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to update itinerary'}), 500))
