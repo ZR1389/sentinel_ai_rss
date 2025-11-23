@@ -7044,7 +7044,10 @@ def chat_threads_export_pdf(thread_uuid):
         messages = thread_data['thread']['messages']
         lines = []
         for m in messages:
-            lines.append(f"[{m.get('timestamp')}] {m.get('role','').upper()}: {(m.get('content') or '').replace('\n',' ')[:4000]}")
+            timestamp = m.get('timestamp')
+            role = m.get('role', '').upper()
+            content = (m.get('content') or '').replace('\n', ' ')[:4000]
+            lines.append(f"[{timestamp}] {role}: {content}")
         body_text = '\n'.join(lines)
         title = thread_data['thread'].get('title') or 'Chat Thread'
         try:
