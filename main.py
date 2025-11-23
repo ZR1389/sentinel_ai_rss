@@ -7097,13 +7097,35 @@ def create_travel_itinerary():
     itinerary_data = data.get('data')
     title = data.get('title')
     description = data.get('description')
+    alerts_raw = data.get('alerts_config')
+
+    # Resolve plan for tier gating
+    try:
+        from plan_utils import get_plan_limits
+        limits_info = get_plan_limits(email) or {}
+        user_plan = (limits_info.get('plan') or os.getenv('DEFAULT_PLAN', 'FREE')).strip().upper()
+    except Exception:
+        user_plan = os.getenv('DEFAULT_PLAN', 'FREE').strip().upper()
+
+    # Validate alerts_config if provided
+    alerts_config = None
+    if alerts_raw is not None:
+        try:
+            from alerts_config_utils import validate_alerts_config
+            alerts_config = validate_alerts_config(alerts_raw, user_plan)
+        except ValueError as ve:
+            return _build_cors_response(make_response(jsonify({'ok': False, 'error': str(ve), 'code': 'VALIDATION_ERROR'}), 400))
+        except Exception as e:
+            logger.warning(f"alerts_config validation failed: {e}")
+            alerts_config = None
     
     try:
         result = create_itinerary(
             user_id=user_id,
             data=itinerary_data,
             title=title,
-            description=description
+            description=description,
+            alerts_config=alerts_config
         )
         
         logger.info(f"Itinerary created: {result['itinerary_uuid']} by {email}")
@@ -7264,6 +7286,26 @@ def update_travel_itinerary(itinerary_uuid):
     
     data = request.json or {}
     expected_version = data.get('version')  # For conflict detection
+    alerts_raw = data.get('alerts_config')
+
+    # Resolve plan
+    try:
+        from plan_utils import get_plan_limits
+        limits_info = get_plan_limits(email) or {}
+        user_plan = (limits_info.get('plan') or os.getenv('DEFAULT_PLAN', 'FREE')).strip().upper()
+    except Exception:
+        user_plan = os.getenv('DEFAULT_PLAN', 'FREE').strip().upper()
+
+    alerts_config = None
+    if alerts_raw is not None:
+        try:
+            from alerts_config_utils import validate_alerts_config
+            alerts_config = validate_alerts_config(alerts_raw, user_plan)
+        except ValueError as ve:
+            return _build_cors_response(make_response(jsonify({'ok': False, 'error': str(ve), 'code': 'VALIDATION_ERROR'}), 400))
+        except Exception as e:
+            logger.warning(f"alerts_config validation failed: {e}")
+            alerts_config = None
     
     # Check If-Match header (ETag-based concurrency)
     if_match = request.headers.get('If-Match')
@@ -7297,7 +7339,8 @@ def update_travel_itinerary(itinerary_uuid):
             data=data.get('data'),
             title=data.get('title'),
             description=data.get('description'),
-            expected_version=expected_version
+            expected_version=expected_version,
+            alerts_config=alerts_config
         )
         
         if not result:

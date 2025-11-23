@@ -38,7 +38,8 @@ def create_itinerary(
     user_id: int,
     data: Dict[str, Any],
     title: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    alerts_config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Create a new travel itinerary.
@@ -62,6 +63,13 @@ def create_itinerary(
     if 'waypoints' not in data:
         raise ValueError("Data must contain 'waypoints' field")
     
+    # Inject alerts_config (already validated/sanitized by caller) into data JSONB
+    if alerts_config is not None:
+        try:
+            data["alerts_config"] = alerts_config
+        except Exception:
+            pass
+
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -71,7 +79,8 @@ def create_itinerary(
                 VALUES (%s, %s, %s, %s)
                 RETURNING 
                     id, itinerary_uuid, user_id, title, description, 
-                    data, created_at, updated_at, version
+                    data, created_at, updated_at, version,
+                    last_alert_sent_at, alerts_sent_count
             """, (user_id, title, description, Json(data)))
             
             result = cur.fetchone()
@@ -182,7 +191,8 @@ def update_itinerary(
     data: Optional[Dict[str, Any]] = None,
     title: Optional[str] = None,
     description: Optional[str] = None,
-    expected_version: Optional[int] = None
+    expected_version: Optional[int] = None,
+    alerts_config: Optional[Dict[str, Any]] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Update an existing itinerary with optimistic locking.
@@ -229,6 +239,35 @@ def update_itinerary(
             if description is not None:
                 updates.append("description = %s")
                 params.append(description)
+
+            # If alerts_config provided without new data blob, fetch current data and merge
+            if alerts_config is not None and data is None:
+                cur.execute("""
+                    SELECT data FROM travel_itineraries
+                    WHERE user_id = %s AND itinerary_uuid = %s AND is_deleted = FALSE
+                """, (user_id, itinerary_uuid))
+                row_cur = cur.fetchone()
+                if row_cur:
+                    try:
+                        existing_data = row_cur[0] if not isinstance(row_cur, dict) else row_cur['data']
+                        if isinstance(existing_data, dict):
+                            existing_data['alerts_config'] = alerts_config
+                            updates.append("data = %s")
+                            params.append(Json(existing_data))
+                    except Exception:
+                        pass
+            elif alerts_config is not None and data is not None:
+                # data already provided; merge alerts_config directly
+                try:
+                    data['alerts_config'] = alerts_config
+                    # Need to replace last Json(data) param we previously appended
+                    # Simpler: remove last param & re-append
+                    for i in range(len(params)-1, -1, -1):
+                        if isinstance(params[i], Json):
+                            params[i] = Json(data)
+                            break
+                except Exception:
+                    pass
             
             if not updates:
                 # Nothing to update, just fetch current
@@ -245,7 +284,8 @@ def update_itinerary(
                 WHERE user_id = %s AND itinerary_uuid = %s AND is_deleted = FALSE
                 RETURNING 
                     id, itinerary_uuid, user_id, title, description,
-                    data, created_at, updated_at, version
+                    data, created_at, updated_at, version,
+                    last_alert_sent_at, alerts_sent_count
             """, params)
             
             result = cur.fetchone()
