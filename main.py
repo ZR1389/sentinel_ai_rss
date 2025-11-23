@@ -6485,6 +6485,27 @@ def travel_risk_assess():
     destination = (payload.get('destination') or '').strip()
     if not destination:
         return _build_cors_response(make_response(jsonify({'error': 'destination required'}), 400))
+    # FREE plan lifetime quota enforcement (1 lifetime assessment)
+    try:
+        email = get_logged_in_email()
+        user_row = fetch_one('SELECT id, plan, lifetime_travel_assessments FROM users WHERE email=%s', (email,)) if fetch_one else None
+        if user_row:
+            plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
+            if plan == 'FREE':
+                from config_data.plans import get_plan_feature
+                lifetime_used = int(user_row['lifetime_travel_assessments'] if isinstance(user_row, dict) else (user_row[2] or 0))
+                lifetime_limit = get_plan_feature('FREE','travel_assessments_lifetime') or 1
+                if lifetime_used >= lifetime_limit:
+                    return _build_cors_response(make_response(jsonify({
+                        'error': 'Free plan travel assessment quota reached',
+                        'feature_locked': True,
+                        'required_plan': 'PRO',
+                        'usage': {'used': lifetime_used,'limit': lifetime_limit,'scope': 'lifetime'}
+                    }), 403))
+                # Increment lifetime usage
+                execute('UPDATE users SET lifetime_travel_assessments = COALESCE(lifetime_travel_assessments,0)+1 WHERE id=%s', (user_row['id'] if isinstance(user_row, dict) else user_row[0],))
+    except Exception:
+        pass
     # Placeholder scoring logic
     assessment = {
         'destination': destination,
@@ -6558,8 +6579,12 @@ def saved_searches_create():
     limit = get_plan_feature(plan, 'saved_searches')
     count_row = fetch_one('SELECT COUNT(*) AS c FROM saved_searches WHERE user_id=%s', (user_id,))
     current = (count_row['c'] if isinstance(count_row, dict) else count_row[0]) if count_row else 0
-    if limit is not None and limit != 0 and current >= limit:
-        return _build_cors_response(make_response(jsonify({'error': f'Max saved searches ({limit}) reached','feature_locked': True,'required_plan': 'BUSINESS' if plan == 'PRO' else 'PRO'}), 403))
+    # Enforce zero limit for FREE explicitly
+    if limit is not None:
+        if limit == 0:
+            return _build_cors_response(make_response(jsonify({'error': 'Saved searches unavailable on FREE plan','feature_locked': True,'required_plan': 'PRO'}), 403))
+        if current >= limit:
+            return _build_cors_response(make_response(jsonify({'error': f'Max saved searches ({limit}) reached','feature_locked': True,'required_plan': 'BUSINESS' if plan == 'PRO' else ('ENTERPRISE' if plan == 'BUSINESS' else plan)}), 403))
     payload = request.get_json(silent=True) or {}
     name = (payload.get('name') or '').strip()
     query = payload.get('query') or {}
