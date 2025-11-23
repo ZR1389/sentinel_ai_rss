@@ -296,31 +296,37 @@ def manual_retention_cleanup():
 
 @app.route("/admin/migration/apply", methods=["POST"])
 def apply_migration_endpoint():
-    """Apply database migration (admin only)."""
+    """Apply database migration (admin only). Useful for deploying schema changes."""
     try:
-        # Auth check
         api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
         expected_key = os.getenv("ADMIN_API_KEY")
         
         if not expected_key or api_key != expected_key:
             return jsonify({"error": "Unauthorized - valid API key required"}), 401
         
-        # Get migration name from request
         data = request.json or {}
-        migration_name = data.get("migration", "004_travel_risk_itineraries.sql")
+        migration_name = data.get("migration")
         
-        # Read migration file
+        if not migration_name:
+            # List available migrations
+            migrations = [f for f in os.listdir("migrations") if f.endswith(".sql")] if os.path.exists("migrations") else []
+            return jsonify({
+                "error": "No migration specified",
+                "usage": "POST with {\"migration\": \"004_travel_risk_itineraries.sql\"}",
+                "available_migrations": sorted(migrations)
+            }), 400
+        
         migration_path = f"migrations/{migration_name}"
         if not os.path.exists(migration_path):
             return jsonify({
-                "error": f"Migration file not found: {migration_path}",
-                "available": os.listdir("migrations") if os.path.exists("migrations") else []
+                "error": f"Migration not found: {migration_name}",
+                "available": sorted([f for f in os.listdir("migrations") if f.endswith(".sql")])
             }), 404
         
         with open(migration_path, 'r') as f:
             migration_sql = f.read()
         
-        # Apply migration
+        # Apply via connection pool
         from db_utils import get_connection_pool
         pool = get_connection_pool()
         conn = pool.getconn()
@@ -329,34 +335,26 @@ def apply_migration_endpoint():
             cur = conn.cursor()
             cur.execute(migration_sql)
             conn.commit()
-            cur.close()
-            
-            logger.info(f"Migration applied successfully: {migration_name}")
-            
+            logger.info(f"[ADMIN] Migration applied: {migration_name}")
             return jsonify({
                 "status": "success",
-                "message": f"Migration applied: {migration_name}",
+                "migration": migration_name,
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             })
         except Exception as e:
             conn.rollback()
-            logger.error(f"Migration failed: {e}")
+            logger.error(f"[ADMIN] Migration failed {migration_name}: {e}")
             return jsonify({
                 "status": "error",
                 "error": str(e),
-                "migration": migration_name,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "migration": migration_name
             }), 500
         finally:
             pool.putconn(conn)
             
     except Exception as e:
-        logger.error(f"Migration endpoint error: {e}")
-        return make_response(jsonify({
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }), 500)
+        logger.error(f"[ADMIN] Migration endpoint error: {e}")
+        return make_response(jsonify({"status": "error", "error": str(e)}), 500)
 
 @app.route("/admin/geocoding/migrate", methods=["POST"])
 def run_geocoding_migration():
