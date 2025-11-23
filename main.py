@@ -2,6 +2,7 @@
 # main.py — Sentinel AI App API (JWT-guarded) • v2025-08-13
 from __future__ import annotations
 import os
+from utils.feature_decorators import feature_required
 from dotenv import load_dotenv
 
 # Load .env.dev if present (for local dev), otherwise fall back to .env
@@ -6748,6 +6749,7 @@ def saved_searches_delete(search_id):
 
 @app.route('/api/monitoring/safe-zones', methods=['GET'])
 @login_required
+@feature_required('safe_zones_overlay', required_plan='BUSINESS')
 def safe_zones_list():
     """List safe zones (gated by safe_zones_overlay feature)."""
     try:
@@ -6761,14 +6763,6 @@ def safe_zones_list():
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
-        from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'safe_zones_overlay', False):
-            return _build_cors_response(make_response(jsonify({
-                'error': 'Safe zones overlay requires BUSINESS plan',
-                'feature_locked': True,
-                'required_plan': 'BUSINESS'
-            }), 403))
-        
         # Placeholder: return empty safe zones (implement storage/retrieval later)
         return _build_cors_response(jsonify({'ok': True, 'safe_zones': [], 'plan': plan}))
     except Exception as e:
@@ -6777,6 +6771,7 @@ def safe_zones_list():
 
 @app.route('/api/team/invite', methods=['POST'])
 @login_required
+@feature_required('team_users', required_plan='BUSINESS')
 def team_invite():
     """Invite team member (gated by team_users quota)."""
     try:
@@ -6792,13 +6787,6 @@ def team_invite():
         
         from config_data.plans import get_plan_feature
         team_limit = get_plan_feature(plan, 'team_users')
-        
-        if team_limit is None or team_limit == 0:
-            return _build_cors_response(make_response(jsonify({
-                'error': 'Team users require BUSINESS plan',
-                'feature_locked': True,
-                'required_plan': 'BUSINESS'
-            }), 403))
         
         # Get current team size
         email = get_logged_in_email()
@@ -6831,6 +6819,7 @@ def team_invite():
 
 @app.route('/api/access-tokens', methods=['POST'])
 @login_required
+@feature_required('api_access', required_plan='ENTERPRISE')
 def issue_api_token():
     """Issue API access token (gated by api_access feature)."""
     try:
@@ -6844,12 +6833,6 @@ def issue_api_token():
             plan = (limits.get('plan') or 'FREE').upper()
         
         from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'api_access', False):
-            return _build_cors_response(make_response(jsonify({
-                'error': 'API access requires ENTERPRISE plan',
-                'feature_locked': True,
-                'required_plan': 'ENTERPRISE'
-            }), 403))
         
         # Generate API token (simple implementation)
         import secrets
@@ -6868,6 +6851,7 @@ def issue_api_token():
 
 @app.route('/api/analyst/intelligence', methods=['GET'])
 @login_required
+@feature_required('analyst_access', required_plan='ENTERPRISE')
 def analyst_intelligence():
     """Analyst-only intelligence feed (gated by analyst_access)."""
     try:
@@ -6881,12 +6865,6 @@ def analyst_intelligence():
             plan = (limits.get('plan') or 'FREE').upper()
         
         from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'analyst_access', False):
-            return _build_cors_response(make_response(jsonify({
-                'error': 'Analyst access requires ENTERPRISE plan',
-                'feature_locked': True,
-                'required_plan': 'ENTERPRISE'
-            }), 403))
         
         # Placeholder: return curated intelligence feed
         return _build_cors_response(jsonify({
@@ -6901,6 +6879,7 @@ def analyst_intelligence():
 
 @app.route('/api/briefing/monthly', methods=['GET'])
 @login_required
+@feature_required('monthly_briefing', required_plan='ENTERPRISE')
 def monthly_briefing():
     """Generate monthly briefing (gated by monthly_briefing feature)."""
     try:
@@ -6912,14 +6891,6 @@ def monthly_briefing():
             from plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
-        
-        from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'monthly_briefing', False):
-            return _build_cors_response(make_response(jsonify({
-                'error': 'Monthly briefing requires ENTERPRISE plan',
-                'feature_locked': True,
-                'required_plan': 'ENTERPRISE'
-            }), 403))
         
         # Placeholder: generate monthly summary
         return _build_cors_response(jsonify({
@@ -6934,6 +6905,7 @@ def monthly_briefing():
 
 @app.route('/api/reports/custom', methods=['POST'])
 @login_required
+@feature_required('custom_reports', required_plan='ENTERPRISE')
 def custom_report():
     """Generate custom report (gated by custom_reports feature)."""
     try:
@@ -6945,14 +6917,6 @@ def custom_report():
             from plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
-        
-        from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'custom_reports', False):
-            return _build_cors_response(make_response(jsonify({
-                'error': 'Custom reports require ENTERPRISE plan',
-                'feature_locked': True,
-                'required_plan': 'ENTERPRISE'
-            }), 403))
         
         payload = request.get_json(silent=True) or {}
         report_type = payload.get('type', 'threat-summary')
@@ -6971,6 +6935,7 @@ def custom_report():
 
 @app.route('/api/export/alerts', methods=['POST'])
 @login_required
+@feature_required('map_export', required_plan='PRO')
 def export_alerts():
     """Export alerts in formats gated by plan."""
     email = get_logged_in_email()
@@ -6980,8 +6945,6 @@ def export_alerts():
     payload = request.get_json(silent=True) or {}
     fmt = (payload.get('format') or 'csv').lower()
     allowed = get_plan_feature(plan, 'map_export')
-    if not allowed:
-        return _build_cors_response(make_response(jsonify({'error': 'Export requires PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
     if allowed == 'csv' and fmt != 'csv':
         return _build_cors_response(make_response(jsonify({'error': f'{fmt.upper()} export requires BUSINESS plan','feature_locked': True,'required_plan': 'BUSINESS'}), 403))
     # Placeholder export processing (replace with actual file generation)
@@ -7018,6 +6981,7 @@ def map_feature_matrix():
 
 @app.route('/api/chat/threads/<thread_uuid>/export/pdf', methods=['GET'])
 @login_required
+@feature_required('chat_export_pdf', required_plan='PRO')
 def chat_threads_export_pdf(thread_uuid):
     """Export a chat thread to PDF (gated by chat_export_pdf feature)."""
     try:
@@ -7029,9 +6993,6 @@ def chat_threads_export_pdf(thread_uuid):
             from plan_utils import get_plan_limits
             limits_info = get_plan_limits(get_logged_in_email()) or {}
             plan = (limits_info.get('plan') or 'FREE').upper()
-        from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'chat_export_pdf', False):
-            return _build_cors_response(make_response(jsonify({'error': 'Chat PDF export requires PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
         from utils.thread_manager import get_thread
         email = get_logged_in_email()
         user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,)) if fetch_one else None
@@ -7067,6 +7028,7 @@ def chat_threads_export_pdf(thread_uuid):
 
 @app.route('/api/briefing/package', methods=['POST'])
 @login_required
+@feature_required('briefing_packages', required_plan='PRO')
 def briefing_package():
     """Generate a briefing package (gated by briefing_packages feature)."""
     email = get_logged_in_email()
@@ -7080,8 +7042,6 @@ def briefing_package():
             limits_info = get_plan_limits(email) or {}
             plan = (limits_info.get('plan') or 'FREE').upper()
         from config_data.plans import get_plan_feature
-        if not get_plan_feature(plan, 'briefing_packages', False):
-            return _build_cors_response(make_response(jsonify({'error': 'Briefing packages require PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
         payload = request.get_json(silent=True) or {}
         title = (payload.get('title') or 'Briefing').strip()
         sections = payload.get('sections') or []
