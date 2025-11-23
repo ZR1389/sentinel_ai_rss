@@ -2,7 +2,7 @@
 # main.py — Sentinel AI App API (JWT-guarded) • v2025-08-13
 from __future__ import annotations
 import os
-from utils.feature_decorators import feature_required
+from utils.feature_decorators import feature_required, feature_limit
 from dotenv import load_dotenv
 
 # Load .env.dev if present (for local dev), otherwise fall back to .env
@@ -6644,8 +6644,26 @@ def saved_searches_list():
         annotated.append(item)
     return _build_cors_response(jsonify({'ok': True,'searches': annotated,'limit': limit,'used': len(rows),'plan': plan}))
 
+def _get_saved_searches_count():
+    """Helper to get current saved searches count for quota decorator."""
+    try:
+        email = get_logged_in_email()
+        if fetch_one is None:
+            return 0
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return 0
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        count_row = fetch_one('SELECT COUNT(*) AS c FROM saved_searches WHERE user_id=%s', (user_id,))
+        return (count_row['c'] if isinstance(count_row, dict) else count_row[0]) if count_row else 0
+    except Exception:
+        return 0
+
 @app.route('/api/monitoring/searches', methods=['POST'])
 @login_required
+@feature_limit('saved_searches', required_plan='PRO', usage_getter=_get_saved_searches_count, 
+               allow_zero_usage=False, disabled_message='Saved searches unavailable on FREE plan',
+               limit_message_template='Max saved searches ({limit}) reached')
 def saved_searches_create():
     """Create saved search respecting plan limit."""
     if fetch_one is None or execute is None:
@@ -6656,15 +6674,6 @@ def saved_searches_create():
         return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
     user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
     plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
-    limit = get_plan_feature(plan, 'saved_searches')
-    count_row = fetch_one('SELECT COUNT(*) AS c FROM saved_searches WHERE user_id=%s', (user_id,))
-    current = (count_row['c'] if isinstance(count_row, dict) else count_row[0]) if count_row else 0
-    # Enforce zero limit for FREE explicitly
-    if limit is not None:
-        if limit == 0:
-            return _build_cors_response(make_response(jsonify({'error': 'Saved searches unavailable on FREE plan','feature_locked': True,'required_plan': 'PRO'}), 403))
-        if current >= limit:
-            return _build_cors_response(make_response(jsonify({'error': f'Max saved searches ({limit}) reached','feature_locked': True,'required_plan': 'BUSINESS' if plan == 'PRO' else ('ENTERPRISE' if plan == 'BUSINESS' else plan)}), 403))
     payload = request.get_json(silent=True) or {}
     name = (payload.get('name') or '').strip()
     query = payload.get('query') or {}
@@ -6732,6 +6741,12 @@ def saved_searches_delete(search_id):
     # Anti-downgrade protection: if user is currently over limit, only allow deleting over-limit searches
     if limit is not None and current_count > limit:
         if not is_over:
+            from security_log_utils import log_security_event
+            log_security_event(
+                event_type='feature_denied',
+                email=email,
+                details=f'Anti-downgrade: Cannot delete within-limit search (id={search_id}) while over capacity ({current_count}/{limit}) on {plan} plan'
+            )
             return _build_cors_response(make_response(jsonify({
                 'error': 'Cannot delete within-limit search while over plan capacity',
                 'detail': f'You have {current_count} searches but your {plan} plan allows {limit}. Delete over-limit searches first or upgrade plan.',
@@ -7629,8 +7644,21 @@ def chat_threads_usage():
 # Travel Risk Itinerary Endpoints
 # -------------------------------------------------------------------
 
+def _get_waypoint_count():
+    """Helper to extract waypoint count from request for decorator."""
+    try:
+        data = request.json or {}
+        itinerary_data = data.get('data')
+        if isinstance(itinerary_data, dict):
+            waypoints = itinerary_data.get('waypoints', [])
+            return len(waypoints) if isinstance(waypoints, list) else 0
+    except Exception:
+        pass
+    return 0
+
 @app.route('/api/travel-risk/itinerary', methods=['POST', 'OPTIONS'])
 @login_required
+@feature_limit('trip_planner_destinations', required_plan='PRO', usage_getter=_get_waypoint_count, allow_zero_usage=True, disabled_message='Trip planner unavailable on FREE plan', limit_message_template='Max destinations ({limit}) exceeded')
 def create_travel_itinerary():
     """Create a new travel itinerary with route risk analysis."""
     if request.method == 'OPTIONS':
@@ -7663,7 +7691,7 @@ def create_travel_itinerary():
     description = data.get('description')
     alerts_raw = data.get('alerts_config')
 
-    # Resolve plan for tier gating: prefer JWT plan, then DB-derived limits, then env default
+    # Resolve plan for conditional route analysis gating
     try:
         jwt_plan = getattr(g, 'user_plan', None)
     except Exception:
@@ -7679,18 +7707,9 @@ def create_travel_itinerary():
         except Exception:
             user_plan = os.getenv('DEFAULT_PLAN', 'FREE').strip().upper()
 
-    # Trip planner destination & route analysis gating
+    # Conditional route analysis gating (destination limit now handled by decorator)
     try:
         from config_data.plans import get_plan_feature
-        dest_limit = get_plan_feature(user_plan, 'trip_planner_destinations')
-        if dest_limit is not None and isinstance(itinerary_data, dict):
-            waypoints = itinerary_data.get('waypoints') if isinstance(itinerary_data, dict) else []
-            wp_count = len(waypoints) if isinstance(waypoints, list) else 0
-            if dest_limit == 0 and wp_count > 0:
-                return _build_cors_response(make_response(jsonify({'error': 'Trip planner unavailable on FREE plan','feature_locked': True,'required_plan': 'PRO'}), 403))
-            if dest_limit and dest_limit > 0 and wp_count > dest_limit:
-                escalate = 'BUSINESS' if user_plan == 'PRO' else ('ENTERPRISE' if user_plan == 'BUSINESS' else 'PRO')
-                return _build_cors_response(make_response(jsonify({'error': f'Max destinations ({dest_limit}) exceeded','feature_locked': True,'required_plan': escalate,'provided': wp_count}), 403))
         wants_route = False
         if isinstance(itinerary_data, dict):
             for k in ('routes','route_segments','risk_analysis','segments','analysis'):
