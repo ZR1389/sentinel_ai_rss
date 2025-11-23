@@ -25,12 +25,12 @@ try:
 except ImportError:
     # Fallback minimal structure if plans.py not present
     # Fallback plan feature matrix (align with product spec)
-    # NOTE: Adjust BUSINESS tier to 60d window & mid message quota.
+    # NOTE: These are fallback values if config/plans.py import fails
     PLAN_FEATURES = {
         "FREE": {
-            "map_access_days": 7,
-            "timeline_days": 7,
-            "chat_messages_monthly": 50,
+            "map_access_days": 2,
+            "timeline_days": 0,
+            "chat_messages_monthly": 0,
         },
         "PRO": {
             "map_access_days": 30,
@@ -43,8 +43,8 @@ except ImportError:
             "chat_messages_monthly": 1000,
         },
         "ENTERPRISE": {
-            "map_access_days": 90,
-            "timeline_days": 90,
+            "map_access_days": 365,
+            "timeline_days": 365,
             "chat_messages_monthly": 2500,
         },
     }
