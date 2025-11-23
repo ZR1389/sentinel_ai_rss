@@ -24,11 +24,29 @@ try:
     from config.plans import PLAN_FEATURES, get_plan_feature
 except ImportError:
     # Fallback minimal structure if plans.py not present
+    # Fallback plan feature matrix (align with product spec)
+    # NOTE: Adjust BUSINESS tier to 60d window & mid message quota.
     PLAN_FEATURES = {
-        "FREE": {"map_access_days": 7, "timeline_days": 7, "chat_messages_monthly": 3},
-        "PRO": {"map_access_days": 30, "timeline_days": 30, "chat_messages_monthly": 1000},
-        "BUSINESS": {"map_access_days": 90, "timeline_days": 90, "chat_messages_monthly": 3000},
-        "ENTERPRISE": {"map_access_days": 365, "timeline_days": 365, "chat_messages_monthly": 10000},
+        "FREE": {
+            "map_access_days": 7,
+            "timeline_days": 7,
+            "chat_messages_monthly": 50,
+        },
+        "PRO": {
+            "map_access_days": 30,
+            "timeline_days": 30,
+            "chat_messages_monthly": 500,
+        },
+        "BUSINESS": {
+            "map_access_days": 60,
+            "timeline_days": 60,
+            "chat_messages_monthly": 1500,
+        },
+        "ENTERPRISE": {
+            "map_access_days": 90,
+            "timeline_days": 90,
+            "chat_messages_monthly": 2500,
+        },
     }
     def get_plan_feature(plan: str, feature: str, default=None):
         plan = (plan or "FREE").upper()
@@ -158,7 +176,7 @@ def get_plan_limits(email: str) -> dict:
     """
     email = _sanitize_email(email)
     if not email:
-        return {**PLAN_FEATURE_LIMITS["FREE"], "plan": "FREE"}
+        return _derive_legacy_limits("FREE")
 
     try:
         with _conn() as conn, conn.cursor() as cur:
@@ -172,7 +190,7 @@ def get_plan_limits(email: str) -> dict:
             
             if not row or not row[1]:  # No user or inactive
                 logger.warning("get_plan_limits: Inactive or no plan for %s; using FREE limits", email)
-                return {**PLAN_FEATURE_LIMITS["FREE"], "plan": "FREE"}
+                return _derive_legacy_limits("FREE")
             
             plan = (row[0] or "FREE").upper()
             
