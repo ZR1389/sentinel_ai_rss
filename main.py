@@ -146,8 +146,9 @@ def _build_cors_response(resp):
     elif origin and origin in ALLOWED_ORIGINS:
         resp.headers["Access-Control-Allow-Origin"] = origin
     # else: do not set Access-Control-Allow-Origin to avoid accidental permissive CORS
-    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-User-Email, Authorization"
+    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-User-Email, Authorization, If-Match, If-None-Match"
+    resp.headers["Access-Control-Expose-Headers"] = "ETag, Last-Modified, X-Version, Cache-Control"
     resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
 
@@ -7106,7 +7107,17 @@ def create_travel_itinerary():
         )
         
         logger.info(f"Itinerary created: {result['itinerary_uuid']} by {email}")
-        return _build_cors_response(jsonify({'ok': True, 'itinerary': result}), 201)
+        
+        # Standardized envelope response
+        response = make_response(jsonify({'ok': True, 'data': result}), 201)
+        
+        # Add ETag and version headers
+        etag = f"\"itinerary/{result['itinerary_uuid']}/v{result['version']}\""
+        response.headers['ETag'] = etag
+        response.headers['X-Version'] = str(result['version'])
+        response.headers['Last-Modified'] = result['updated_at']
+        
+        return _build_cors_response(response)
     except ValueError as ve:
         return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
     except Exception as e:
@@ -7147,14 +7158,33 @@ def list_travel_itineraries():
             include_deleted=include_deleted
         )
         
-        return _build_cors_response(jsonify({
+        # Get total count for pagination
+        from utils.itinerary_manager import get_itinerary_stats
+        stats = get_itinerary_stats(user_id)
+        total = stats['active'] if not include_deleted else stats['count']
+        
+        # Calculate pagination metadata
+        has_next = (offset + len(results)) < total
+        next_offset = offset + limit if has_next else None
+        
+        # Standardized envelope with pagination
+        response_data = {
             'ok': True,
-            'items': results,  # Frontend expects 'items'
-            'itineraries': results,  # Keep for backward compatibility
-            'count': len(results),
-            'limit': limit,
-            'offset': offset
-        }))
+            'data': {
+                'items': results,
+                'count': len(results),
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'has_next': has_next,
+                'next_offset': next_offset
+            }
+        }
+        
+        response = make_response(jsonify(response_data))
+        response.headers['Cache-Control'] = 'private, max-age=15'
+        
+        return _build_cors_response(response)
     except Exception as e:
         logger.error(f'list_travel_itineraries error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to list itineraries'}), 500))
@@ -7184,9 +7214,29 @@ def get_travel_itinerary(itinerary_uuid):
         result = get_itinerary(user_id=user_id, itinerary_uuid=itinerary_uuid)
         
         if not result:
-            return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
+            return _build_cors_response(make_response(jsonify({
+                'ok': False,
+                'error': 'Not found',
+                'code': 'NOT_FOUND'
+            }), 404))
         
-        return _build_cors_response(jsonify({'ok': True, 'itinerary': result}))
+        # Check If-None-Match for conditional GET (304)
+        client_etag = request.headers.get('If-None-Match')
+        server_etag = f"\"itinerary/{result['itinerary_uuid']}/v{result['version']}\""
+        
+        if client_etag == server_etag:
+            return _build_cors_response(make_response('', 304))
+        
+        # Standardized envelope
+        response = make_response(jsonify({'ok': True, 'data': result}))
+        
+        # Add headers
+        response.headers['ETag'] = server_etag
+        response.headers['X-Version'] = str(result['version'])
+        response.headers['Last-Modified'] = result['updated_at']
+        response.headers['Cache-Control'] = 'private, max-age=30'
+        
+        return _build_cors_response(response)
     except Exception as e:
         logger.error(f'get_travel_itinerary error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get itinerary'}), 500))
@@ -7215,6 +7265,31 @@ def update_travel_itinerary(itinerary_uuid):
     data = request.json or {}
     expected_version = data.get('version')  # For conflict detection
     
+    # Check If-Match header (ETag-based concurrency)
+    if_match = request.headers.get('If-Match')
+    
+    # Get current version for validation
+    current = get_itinerary(user_id, itinerary_uuid)
+    if not current:
+        return _build_cors_response(make_response(jsonify({
+            'ok': False,
+            'error': 'Not found',
+            'code': 'NOT_FOUND'
+        }), 404))
+    
+    # Validate If-Match if provided (takes precedence over version)
+    if if_match:
+        server_etag = f"\"itinerary/{itinerary_uuid}/v{current['version']}\""
+        if if_match != server_etag:
+            return _build_cors_response(make_response(jsonify({
+                'ok': False,
+                'error': 'Precondition failed',
+                'code': 'PRECONDITION_FAILED',
+                'expected_etag': if_match,
+                'current_etag': server_etag,
+                'current_version': current['version']
+            }), 412))
+    
     try:
         result = update_itinerary(
             user_id=user_id,
@@ -7226,18 +7301,40 @@ def update_travel_itinerary(itinerary_uuid):
         )
         
         if not result:
-            return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
+            return _build_cors_response(make_response(jsonify({
+                'ok': False,
+                'error': 'Not found',
+                'code': 'NOT_FOUND'
+            }), 404))
         
         logger.info(f"Itinerary updated: {itinerary_uuid} by {email} (v{result['version']})")
-        return _build_cors_response(jsonify({'ok': True, 'itinerary': result}))
+        
+        # Standardized envelope
+        response = make_response(jsonify({'ok': True, 'data': result}))
+        
+        # Add updated headers
+        etag = f"\"itinerary/{result['itinerary_uuid']}/v{result['version']}\""
+        response.headers['ETag'] = etag
+        response.headers['X-Version'] = str(result['version'])
+        response.headers['Last-Modified'] = result['updated_at']
+        
+        return _build_cors_response(response)
     except ValueError as ve:
-        # Version conflict
+        # Version conflict (409)
         if 'Version conflict' in str(ve):
             return _build_cors_response(make_response(jsonify({
+                'ok': False,
                 'error': str(ve),
-                'conflict': True
+                'code': 'VERSION_CONFLICT',
+                'expected_version': expected_version,
+                'current_version': current['version'],
+                'id': itinerary_uuid
             }), 409))
-        return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
+        return _build_cors_response(make_response(jsonify({
+            'ok': False,
+            'error': str(ve),
+            'code': 'VALIDATION_ERROR'
+        }), 400))
     except Exception as e:
         logger.error(f'update_travel_itinerary error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to update itinerary'}), 500))
@@ -7266,6 +7363,19 @@ def delete_travel_itinerary(itinerary_uuid):
     # Check for permanent delete flag
     permanent = request.args.get('permanent', 'false').lower() == 'true'
     
+    # Check If-Match header
+    if_match = request.headers.get('If-Match')
+    if if_match:
+        current = get_itinerary(user_id, itinerary_uuid)
+        if current:
+            server_etag = f"\"itinerary/{itinerary_uuid}/v{current['version']}\""
+            if if_match != server_etag:
+                return _build_cors_response(make_response(jsonify({
+                    'ok': False,
+                    'error': 'Precondition failed',
+                    'code': 'PRECONDITION_FAILED'
+                }), 412))
+    
     try:
         deleted = delete_itinerary(
             user_id=user_id,
@@ -7274,10 +7384,17 @@ def delete_travel_itinerary(itinerary_uuid):
         )
         
         if not deleted:
-            return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
+            return _build_cors_response(make_response(jsonify({
+                'ok': False,
+                'error': 'Not found',
+                'code': 'NOT_FOUND'
+            }), 404))
         
         logger.info(f"Itinerary {'permanently ' if permanent else ''}deleted: {itinerary_uuid} by {email}")
-        return _build_cors_response(jsonify({'ok': True, 'deleted': True, 'permanent': permanent}))
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'data': {'deleted': True, 'permanent': permanent}
+        }))
     except Exception as e:
         logger.error(f'delete_travel_itinerary error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to delete itinerary'}), 500))
@@ -7305,7 +7422,16 @@ def get_itinerary_stats():
     
     try:
         stats = get_itinerary_stats(user_id=user_id)
-        return _build_cors_response(jsonify({'ok': True, **stats}))
+        
+        # Standardized envelope
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'data': {
+                'total': stats['count'],
+                'active': stats['active'],
+                'deleted': stats['deleted']
+            }
+        }))
     except Exception as e:
         logger.error(f'get_itinerary_stats error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get stats'}), 500))
