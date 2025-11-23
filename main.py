@@ -5052,8 +5052,14 @@ def travel_risk_assessment():
         lat = float(data['lat'])
         lon = float(data['lon'])
         country_code = data.get('country_code')
+        
+        # Sanitize bounds for radius and days
         radius_km = int(data.get('radius_km', 100))
+        radius_km = max(1, min(radius_km, 500))  # Clamp between 1-500 km
+        
         days = int(data.get('days', 14))
+        days = max(1, min(days, 365))  # Clamp between 1-365 days
+        
         output_format = str(data.get('format', 'structured')).lower()
         
         # Generate cache key
@@ -6991,6 +6997,245 @@ def chat_threads_usage():
     except Exception as e:
         logger.error('chat_threads_usage error: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Usage stats failed'}), 500))
+
+# -------------------------------------------------------------------
+# Travel Risk Itinerary Endpoints
+# -------------------------------------------------------------------
+
+@app.route('/api/travel-risk/itinerary', methods=['POST', 'OPTIONS'])
+@login_required
+def create_travel_itinerary():
+    """Create a new travel itinerary with route risk analysis."""
+    if request.method == 'OPTIONS':
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from utils.itinerary_manager import create_itinerary
+    except Exception as e:
+        logger.error('itinerary_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Itinerary system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    data = request.json or {}
+    
+    # Validate required fields
+    if 'data' not in data:
+        return _build_cors_response(make_response(jsonify({'error': 'Missing required field: data'}), 400))
+    
+    itinerary_data = data.get('data')
+    title = data.get('title')
+    description = data.get('description')
+    
+    try:
+        result = create_itinerary(
+            user_id=user_id,
+            data=itinerary_data,
+            title=title,
+            description=description
+        )
+        
+        logger.info(f"Itinerary created: {result['itinerary_uuid']} by {email}")
+        return _build_cors_response(jsonify({'ok': True, 'itinerary': result}), 201)
+    except ValueError as ve:
+        return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
+    except Exception as e:
+        logger.error(f'create_travel_itinerary error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to create itinerary'}), 500))
+
+
+@app.route('/api/travel-risk/itinerary', methods=['GET'])
+@login_required
+def list_travel_itineraries():
+    """List user's travel itineraries with pagination."""
+    try:
+        from utils.itinerary_manager import list_itineraries
+    except Exception as e:
+        logger.error('itinerary_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Itinerary system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    # Parse query params
+    limit = int(request.args.get('limit', 20))
+    offset = int(request.args.get('offset', 0))
+    include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
+    
+    try:
+        results = list_itineraries(
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+            include_deleted=include_deleted
+        )
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'itineraries': results,
+            'count': len(results),
+            'limit': limit,
+            'offset': offset
+        }))
+    except Exception as e:
+        logger.error(f'list_travel_itineraries error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to list itineraries'}), 500))
+
+
+@app.route('/api/travel-risk/itinerary/<itinerary_uuid>', methods=['GET'])
+@login_required
+def get_travel_itinerary(itinerary_uuid):
+    """Get a specific travel itinerary by UUID."""
+    try:
+        from utils.itinerary_manager import get_itinerary
+    except Exception as e:
+        logger.error('itinerary_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Itinerary system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        result = get_itinerary(user_id=user_id, itinerary_uuid=itinerary_uuid)
+        
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
+        
+        return _build_cors_response(jsonify({'ok': True, 'itinerary': result}))
+    except Exception as e:
+        logger.error(f'get_travel_itinerary error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to get itinerary'}), 500))
+
+
+@app.route('/api/travel-risk/itinerary/<itinerary_uuid>', methods=['PATCH'])
+@login_required
+def update_travel_itinerary(itinerary_uuid):
+    """Update a travel itinerary."""
+    try:
+        from utils.itinerary_manager import update_itinerary
+    except Exception as e:
+        logger.error('itinerary_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Itinerary system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    data = request.json or {}
+    
+    try:
+        result = update_itinerary(
+            user_id=user_id,
+            itinerary_uuid=itinerary_uuid,
+            data=data.get('data'),
+            title=data.get('title'),
+            description=data.get('description')
+        )
+        
+        if not result:
+            return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
+        
+        logger.info(f"Itinerary updated: {itinerary_uuid} by {email}")
+        return _build_cors_response(jsonify({'ok': True, 'itinerary': result}))
+    except Exception as e:
+        logger.error(f'update_travel_itinerary error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to update itinerary'}), 500))
+
+
+@app.route('/api/travel-risk/itinerary/<itinerary_uuid>', methods=['DELETE'])
+@login_required
+def delete_travel_itinerary(itinerary_uuid):
+    """Delete a travel itinerary (soft delete by default)."""
+    try:
+        from utils.itinerary_manager import delete_itinerary
+    except Exception as e:
+        logger.error('itinerary_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Itinerary system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    # Check for permanent delete flag
+    permanent = request.args.get('permanent', 'false').lower() == 'true'
+    
+    try:
+        deleted = delete_itinerary(
+            user_id=user_id,
+            itinerary_uuid=itinerary_uuid,
+            soft=not permanent
+        )
+        
+        if not deleted:
+            return _build_cors_response(make_response(jsonify({'error': 'Itinerary not found'}), 404))
+        
+        logger.info(f"Itinerary {'permanently ' if permanent else ''}deleted: {itinerary_uuid} by {email}")
+        return _build_cors_response(jsonify({'ok': True, 'deleted': True, 'permanent': permanent}))
+    except Exception as e:
+        logger.error(f'delete_travel_itinerary error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to delete itinerary'}), 500))
+
+
+@app.route('/api/travel-risk/itinerary/stats', methods=['GET'])
+@login_required
+def get_itinerary_stats():
+    """Get statistics about user's itineraries."""
+    try:
+        from utils.itinerary_manager import get_itinerary_stats
+    except Exception as e:
+        logger.error('itinerary_manager import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Itinerary system unavailable'}), 500))
+    
+    email = get_logged_in_email()
+    
+    if fetch_one is None:
+        return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+    
+    user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    
+    try:
+        stats = get_itinerary_stats(user_id=user_id)
+        return _build_cors_response(jsonify({'ok': True, **stats}))
+    except Exception as e:
+        logger.error(f'get_itinerary_stats error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to get stats'}), 500))
 
 # -------------------------------------------------------------------
 # Local development entrypoint
