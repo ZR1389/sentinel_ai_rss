@@ -88,6 +88,7 @@ def main():
         ("Geographic", "tests/geographic"),
         ("Performance", "tests/performance"),
         ("SOCMINT", "tests/socmint"),
+        ("Gating", "tests/gating"),
     ]
     
     results = {}

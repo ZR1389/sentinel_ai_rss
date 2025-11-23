@@ -981,7 +981,7 @@ except Exception:
 
 # Feature gating & plan feature access
 try:
-    from config.plans import PLAN_FEATURES, get_plan_feature, get_feature_limit, has_feature
+    from config_data.plans import PLAN_FEATURES, get_plan_feature, get_feature_limit, has_feature
 except Exception as e:
     logger.warning("config.plans import failed: %s", e)
     PLAN_FEATURES = {}
@@ -2733,6 +2733,22 @@ def api_map_alerts():
     auth_header = request.headers.get("Authorization", "")
     is_authenticated = auth_header.startswith("Bearer ") and len(auth_header) > 7
 
+    # Enforce plan-based days cap for authenticated users
+    max_days_allowed = 2  # FREE default for unauthenticated
+    if is_authenticated:
+        try:
+            token = auth_header.split(" ", 1)[1].strip()
+            payload = decode_token(token)
+            if payload and payload.get("type") == "access":
+                email = payload.get("user_email")
+                jwt_plan = payload.get("plan")
+                if jwt_plan:
+                    plan = str(jwt_plan).strip().upper()
+                    from config_data.plans import get_plan_feature
+                    max_days_allowed = get_plan_feature(plan, 'map_access_days') or 365
+        except Exception:
+            pass
+
     # Defaults and caps
     try:
         days = int(request.args.get("days", 30))
@@ -2741,6 +2757,9 @@ def api_map_alerts():
     # Allow days=0 for all historical data (no cap)
     if days < 0:
         days = 0
+    # Cap to plan limit
+    if days > max_days_allowed:
+        days = max_days_allowed
 
     try:
         limit = int(request.args.get("limit", 5000))
@@ -3326,10 +3345,22 @@ def analytics_timeline():
         return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
     
     try:
-        from plan_utils import get_plan_limits
-        email = g.user_email
-        limits = get_plan_limits(email) or {}
-        timeline_days = limits.get("timeline_days", 7)
+        # Prefer JWT plan
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            from plan_utils import get_plan_limits
+            email = g.user_email
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        # Enforce timeline_access feature gate
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'timeline_access', False):
+            return _build_cors_response(make_response(jsonify({"error": "Timeline requires PRO plan", "feature_locked": True, "required_plan": "PRO"}), 403))
+        
+        timeline_days = get_plan_feature(plan, 'timeline_days') or 7
         
         # Query alerts grouped by day within user's plan window
         q = """
@@ -3397,6 +3428,24 @@ def stats_overview():
     """
     if fetch_all is None or fetch_one is None:
         return _build_cors_response(make_response(jsonify({"error": "Database unavailable"}), 503))
+    
+    # Enforce statistics_dashboard feature gate
+    try:
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            from plan_utils import get_plan_limits
+            email = get_logged_in_email()
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        dashboard_level = get_plan_feature(plan, 'statistics_dashboard')
+        if not dashboard_level:
+            return _build_cors_response(make_response(jsonify({"error": "Statistics dashboard requires PRO plan", "feature_locked": True, "required_plan": "PRO"}), 403))
+    except Exception:
+        pass
 
     try:
         # Get user plan limits
@@ -3547,6 +3596,10 @@ def stats_overview():
         except Exception:
             pass
 
+        # Check weekly_trends feature flag
+        from config_data.plans import get_plan_feature
+        has_weekly_trends = get_plan_feature(plan, 'weekly_trends', False)
+
         payload = {
             "ok": True,
             "updated_at": datetime.utcnow().isoformat() + "Z",
@@ -3556,12 +3609,18 @@ def stats_overview():
             "active_monitors": active_monitors,
             "tracked_locations": tracked_locations,
             "chat_messages_month": chat_messages_month,
-            "weekly_trends": weekly_trends,
             "top_regions": top_regions,
             "severity_breakdown": severity_breakdown,
             "window_days": window_days,
             "max_window_days": max_window_days,
         }
+        
+        # Only include weekly_trends if plan allows
+        if has_weekly_trends:
+            payload["weekly_trends"] = weekly_trends
+        else:
+            payload["weekly_trends_locked"] = True
+            payload["weekly_trends_required_plan"] = "PRO"
 
         # Cache result
         _STATS_OVERVIEW_CACHE[cache_key] = {"cached_at": now_ts, "payload": payload}
@@ -6562,7 +6621,27 @@ def saved_searches_list():
     plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
     rows = fetch_all('SELECT id, name, query, alert_enabled, alert_frequency, created_at FROM saved_searches WHERE user_id=%s ORDER BY created_at DESC', (user_id,)) or []
     limit = get_plan_feature(plan, 'saved_searches')
-    return _build_cors_response(jsonify({'ok': True,'searches': rows,'limit': limit,'used': len(rows),'plan': plan}))
+    annotated = []
+    for idx, r in enumerate(rows):
+        item = dict(r)
+        try:
+            # If column present, include state
+            if 'is_over_limit' in item:
+                pass
+        except Exception:
+            pass
+        over = limit is not None and limit >= 0 and idx >= limit
+        if over:
+            item['over_limit'] = True
+            item['alert_enabled'] = False
+            # Persist flag if column exists
+            if execute is not None:
+                try:
+                    execute('UPDATE saved_searches SET is_over_limit=TRUE, alert_enabled=FALSE WHERE id=%s AND (is_over_limit=FALSE OR is_over_limit IS NULL)', (item['id'],))
+                except Exception:
+                    pass
+        annotated.append(item)
+    return _build_cors_response(jsonify({'ok': True,'searches': annotated,'limit': limit,'used': len(rows),'plan': plan}))
 
 @app.route('/api/monitoring/searches', methods=['POST'])
 @login_required
@@ -6593,13 +6672,302 @@ def saved_searches_create():
     if not name:
         return _build_cors_response(make_response(jsonify({'error': 'name required'}), 400))
     try:
-        execute('INSERT INTO saved_searches (user_id, name, query, alert_enabled, alert_frequency) VALUES (%s,%s,%s,%s,%s)', (user_id, name, Json(query), alert_enabled, alert_frequency))
+        # Include is_over_limit column if it exists (SAFE optional)
+        inserted = False
+        if execute is not None:
+            try:
+                execute('INSERT INTO saved_searches (user_id, name, query, alert_enabled, alert_frequency, is_over_limit) VALUES (%s,%s,%s,%s,%s,%s)', (user_id, name, Json(query), alert_enabled, alert_frequency, False))
+                inserted = True
+            except Exception:
+                pass
+        if not inserted:
+            execute('INSERT INTO saved_searches (user_id, name, query, alert_enabled, alert_frequency) VALUES (%s,%s,%s,%s,%s)', (user_id, name, Json(query), alert_enabled, alert_frequency))
         new_id_row = fetch_one('SELECT id FROM saved_searches WHERE user_id=%s AND name=%s ORDER BY id DESC LIMIT 1', (user_id, name))
         new_id = new_id_row['id'] if isinstance(new_id_row, dict) else new_id_row[0]
         return _build_cors_response(jsonify({'ok': True,'id': new_id}))
     except Exception as e:
         logger.error('saved_searches_create error: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'create failed'}), 500))
+
+@app.route('/api/monitoring/searches/<int:search_id>', methods=['DELETE'])
+@login_required
+def saved_searches_delete(search_id):
+    """Delete a saved search with anti-downgrade protection.
+    
+    Users cannot delete searches if they're over their current plan limit, preventing:
+    1. Create 10 searches on BUSINESS
+    2. Downgrade to PRO (limit=3)
+    3. Delete 7 searches to get back under limit
+    4. Circumvent the 'over_limit' enforcement
+    
+    Protection: If user is currently over limit, they can only delete over-limit searches
+    (those marked is_over_limit=TRUE). To delete within-limit searches, must upgrade plan.
+    """
+    if fetch_one is None or execute is None:
+        return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
+    
+    email = get_logged_in_email()
+    user_row = fetch_one('SELECT id, plan FROM users WHERE email=%s', (email,))
+    if not user_row:
+        return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+    
+    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+    plan = (user_row['plan'] if isinstance(user_row, dict) else user_row[1] or 'FREE').upper()
+    
+    # Check ownership and over-limit status
+    search_row = fetch_one('SELECT is_over_limit FROM saved_searches WHERE id=%s AND user_id=%s', (search_id, user_id))
+    if not search_row:
+        return _build_cors_response(make_response(jsonify({'error': 'Search not found'}), 404))
+    
+    is_over = search_row.get('is_over_limit') if isinstance(search_row, dict) else (search_row[0] if search_row else False)
+    
+    # Count total searches
+    count_row = fetch_one('SELECT COUNT(*) AS c FROM saved_searches WHERE user_id=%s', (user_id,))
+    current_count = (count_row['c'] if isinstance(count_row, dict) else count_row[0]) if count_row else 0
+    
+    # Check plan limit
+    limit = get_plan_feature(plan, 'saved_searches')
+    
+    # Anti-downgrade protection: if user is currently over limit, only allow deleting over-limit searches
+    if limit is not None and current_count > limit:
+        if not is_over:
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Cannot delete within-limit search while over plan capacity',
+                'detail': f'You have {current_count} searches but your {plan} plan allows {limit}. Delete over-limit searches first or upgrade plan.',
+                'feature_locked': True,
+                'required_plan': 'BUSINESS' if plan == 'PRO' else 'ENTERPRISE'
+            }), 403))
+    
+    # Perform deletion
+    try:
+        execute('DELETE FROM saved_searches WHERE id=%s AND user_id=%s', (search_id, user_id))
+        return _build_cors_response(jsonify({'ok': True, 'deleted': search_id}))
+    except Exception as e:
+        logger.error('saved_searches_delete error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'delete failed'}), 500))
+
+@app.route('/api/monitoring/safe-zones', methods=['GET'])
+@login_required
+def safe_zones_list():
+    """List safe zones (gated by safe_zones_overlay feature)."""
+    try:
+        # Prefer JWT plan
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            email = get_logged_in_email()
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'safe_zones_overlay', False):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Safe zones overlay requires BUSINESS plan',
+                'feature_locked': True,
+                'required_plan': 'BUSINESS'
+            }), 403))
+        
+        # Placeholder: return empty safe zones (implement storage/retrieval later)
+        return _build_cors_response(jsonify({'ok': True, 'safe_zones': [], 'plan': plan}))
+    except Exception as e:
+        logger.error('safe_zones_list error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'safe zones failed'}), 500))
+
+@app.route('/api/team/invite', methods=['POST'])
+@login_required
+def team_invite():
+    """Invite team member (gated by team_users quota)."""
+    try:
+        # Get plan
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            email = get_logged_in_email()
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        team_limit = get_plan_feature(plan, 'team_users')
+        
+        if team_limit is None or team_limit == 0:
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Team users require BUSINESS plan',
+                'feature_locked': True,
+                'required_plan': 'BUSINESS'
+            }), 403))
+        
+        # Get current team size
+        email = get_logged_in_email()
+        if fetch_one is None:
+            return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
+        
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        # Count existing team members (placeholder - assumes team_members table exists)
+        # For now, return quota info
+        payload = request.get_json(silent=True) or {}
+        invite_email = (payload.get('email') or '').strip()
+        if not invite_email:
+            return _build_cors_response(make_response(jsonify({'error': 'email required'}), 400))
+        
+        # Placeholder: would create team_member record and send invite email
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'invited': invite_email,
+            'team_limit': team_limit,
+            'plan': plan,
+            'note': 'Team invites will be implemented with team_members table'
+        }))
+    except Exception as e:
+        logger.error('team_invite error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'invite failed'}), 500))
+
+@app.route('/api/access-tokens', methods=['POST'])
+@login_required
+def issue_api_token():
+    """Issue API access token (gated by api_access feature)."""
+    try:
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            email = get_logged_in_email()
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'api_access', False):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'API access requires ENTERPRISE plan',
+                'feature_locked': True,
+                'required_plan': 'ENTERPRISE'
+            }), 403))
+        
+        # Generate API token (simple implementation)
+        import secrets
+        token = 'sk_' + secrets.token_urlsafe(32)
+        
+        # Placeholder: would store in api_tokens table with user_id, created_at, last_used
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'token': token,
+            'plan': plan,
+            'note': 'Store this token securely - it will not be shown again'
+        }))
+    except Exception as e:
+        logger.error('issue_api_token error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'token generation failed'}), 500))
+
+@app.route('/api/analyst/intelligence', methods=['GET'])
+@login_required
+def analyst_intelligence():
+    """Analyst-only intelligence feed (gated by analyst_access)."""
+    try:
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            email = get_logged_in_email()
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'analyst_access', False):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Analyst access requires ENTERPRISE plan',
+                'feature_locked': True,
+                'required_plan': 'ENTERPRISE'
+            }), 403))
+        
+        # Placeholder: return curated intelligence feed
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'intelligence': [],
+            'plan': plan,
+            'note': 'Analyst intelligence feed - premium threat data'
+        }))
+    except Exception as e:
+        logger.error('analyst_intelligence error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'intelligence feed failed'}), 500))
+
+@app.route('/api/briefing/monthly', methods=['GET'])
+@login_required
+def monthly_briefing():
+    """Generate monthly briefing (gated by monthly_briefing feature)."""
+    try:
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            email = get_logged_in_email()
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'monthly_briefing', False):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Monthly briefing requires ENTERPRISE plan',
+                'feature_locked': True,
+                'required_plan': 'ENTERPRISE'
+            }), 403))
+        
+        # Placeholder: generate monthly summary
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'month': datetime.utcnow().strftime('%Y-%m'),
+            'summary': 'Monthly briefing placeholder',
+            'plan': plan
+        }))
+    except Exception as e:
+        logger.error('monthly_briefing error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'briefing generation failed'}), 500))
+
+@app.route('/api/reports/custom', methods=['POST'])
+@login_required
+def custom_report():
+    """Generate custom report (gated by custom_reports feature)."""
+    try:
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            email = get_logged_in_email()
+            from plan_utils import get_plan_limits
+            limits = get_plan_limits(email) or {}
+            plan = (limits.get('plan') or 'FREE').upper()
+        
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'custom_reports', False):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Custom reports require ENTERPRISE plan',
+                'feature_locked': True,
+                'required_plan': 'ENTERPRISE'
+            }), 403))
+        
+        payload = request.get_json(silent=True) or {}
+        report_type = payload.get('type', 'threat-summary')
+        
+        # Placeholder: generate custom report
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'report_type': report_type,
+            'generated_at': datetime.utcnow().isoformat(),
+            'plan': plan,
+            'note': 'Custom report generation placeholder'
+        }))
+    except Exception as e:
+        logger.error('custom_report error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'report generation failed'}), 500))
 
 @app.route('/api/export/alerts', methods=['POST'])
 @login_required
@@ -6620,6 +6988,115 @@ def export_alerts():
     alert_ids = payload.get('alert_ids') or []
     file_url = f"/downloads/alerts_export_{fmt}_{len(alert_ids)}.dat"
     return _build_cors_response(jsonify({'ok': True,'download_url': file_url,'format': fmt,'plan': plan}))
+
+@app.route('/api/map/features', methods=['GET'])
+@login_required
+def map_feature_matrix():
+    """Return map feature flags for current plan."""
+    email = get_logged_in_email()
+    try:
+        # Prefer JWT plan for test reliability
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            from plan_utils import get_plan_limits
+            limits_info = get_plan_limits(email) or {}
+            plan = (limits_info.get('plan') or 'FREE').upper()
+        from config_data.plans import get_plan_feature
+        feats = {
+            'map_custom_filters': bool(get_plan_feature(plan, 'map_custom_filters')),
+            'map_historical_playback': bool(get_plan_feature(plan, 'map_historical_playback')),
+            'map_comparison_mode': bool(get_plan_feature(plan, 'map_comparison_mode')),
+            'safe_zones_overlay': bool(get_plan_feature(plan, 'safe_zones_overlay')),
+            'map_export': get_plan_feature(plan, 'map_export')
+        }
+        return _build_cors_response(jsonify({'ok': True,'plan': plan,'features': feats}))
+    except Exception as e:
+        logger.error(f'map_feature_matrix error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'feature matrix failed'}), 500))
+
+@app.route('/api/chat/threads/<thread_uuid>/export/pdf', methods=['GET'])
+@login_required
+def chat_threads_export_pdf(thread_uuid):
+    """Export a chat thread to PDF (gated by chat_export_pdf feature)."""
+    try:
+        # Prefer JWT plan for test reliability
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            from plan_utils import get_plan_limits
+            limits_info = get_plan_limits(get_logged_in_email()) or {}
+            plan = (limits_info.get('plan') or 'FREE').upper()
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'chat_export_pdf', False):
+            return _build_cors_response(make_response(jsonify({'error': 'Chat PDF export requires PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
+        from utils.thread_manager import get_thread
+        email = get_logged_in_email()
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,)) if fetch_one else None
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        thread_data = get_thread(user_id, plan, thread_uuid)
+        if not thread_data:
+            return _build_cors_response(make_response(jsonify({'error': 'Thread not found'}), 404))
+        messages = thread_data['thread']['messages']
+        lines = []
+        for m in messages:
+            lines.append(f"[{m.get('timestamp')}] {m.get('role','').upper()}: {(m.get('content') or '').replace('\n',' ')[:4000]}")
+        body_text = '\n'.join(lines)
+        title = thread_data['thread'].get('title') or 'Chat Thread'
+        try:
+            from generate_pdf import generate_pdf_advisory
+            pdf_path = generate_pdf_advisory(email, title, body_text)
+        except Exception:
+            pdf_path = None
+        if not pdf_path or not os.path.exists(pdf_path):
+            return _build_cors_response(make_response(jsonify({'error': 'PDF generation failed'}), 500))
+        import base64
+        with open(pdf_path,'rb') as f:
+            encoded = base64.b64encode(f.read()).decode('utf-8')
+        return _build_cors_response(jsonify({'ok': True,'filename': os.path.basename(pdf_path),'pdf_base64': encoded,'thread_uuid': thread_uuid}))
+    except Exception as e:
+        logger.error(f'chat_threads_export_pdf error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'export failed'}), 500))
+
+@app.route('/api/briefing/package', methods=['POST'])
+@login_required
+def briefing_package():
+    """Generate a briefing package (gated by briefing_packages feature)."""
+    email = get_logged_in_email()
+    try:
+        # Prefer JWT plan for test reliability
+        jwt_plan = getattr(g, 'user_plan', None)
+        if jwt_plan:
+            plan = str(jwt_plan).strip().upper()
+        else:
+            from plan_utils import get_plan_limits
+            limits_info = get_plan_limits(email) or {}
+            plan = (limits_info.get('plan') or 'FREE').upper()
+        from config_data.plans import get_plan_feature
+        if not get_plan_feature(plan, 'briefing_packages', False):
+            return _build_cors_response(make_response(jsonify({'error': 'Briefing packages require PRO plan','feature_locked': True,'required_plan': 'PRO'}), 403))
+        payload = request.get_json(silent=True) or {}
+        title = (payload.get('title') or 'Briefing').strip()
+        sections = payload.get('sections') or []
+        if not isinstance(sections, list) or not sections:
+            return _build_cors_response(make_response(jsonify({'error': 'sections list required'}), 400))
+        compiled = []
+        for idx, section in enumerate(sections, start=1):
+            if isinstance(section, dict):
+                heading = section.get('heading') or f'Section {idx}'
+                content = (section.get('content') or '')[:4000]
+            else:
+                heading = f'Section {idx}'
+                content = str(section)[:4000]
+            compiled.append({'heading': heading,'chars': len(content)})
+        return _build_cors_response(jsonify({'ok': True,'title': title,'sections': compiled,'plan': plan}))
+    except Exception as e:
+        logger.error(f'briefing_package error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'briefing failed'}), 500))
 
 @app.route('/api/user/plan', methods=['GET'])
 @login_required
@@ -6774,7 +7251,7 @@ def chat_threads_create():
     try:
         from utils.thread_manager import create_thread
         from plan_utils import get_plan_limits
-        from config.plans import get_plan_feature
+        from config_data.plans import get_plan_feature
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -7223,13 +7700,44 @@ def create_travel_itinerary():
     description = data.get('description')
     alerts_raw = data.get('alerts_config')
 
-    # Resolve plan for tier gating
+    # Resolve plan for tier gating: prefer JWT plan, then DB-derived limits, then env default
     try:
-        from plan_utils import get_plan_limits
-        limits_info = get_plan_limits(email) or {}
-        user_plan = (limits_info.get('plan') or os.getenv('DEFAULT_PLAN', 'FREE')).strip().upper()
+        jwt_plan = getattr(g, 'user_plan', None)
     except Exception:
-        user_plan = os.getenv('DEFAULT_PLAN', 'FREE').strip().upper()
+        jwt_plan = None
+    user_plan = None
+    if jwt_plan:
+        user_plan = str(jwt_plan).strip().upper()
+    else:
+        try:
+            from plan_utils import get_plan_limits
+            limits_info = get_plan_limits(email) or {}
+            user_plan = (limits_info.get('plan') or os.getenv('DEFAULT_PLAN', 'FREE')).strip().upper()
+        except Exception:
+            user_plan = os.getenv('DEFAULT_PLAN', 'FREE').strip().upper()
+
+    # Trip planner destination & route analysis gating
+    try:
+        from config_data.plans import get_plan_feature
+        dest_limit = get_plan_feature(user_plan, 'trip_planner_destinations')
+        if dest_limit is not None and isinstance(itinerary_data, dict):
+            waypoints = itinerary_data.get('waypoints') if isinstance(itinerary_data, dict) else []
+            wp_count = len(waypoints) if isinstance(waypoints, list) else 0
+            if dest_limit == 0 and wp_count > 0:
+                return _build_cors_response(make_response(jsonify({'error': 'Trip planner unavailable on FREE plan','feature_locked': True,'required_plan': 'PRO'}), 403))
+            if dest_limit and dest_limit > 0 and wp_count > dest_limit:
+                escalate = 'BUSINESS' if user_plan == 'PRO' else ('ENTERPRISE' if user_plan == 'BUSINESS' else 'PRO')
+                return _build_cors_response(make_response(jsonify({'error': f'Max destinations ({dest_limit}) exceeded','feature_locked': True,'required_plan': escalate,'provided': wp_count}), 403))
+        wants_route = False
+        if isinstance(itinerary_data, dict):
+            for k in ('routes','route_segments','risk_analysis','segments','analysis'):
+                if k in itinerary_data:
+                    wants_route = True
+                    break
+        if wants_route and not get_plan_feature(user_plan, 'route_analysis', False):
+            return _build_cors_response(make_response(jsonify({'error': 'Route analysis requires BUSINESS plan','feature_locked': True,'required_plan': 'BUSINESS'}), 403))
+    except Exception as e:
+        logger.warning(f"Itinerary gating check failed: {e}")
 
     # Validate alerts_config if provided
     alerts_config = None

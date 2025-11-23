@@ -23,7 +23,7 @@ except Exception:
     DATABASE_URL = None
 
 try:
-    from config.plans import TRIAL_CONFIG
+    from config_data.plans import TRIAL_CONFIG
 except Exception:
     TRIAL_CONFIG = {}
 

@@ -23,7 +23,8 @@ except Exception:
     DATABASE_URL = os.environ.get('DATABASE_PUBLIC_URL')
 
 try:
-    from config.plans import get_plan_feature
+    # Updated import path after renaming plan configuration package to config_data
+    from config_data.plans import get_plan_feature
 except Exception:
     def get_plan_feature(plan: str, feature: str, default=None):
         return default
