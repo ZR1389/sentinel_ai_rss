@@ -294,6 +294,70 @@ def manual_retention_cleanup():
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }), 500)
 
+@app.route("/admin/migration/apply", methods=["POST"])
+def apply_migration_endpoint():
+    """Apply database migration (admin only)."""
+    try:
+        # Auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        # Get migration name from request
+        data = request.json or {}
+        migration_name = data.get("migration", "004_travel_risk_itineraries.sql")
+        
+        # Read migration file
+        migration_path = f"migrations/{migration_name}"
+        if not os.path.exists(migration_path):
+            return jsonify({
+                "error": f"Migration file not found: {migration_path}",
+                "available": os.listdir("migrations") if os.path.exists("migrations") else []
+            }), 404
+        
+        with open(migration_path, 'r') as f:
+            migration_sql = f.read()
+        
+        # Apply migration
+        from db_utils import get_connection_pool
+        pool = get_connection_pool()
+        conn = pool.getconn()
+        
+        try:
+            cur = conn.cursor()
+            cur.execute(migration_sql)
+            conn.commit()
+            cur.close()
+            
+            logger.info(f"Migration applied successfully: {migration_name}")
+            
+            return jsonify({
+                "status": "success",
+                "message": f"Migration applied: {migration_name}",
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            })
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Migration failed: {e}")
+            return jsonify({
+                "status": "error",
+                "error": str(e),
+                "migration": migration_name,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }), 500
+        finally:
+            pool.putconn(conn)
+            
+    except Exception as e:
+        logger.error(f"Migration endpoint error: {e}")
+        return make_response(jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }), 500)
+
 @app.route("/admin/geocoding/migrate", methods=["POST"])
 def run_geocoding_migration():
     """Run the geocoding schema migration (no PostGIS)."""
