@@ -21,7 +21,7 @@ PAID_PLANS = set(
 The mapping below translates new feature names to legacy keys consumed by existing endpoints.
 """
 try:
-    from config.plans import PLAN_FEATURES, get_plan_feature
+    from config_data.plans import PLAN_FEATURES, get_plan_feature
 except ImportError:
     # Fallback minimal structure if plans.py not present
     # Fallback plan feature matrix (align with product spec)

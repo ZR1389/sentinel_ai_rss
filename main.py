@@ -220,7 +220,7 @@ def auth_status():
         plan_features = {}
         try:
             from plan_utils import get_usage, get_plan_limits
-            from config.plans import get_plan_feature
+            from config_data.plans import get_plan_feature
             u = get_usage(email) if get_usage else None
             if isinstance(u, dict):
                 chat_used = int(u.get("chat_messages_used", 0))
