@@ -41,6 +41,7 @@ except Exception:
     submit_fallback_job = get_fallback_job_status = list_fallback_jobs = job_queue_enabled = None
 
 from flask import Flask, request, jsonify, make_response, g, render_template
+from flask_compress import Compress
 
 # Rate limiting (optional)
 try:
@@ -66,6 +67,22 @@ metrics = get_metrics_logger("sentinel.main")
 from cache_utils import HybridCache
 
 app = Flask(__name__)
+
+# Enable response compression for large payloads (gzip)
+# Automatically compresses responses > 500 bytes when client supports it
+compress = Compress()
+compress.init_app(app)
+app.config['COMPRESS_MIMETYPES'] = [
+    'application/json',
+    'application/geo+json', 
+    'text/html',
+    'text/css',
+    'text/javascript',
+    'application/javascript'
+]
+app.config['COMPRESS_LEVEL'] = 6  # Balance between speed and compression ratio
+app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses > 500 bytes
+
 app.register_blueprint(map_api)
 app.register_blueprint(webpush_bp)
 app.register_blueprint(socmint_bp, url_prefix='/api/socmint')
@@ -7726,6 +7743,49 @@ def chat_threads_usage():
 # Travel Risk Itinerary Endpoints
 # -------------------------------------------------------------------
 
+def _expand_route_corridor(waypoints: list, radius_km: float = 50.0) -> dict:
+    """Expand route corridor for alert matching (Phase 2 enhancement).
+    
+    Args:
+        waypoints: List of {lat, lon} waypoint dicts
+        radius_km: Corridor buffer radius in kilometers (default 50km)
+        
+    Returns:
+        Dict with corridor geometry for spatial queries:
+        {
+            'type': 'corridor',
+            'waypoints': [...],
+            'radius_km': 50.0,
+            'bbox': [min_lon, min_lat, max_lon, max_lat],
+            'segments': [...]  # Future: detailed segment geometry
+        }
+    """
+    if not waypoints or len(waypoints) < 2:
+        return None
+    
+    # Calculate bounding box with buffer
+    lats = [w['lat'] for w in waypoints if 'lat' in w]
+    lons = [w['lon'] for w in waypoints if 'lon' in w]
+    
+    if not lats or not lons:
+        return None
+    
+    # Simple bbox expansion (approx 1 degree = 111km)
+    buffer_deg = radius_km / 111.0
+    
+    return {
+        'type': 'corridor',
+        'waypoints': waypoints,
+        'radius_km': radius_km,
+        'bbox': [
+            min(lons) - buffer_deg,
+            min(lats) - buffer_deg,
+            max(lons) + buffer_deg,
+            max(lats) + buffer_deg
+        ]
+        # 'segments': []  # Future: interpolated route segments for precise matching
+    }
+
 def _get_waypoint_count():
     """Helper to extract waypoint count from request for decorator."""
     try:
@@ -7939,12 +7999,18 @@ def get_travel_itinerary(itinerary_uuid):
                 'code': 'NOT_FOUND'
             }), 404))
         
-        # Check If-None-Match for conditional GET (304)
+        # Check If-None-Match for conditional GET (304 Not Modified)
+        # Saves bandwidth when client has current version cached
         client_etag = request.headers.get('If-None-Match')
         server_etag = f"\"itinerary/{result['itinerary_uuid']}/v{result['version']}\""
         
         if client_etag == server_etag:
-            return _build_cors_response(make_response('', 304))
+            # Resource not modified, return 304 with cache headers but no body
+            response_304 = make_response('', 304)
+            response_304.headers['ETag'] = server_etag
+            response_304.headers['X-Version'] = str(result['version'])
+            response_304.headers['Cache-Control'] = 'private, max-age=30'
+            return _build_cors_response(response_304)
         
         # Standardized envelope
         response = make_response(jsonify({'ok': True, 'data': result}))
@@ -8063,13 +8129,16 @@ def update_travel_itinerary(itinerary_uuid):
         }), 404))
     
     # Validate If-Match if provided (takes precedence over version)
+    # 412 Precondition Failed: Client's If-Match header doesn't match current ETag
+    # This means client's cached version is stale and should refetch before retrying
     if if_match:
         server_etag = f"\"itinerary/{itinerary_uuid}/v{current['version']}\""
         if if_match != server_etag:
             return _build_cors_response(make_response(jsonify({
                 'ok': False,
-                'error': 'Precondition failed',
+                'error': 'Precondition failed: resource has been modified',
                 'code': 'PRECONDITION_FAILED',
+                'hint': 'Refetch the resource to get the latest version before retrying',
                 'expected_etag': if_match,
                 'current_etag': server_etag,
                 'current_version': current['version']
@@ -8106,12 +8175,14 @@ def update_travel_itinerary(itinerary_uuid):
         
         return _build_cors_response(response)
     except ValueError as ve:
-        # Version conflict (409)
+        # 409 Conflict: Version in request body doesn't match current state
+        # This means concurrent modification detected during update attempt
         if 'Version conflict' in str(ve):
             return _build_cors_response(make_response(jsonify({
                 'ok': False,
                 'error': str(ve),
                 'code': 'VERSION_CONFLICT',
+                'hint': 'Resource was modified by another request. Refetch and retry.',
                 'expected_version': expected_version,
                 'current_version': current['version'],
                 'id': itinerary_uuid
