@@ -1,0 +1,25 @@
+"""Integration patch for SLA logging in main.py
+
+Add after line 67 (after metrics = get_metrics_logger):
+from sla_mapper import get_sla_for_plan, format_sla_summary
+
+Add in /auth/status response (around line 268), add field in jsonify response:
+"support_level": format_sla_summary(plan_name),
+
+Add after return statement in /auth/status (around line 296), before except:
+# Log SLA context for monitoring
+sla = get_sla_for_plan(plan_name)
+if sla:
+    logger.info(
+        "[sla] User authenticated",
+        extra={
+            'event': 'user_login',
+            'user_email': email,
+            'plan': plan_name,
+            'support_level': sla['support_level'],
+            'response_sla_hours': sla['response_time_hours'],
+            'priority': sla['priority'],
+            'channels': sla['channels']
+        }
+    )
+"""
