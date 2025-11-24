@@ -7237,6 +7237,16 @@ def user_trial_start():
     }
     try:
         result = start_trial(user, plan=plan)
+        
+        # Send Day 1 welcome email
+        try:
+            from utils.trial_reminder import send_trial_reminder
+            from datetime import datetime
+            trial_ends = datetime.fromisoformat(result['trial_ends_at'].rstrip('Z'))
+            send_trial_reminder(user['id'], email, plan, 1, trial_ends)
+        except Exception as e:
+            logger.warning('Failed to send trial welcome email: %s', e)
+        
         return _build_cors_response(jsonify({'ok': True, **result}))
     except ValueError as ve:
         return _build_cors_response(make_response(jsonify({'error': str(ve)}), 400))
@@ -7276,31 +7286,46 @@ def user_trial_end():
 @app.route('/api/user/trial/status', methods=['GET'])
 @login_required
 def user_trial_status():
-    """Return trial status snapshot for authenticated user."""
+    """Return trial status snapshot for authenticated user, including reminder email history."""
     if fetch_one is None:
         return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
     email = get_logged_in_email()
-    row = fetch_one('SELECT plan, is_trial, trial_started_at, trial_ends_at FROM users WHERE email=%s', (email,))
+    row = fetch_one('SELECT id, plan, is_trial, trial_started_at, trial_ends_at FROM users WHERE email=%s', (email,))
     if not row:
         return _build_cors_response(make_response(jsonify({'error': 'User missing'}), 404))
     if isinstance(row, dict):
+        user_id = row.get('id')
         plan = row.get('plan') or 'FREE'
         is_trial = bool(row.get('is_trial'))
         started = row.get('trial_started_at')
         ends = row.get('trial_ends_at')
     else:
-        plan = row[0] if len(row)>0 else 'FREE'
-        is_trial = bool(row[1]) if len(row)>1 else False
-        started = row[2] if len(row)>2 else None
-        ends = row[3] if len(row)>3 else None
-    return _build_cors_response(jsonify({
+        user_id = row[0] if len(row)>0 else None
+        plan = row[1] if len(row)>1 else 'FREE'
+        is_trial = bool(row[2]) if len(row)>2 else False
+        started = row[3] if len(row)>3 else None
+        ends = row[4] if len(row)>4 else None
+    
+    response = {
         'ok': True,
         'plan': (plan or 'FREE').upper(),
         'is_trial': is_trial,
         'trial_started_at': started.isoformat() + 'Z' if started else None,
         'trial_ends_at': ends.isoformat() + 'Z' if ends else None,
         'can_start_trial': (not is_trial) and ((plan or 'FREE').upper() in ['FREE',''])
-    }))
+    }
+    
+    # Add trial reminder status if on trial
+    if is_trial and user_id:
+        try:
+            from utils.trial_reminder import get_trial_status
+            trial_details = get_trial_status(user_id)
+            response['days_remaining'] = trial_details.get('days_remaining', 0)
+            response['emails_sent'] = trial_details.get('emails_sent', [])
+        except Exception as e:
+            logger.warning('Failed to get trial reminder status: %s', e)
+    
+    return _build_cors_response(jsonify(response))
 
 @app.route('/api/cron/check-trials', methods=['POST'])
 def cron_check_trials():
@@ -7315,6 +7340,27 @@ def cron_check_trials():
         return _build_cors_response(jsonify({'ok': True, 'expired_trials': expired_count}))
     except Exception as e:
         logger.error('cron_check_trials error: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Cron execution failed'}), 500))
+
+@app.route('/api/cron/trial-reminders', methods=['POST'])
+def cron_trial_reminders():
+    """Cron endpoint to send trial reminder emails. Secured via X-Cron-Secret header."""
+    try:
+        from utils.trial_reminder import check_and_send_trial_reminders
+    except Exception as e:
+        logger.error('trial_reminder import failed: %s', e)
+        return _build_cors_response(make_response(jsonify({'error': 'Trial reminder system unavailable'}), 500))
+    
+    secret_header = request.headers.get('X-Cron-Secret')
+    expected = os.environ.get('CRON_SECRET')
+    if not expected or secret_header != expected:
+        return _build_cors_response(make_response(jsonify({'error': 'Unauthorized'}), 401))
+    
+    try:
+        reminders_sent = check_and_send_trial_reminders()
+        return _build_cors_response(jsonify({'ok': True, 'reminders_sent': reminders_sent}))
+    except Exception as e:
+        logger.error('cron_trial_reminders error: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Cron execution failed'}), 500))
 
 # ============================================
