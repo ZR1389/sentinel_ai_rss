@@ -19,6 +19,7 @@ MIN_TONE = float(os.getenv("GDELT_MIN_TONE", "-2.0"))  # Relaxed: -2.0 (moderate
 MAX_AGE_HOURS = int(os.getenv("GDELT_MAX_AGE_HOURS", "168"))  # Relaxed: 168h (7 days, up from 3 days)
 REQUIRE_SOURCE_URL = os.getenv("GDELT_REQUIRE_SOURCE_URL", "false").lower() in ("true", "1", "yes")
 REQUIRE_PRECISE_COORDS = os.getenv("GDELT_REQUIRE_PRECISE_COORDS", "false").lower() in ("true", "1", "yes")
+USE_EVENT_CODE_WHITELIST = os.getenv("GDELT_USE_EVENT_WHITELIST", "false").lower() in ("true", "1", "yes")  # DISABLED by default
 
 # CAMEO event code whitelist (expanded for better coverage)
 # Includes: threats, protests, assaults, fights, and high-impact verbal conflicts
@@ -176,17 +177,18 @@ def should_ingest_gdelt_event(event: Dict[str, Any], stage: str = "ingest") -> b
         logger.debug(f"[filter] Rejected: avg_tone {avg_tone} > {MIN_TONE} (event_id={event.get('global_event_id')})")
         return False
     
-    # 6. CAMEO event code whitelist (violence/conflict/protest only)
-    event_code = str(event.get('event_code', ''))
-    if not event_code:
-        logger.debug(f"[filter] Rejected: no event_code (event_id={event.get('global_event_id')})")
-        return False
-    
-    # Check if event_code starts with any allowed prefix
-    code_allowed = any(event_code.startswith(code) for code in ALLOWED_EVENT_CODES)
-    if not code_allowed:
-        logger.debug(f"[filter] Rejected: event_code '{event_code}' not in whitelist (event_id={event.get('global_event_id')})")
-        return False
+    # 6. CAMEO event code whitelist (violence/conflict/protest only) - OPTIONAL
+    if USE_EVENT_CODE_WHITELIST:
+        event_code = str(event.get('event_code', ''))
+        if not event_code:
+            logger.debug(f"[filter] Rejected: no event_code (event_id={event.get('global_event_id')})")
+            return False
+        
+        # Check if event_code starts with any allowed prefix
+        code_allowed = any(event_code.startswith(code) for code in ALLOWED_EVENT_CODES)
+        if not code_allowed:
+            logger.debug(f"[filter] Rejected: event_code '{event_code}' not in whitelist (event_id={event.get('global_event_id')})")
+            return False
     
     # 7. QuadClass filter: Exclude cooperation classes
     quad_class = event.get('quad_class', 0)
@@ -231,6 +233,7 @@ def get_filter_stats() -> Dict[str, Any]:
         "max_age_hours": MAX_AGE_HOURS,
         "require_source_url": REQUIRE_SOURCE_URL,
         "require_precise_coords": REQUIRE_PRECISE_COORDS,
+        "use_event_code_whitelist": USE_EVENT_CODE_WHITELIST,
         "allowed_event_codes_count": len(ALLOWED_EVENT_CODES),
         "allowed_quad_classes": ALLOWED_QUAD_CLASSES,
         "excluded_quad_classes": EXCLUDED_QUAD_CLASSES
