@@ -2725,6 +2725,7 @@ def api_map_alerts():
     - Defaults to 30-day window
     - Excludes ACLED by default
     - Supports optional params: days, limit, lat, lon, radius, region, country, city, sources, severity, category, event_type
+    - Advanced params (BUSINESS+): custom_filter, playback_mode, comparison_baseline
     - Returns both raw items and GeoJSON features with risk_color and risk_radius
     """
     if fetch_all is None:
@@ -2736,6 +2737,7 @@ def api_map_alerts():
 
     # Enforce plan-based days cap for authenticated users
     max_days_allowed = 2  # FREE default for unauthenticated
+    user_plan = 'FREE'
     if is_authenticated:
         try:
             token = auth_header.split(" ", 1)[1].strip()
@@ -2744,11 +2746,43 @@ def api_map_alerts():
                 email = payload.get("user_email")
                 jwt_plan = payload.get("plan")
                 if jwt_plan:
-                    plan = str(jwt_plan).strip().upper()
+                    user_plan = str(jwt_plan).strip().upper()
                     from config_data.plans import get_plan_feature
-                    max_days_allowed = get_plan_feature(plan, 'map_access_days') or 365
+                    max_days_allowed = get_plan_feature(user_plan, 'map_access_days') or 365
         except Exception:
             pass
+    
+    # Runtime enforcement of advanced map parameters (BUSINESS+ only)
+    custom_filter = request.args.get('custom_filter')
+    playback_mode = request.args.get('playback_mode')
+    comparison_baseline = request.args.get('comparison_baseline')
+    
+    if custom_filter and not get_plan_feature(user_plan, 'map_custom_filters'):
+        return _build_cors_response(make_response(jsonify({
+            'error': 'Custom filters require BUSINESS plan or higher',
+            'feature_locked': True,
+            'feature': 'map_custom_filters',
+            'required_plan': 'BUSINESS',
+            'plan': user_plan
+        }), 403))
+    
+    if playback_mode and not get_plan_feature(user_plan, 'map_historical_playback'):
+        return _build_cors_response(make_response(jsonify({
+            'error': 'Historical playback requires BUSINESS plan or higher',
+            'feature_locked': True,
+            'feature': 'map_historical_playback',
+            'required_plan': 'BUSINESS',
+            'plan': user_plan
+        }), 403))
+    
+    if comparison_baseline and not get_plan_feature(user_plan, 'map_comparison_mode'):
+        return _build_cors_response(make_response(jsonify({
+            'error': 'Temporal comparison requires BUSINESS plan or higher',
+            'feature_locked': True,
+            'feature': 'map_comparison_mode',
+            'required_plan': 'BUSINESS',
+            'plan': user_plan
+        }), 403))
 
     # Defaults and caps
     try:
@@ -6498,7 +6532,7 @@ def sentinel_chat():
 @app.route('/api/map-alerts/gated', methods=['GET'])
 @login_required
 def map_alerts_gated():
-    """Map alerts with plan-based historical window gating."""
+    """Map alerts with plan-based historical window gating and advanced parameter enforcement."""
     if fetch_all is None:
         return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
     try:
@@ -6506,6 +6540,39 @@ def map_alerts_gated():
         from plan_utils import get_plan_limits
         limits = get_plan_limits(email)
         plan = limits['plan']
+        
+        # Runtime enforcement of advanced map parameters (BUSINESS+ only)
+        custom_filter = request.args.get('custom_filter')
+        playback_mode = request.args.get('playback_mode')
+        comparison_baseline = request.args.get('comparison_baseline')
+        
+        if custom_filter and not get_plan_feature(plan, 'map_custom_filters'):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Custom filters require BUSINESS plan or higher',
+                'feature_locked': True,
+                'feature': 'map_custom_filters',
+                'required_plan': 'BUSINESS',
+                'plan': plan
+            }), 403))
+        
+        if playback_mode and not get_plan_feature(plan, 'map_historical_playback'):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Historical playback requires BUSINESS plan or higher',
+                'feature_locked': True,
+                'feature': 'map_historical_playback',
+                'required_plan': 'BUSINESS',
+                'plan': plan
+            }), 403))
+        
+        if comparison_baseline and not get_plan_feature(plan, 'map_comparison_mode'):
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Temporal comparison requires BUSINESS plan or higher',
+                'feature_locked': True,
+                'feature': 'map_comparison_mode',
+                'required_plan': 'BUSINESS',
+                'plan': plan
+            }), 403))
+        
         requested_days = int(request.args.get('days', limits.get('map_days', 2)))
         max_days = get_plan_feature(plan, 'map_access_days') or limits.get('map_days', 2)
         if requested_days > max_days:
@@ -6959,9 +7026,24 @@ def export_alerts():
     plan = limits['plan']
     payload = request.get_json(silent=True) or {}
     fmt = (payload.get('format') or 'csv').lower()
+    
+    # Enforce format tiers: csv (PRO+), all formats (BUSINESS+)
     allowed = get_plan_feature(plan, 'map_export')
-    if allowed == 'csv' and fmt != 'csv':
-        return _build_cors_response(make_response(jsonify({'error': f'{fmt.upper()} export requires BUSINESS plan','feature_locked': True,'required_plan': 'BUSINESS'}), 403))
+    if allowed == 'csv' and fmt not in ('csv',):
+        return _build_cors_response(make_response(jsonify({
+            'error': f'{fmt.upper()} export requires BUSINESS plan or higher',
+            'feature_locked': True,
+            'required_plan': 'BUSINESS',
+            'allowed_formats': ['csv'],
+            'requested_format': fmt
+        }), 403))
+    elif allowed is None:
+        return _build_cors_response(make_response(jsonify({
+            'error': 'Export feature not available on your plan',
+            'feature_locked': True,
+            'required_plan': 'PRO'
+        }), 403))
+    
     # Placeholder export processing (replace with actual file generation)
     alert_ids = payload.get('alert_ids') or []
     file_url = f"/downloads/alerts_export_{fmt}_{len(alert_ids)}.dat"
