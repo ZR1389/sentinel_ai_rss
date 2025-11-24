@@ -20,6 +20,7 @@ MAX_AGE_HOURS = int(os.getenv("GDELT_MAX_AGE_HOURS", "168"))  # Relaxed: 168h (7
 REQUIRE_SOURCE_URL = os.getenv("GDELT_REQUIRE_SOURCE_URL", "false").lower() in ("true", "1", "yes")
 REQUIRE_PRECISE_COORDS = os.getenv("GDELT_REQUIRE_PRECISE_COORDS", "false").lower() in ("true", "1", "yes")
 USE_EVENT_CODE_WHITELIST = os.getenv("GDELT_USE_EVENT_WHITELIST", "false").lower() in ("true", "1", "yes")  # DISABLED by default
+USE_QUADCLASS_FILTER = os.getenv("GDELT_USE_QUADCLASS_FILTER", "false").lower() in ("true", "1", "yes")  # DISABLED by default
 
 # CAMEO event code whitelist (expanded for better coverage)
 # Includes: threats, protests, assaults, fights, and high-impact verbal conflicts
@@ -190,20 +191,21 @@ def should_ingest_gdelt_event(event: Dict[str, Any], stage: str = "ingest") -> b
             logger.debug(f"[filter] Rejected: event_code '{event_code}' not in whitelist (event_id={event.get('global_event_id')})")
             return False
     
-    # 7. QuadClass filter: Exclude cooperation classes
-    quad_class = event.get('quad_class', 0)
-    try:
-        quad_class = int(quad_class) if quad_class is not None else 0
-    except (ValueError, TypeError):
-        quad_class = 0
-    
-    if quad_class in EXCLUDED_QUAD_CLASSES:
-        logger.debug(f"[filter] Rejected: quad_class {quad_class} is excluded (cooperation) (event_id={event.get('global_event_id')})")
-        return False
-    
-    if quad_class not in ALLOWED_QUAD_CLASSES:
-        logger.debug(f"[filter] Rejected: quad_class {quad_class} not in allowed list (event_id={event.get('global_event_id')})")
-        return False
+    # 7. QuadClass filter: Exclude cooperation classes - OPTIONAL
+    if USE_QUADCLASS_FILTER:
+        quad_class = event.get('quad_class', 0)
+        try:
+            quad_class = int(quad_class) if quad_class is not None else 0
+        except (ValueError, TypeError):
+            quad_class = 0
+        
+        if quad_class in EXCLUDED_QUAD_CLASSES:
+            logger.debug(f"[filter] Rejected: quad_class {quad_class} is excluded (cooperation) (event_id={event.get('global_event_id')})")
+            return False
+        
+        if quad_class not in ALLOWED_QUAD_CLASSES:
+            logger.debug(f"[filter] Rejected: quad_class {quad_class} not in allowed list (event_id={event.get('global_event_id')})")
+            return False
     
     # 8. Event age check (optional, only at enrichment stage to avoid clock skew issues)
     if stage == "enrichment" and MAX_AGE_HOURS > 0:
@@ -234,6 +236,7 @@ def get_filter_stats() -> Dict[str, Any]:
         "require_source_url": REQUIRE_SOURCE_URL,
         "require_precise_coords": REQUIRE_PRECISE_COORDS,
         "use_event_code_whitelist": USE_EVENT_CODE_WHITELIST,
+        "use_quadclass_filter": USE_QUADCLASS_FILTER,
         "allowed_event_codes_count": len(ALLOWED_EVENT_CODES),
         "allowed_quad_classes": ALLOWED_QUAD_CLASSES,
         "excluded_quad_classes": EXCLUDED_QUAD_CLASSES
