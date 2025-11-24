@@ -399,9 +399,13 @@ if __name__ == "__main__":
             success = run_geocode_backfill()
         elif operation == "notify":
             success = run_scheduler_notify()
+        elif operation == "trial_reminders":
+            success = run_trial_reminders()
+        elif operation == "check_trials":
+            success = run_check_expired_trials()
         else:
             print(f"Unknown operation: {operation}")
-            print("Usage: python railway_cron.py [cleanup|vacuum|rss|engine|gdelt_enrich|acled|proximity|geocode|notify]")
+            print("Usage: python railway_cron.py [cleanup|vacuum|rss|engine|gdelt_enrich|acled|proximity|geocode|notify|trial_reminders|check_trials]")
             sys.exit(1)
     else:
         # Default to cleanup

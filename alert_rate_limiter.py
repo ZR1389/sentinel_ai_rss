@@ -1,3 +1,102 @@
+# Per-channel in-memory fallback state
+_memory_channel_rate_limits: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))  # itinerary_uuid -> channel -> [timestamps]
+
+def _make_channel_rate_limit_key(itinerary_uuid: str, channel: str) -> str:
+    """Generate Redis key for per-channel rate limit counter.
+    Format: alerts:ratelimit:{itinerary_uuid}:{channel}
+    """
+    return f"{REDIS_KEY_PREFIX}ratelimit:{itinerary_uuid}:{channel}"
+
+def _cleanup_memory_channel_rate_limits(itinerary_uuid: str, channel: str):
+    """Remove timestamps older than 1 hour for in-memory per-channel rate limits."""
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    _memory_channel_rate_limits[itinerary_uuid][channel] = [
+        ts for ts in _memory_channel_rate_limits[itinerary_uuid][channel]
+        if ts > cutoff
+    ]
+
+def check_channel_rate_limit(itinerary_uuid: str, channel: str) -> Tuple[bool, int, int]:
+    """Check if itinerary/channel is within rate limit.
+    Args:
+        itinerary_uuid: Itinerary identifier
+        channel: 'email' or 'sms'
+    Returns:
+        Tuple of (allowed, current_count, limit)
+    """
+    limit = RATE_LIMIT_CHANNELS.get(channel, 5)
+    r = _get_redis()
+    if r:
+        try:
+            key = _make_channel_rate_limit_key(itinerary_uuid, channel)
+            now = datetime.utcnow().timestamp()
+            one_hour_ago = now - 3600
+            r.zremrangebyscore(key, 0, one_hour_ago)
+            count = r.zcount(key, one_hour_ago, now)
+            allowed = count < limit
+            return (allowed, int(count), limit)
+        except Exception as e:
+            logger.warning(f"[alert_rate_limiter] Redis channel rate limit check failed: {e}")
+    # In-memory fallback
+    _cleanup_memory_channel_rate_limits(itinerary_uuid, channel)
+    count = len(_memory_channel_rate_limits[itinerary_uuid][channel])
+    allowed = count < limit
+    return (allowed, count, limit)
+
+def increment_channel_rate_limit(itinerary_uuid: str, channel: str) -> None:
+    """Increment per-channel rate limit counter for itinerary (record alert sent).
+    Args:
+        itinerary_uuid: Itinerary identifier
+        channel: 'email' or 'sms'
+    """
+    r = _get_redis()
+    if r:
+        try:
+            key = _make_channel_rate_limit_key(itinerary_uuid, channel)
+            now = datetime.utcnow().timestamp()
+            r.zadd(key, {str(now): now})
+            r.expire(key, 3600)
+            logger.debug(f"[alert_rate_limiter] Incremented channel rate limit in Redis: {itinerary_uuid} {channel}")
+            return
+        except Exception as e:
+            logger.warning(f"[alert_rate_limiter] Redis channel rate limit increment failed: {e}")
+    # In-memory fallback
+    _memory_channel_rate_limits[itinerary_uuid][channel].append(datetime.utcnow())
+    logger.debug(f"[alert_rate_limiter] Incremented channel rate limit in memory: {itinerary_uuid} {channel}")
+
+def get_channel_rate_limit_stats(itinerary_uuid: str, channel: str) -> Dict[str, any]:
+    """Get detailed rate limit statistics for itinerary/channel.
+    Args:
+        itinerary_uuid: Itinerary identifier
+        channel: 'email' or 'sms'
+    Returns:
+        Dictionary with rate limit stats
+    """
+    allowed, current_count, limit = check_channel_rate_limit(itinerary_uuid, channel)
+    remaining = max(0, limit - current_count)
+    reset_in_seconds = 0
+    r = _get_redis()
+    if r:
+        try:
+            key = _make_channel_rate_limit_key(itinerary_uuid, channel)
+            oldest = r.zrange(key, 0, 0, withscores=True)
+            if oldest:
+                oldest_timestamp = oldest[0][1]
+                now = datetime.utcnow().timestamp()
+                reset_in_seconds = max(0, int(3600 - (now - oldest_timestamp)))
+        except Exception:
+            pass
+    else:
+        if _memory_channel_rate_limits[itinerary_uuid][channel]:
+            oldest_ts = min(_memory_channel_rate_limits[itinerary_uuid][channel])
+            age = (datetime.utcnow() - oldest_ts).total_seconds()
+            reset_in_seconds = max(0, int(3600 - age))
+    return {
+        'allowed': allowed,
+        'current_count': current_count,
+        'limit': limit,
+        'remaining': remaining,
+        'reset_in_seconds': reset_in_seconds
+    }
 """alert_rate_limiter.py - Rate limiting and debounce for geofenced alerts.
 
 Multi-tier architecture:
@@ -31,9 +130,17 @@ _memory_rate_limits: Dict[str, list] = defaultdict(list)  # itinerary_uuid -> [t
 _memory_debounce_expiry: Dict[str, datetime] = {}  # debounce_key -> expiry_time
 
 # Configuration
+
+# Per-itinerary global limit (legacy)
 RATE_LIMIT_ALERTS_PER_HOUR = 5
 DEBOUNCE_TTL_HOURS = 24
 REDIS_KEY_PREFIX = "alerts:"
+
+# Per-channel limits (configurable)
+RATE_LIMIT_CHANNELS = {
+    'email': 10,   # max 10 email alerts/hour/itinerary
+    'sms': 3       # max 3 sms alerts/hour/itinerary
+}
 
 
 def _get_redis():
