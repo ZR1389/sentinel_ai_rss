@@ -312,7 +312,7 @@ def _parse_and_store_export(zip_bytes: bytes, filename: str) -> int:
                         # 0 GlobalEventID, 1 SQLDate, 6 Actor1Name, 16 Actor2Name,
                         # 26 EventCode, 27 EventRootCode, 29 QuadClass, 30 GoldsteinScale,
                         # 31 NumMentions, 32 NumSources, 33 NumArticles, 34 AvgTone,
-                        # 53 ActionGeo_CountryCode, 57 ActionGeo_Lat, 58 ActionGeo_Long
+                        # 55 ActionGeo_CountryCode, 58 ActionGeo_Lat, 59 ActionGeo_Long
                         mapped = {
                             'global_event_id': global_event_id,
                             'sql_date': safe_int(gv(1)),
@@ -326,9 +326,9 @@ def _parse_and_store_export(zip_bytes: bytes, filename: str) -> int:
                             'num_sources': safe_int(gv(32)),
                             'num_articles': safe_int(gv(33)),
                             'avg_tone': safe_float(gv(34)),
-                            'action_country': gv(53),
-                            'action_lat': safe_float(gv(59)),  # FIXED: Column 59 is ActionGeo_Lat
-                            'action_long': safe_float(gv(60)),  # FIXED: Column 60 is ActionGeo_Long
+                            'action_country': gv(55),
+                            'action_lat': safe_float(gv(58)),  # Column 58 is ActionGeo_Lat
+                            'action_long': safe_float(gv(59)),  # Column 59 is ActionGeo_Long
                             'raw': row
                         }
                         
