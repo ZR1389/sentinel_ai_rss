@@ -19,7 +19,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gdelt_enrichment")
 
+# Get database URL (Railway sets DATABASE_URL, fallback to config)
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL or DATABASE_URL.startswith("sqlite"):
+    try:
+        from config import CONFIG
+        DATABASE_URL = CONFIG.database.url
+    except Exception:
+        DATABASE_URL = os.getenv("DATABASE_PUBLIC_URL")
 
 # Safeguards: Process in small batches, not aggressive polling
 GDELT_ENRICHMENT_BATCH_SIZE = int(os.getenv("GDELT_ENRICHMENT_BATCH_SIZE", "100"))  # Process in small batches
@@ -473,6 +480,7 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
         'latitude': event.get('action_lat'),
         'longitude': event.get('action_long'),
         'tags': json.dumps(tags),
+        'geocoded_location_id': None,  # Will be set by geocoding if needed
     }
     return raw_alert
 
