@@ -19,14 +19,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gdelt_enrichment")
 
-# Get database URL (Railway sets DATABASE_URL, fallback to config)
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Get database URL - prefer PUBLIC_URL for cron jobs (internal URLs don't work in cron context)
+DATABASE_URL = os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL")
 if not DATABASE_URL or DATABASE_URL.startswith("sqlite"):
     try:
         from config import CONFIG
         DATABASE_URL = CONFIG.database.url
     except Exception:
-        DATABASE_URL = os.getenv("DATABASE_PUBLIC_URL")
+        pass
+        
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL or DATABASE_PUBLIC_URL must be set")
 
 # Safeguards: Process in small batches, not aggressive polling
 GDELT_ENRICHMENT_BATCH_SIZE = int(os.getenv("GDELT_ENRICHMENT_BATCH_SIZE", "100"))  # Process in small batches
