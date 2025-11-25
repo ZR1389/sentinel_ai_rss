@@ -222,6 +222,7 @@ def should_ingest_gdelt_event(event: Dict[str, Any], stage: str = "ingest") -> b
                 logger.warning(f"[filter] Could not parse sql_date {sql_date}: {e}")
     
     # All filters passed
+    event_code = event.get('event_code', 'N/A')  # Define for logging
     logger.debug(f"[filter] ACCEPTED: event_id={event.get('global_event_id')}, code={event_code}, goldstein={goldstein}, mentions={num_mentions}, tone={avg_tone}")
     return True
 
