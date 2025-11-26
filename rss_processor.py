@@ -1465,8 +1465,8 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
             
             # Record successful batch processing metrics
             batch_processing_time = time.time() - batch_start_time
-            metrics.record_batch_processing_time(batch_processing_time, batch_size=len(batch_entries))
-            metrics.record_llm_api_call_time(batch_processing_time, provider="moonshot", operation="location_extraction")
+            metrics.timing("batch_processing", int(batch_processing_time * 1000), batch_size=len(batch_entries))
+            metrics.timing("llm_api_call", int(batch_processing_time * 1000), provider="moonshot", operation="location_extraction")
             
             return location_map
         
@@ -1482,8 +1482,8 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
             logger.warning(f"[Moonshot] Batch processing failed: {e}")
         
         # Record circuit breaker metrics
-        metrics.increment_error_count("batch_processing", "circuit_breaker_open")
-        metrics.record_batch_processing_time(time.time() - batch_start_time, batch_size=len(batch_entries))
+        metrics.increment("errors.batch_processing.circuit_breaker_open", 1)
+        metrics.timing("batch_processing", int((time.time() - batch_start_time) * 1000), batch_size=len(batch_entries))
         
         # Don't re-queue entries - let them time out naturally
         # This prevents infinite accumulation when Moonshot is down
@@ -1493,8 +1493,8 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
         logger.error(f"[Moonshot] Batch location extraction failed: {e}")
         
         # Record error metrics
-        metrics.increment_error_count("batch_processing", "extraction_failed")
-        metrics.record_batch_processing_time(time.time() - batch_start_time, batch_size=len(batch_entries))
+        metrics.increment("errors.batch_processing.extraction_failed", 1)
+        metrics.timing("batch_processing", int((time.time() - batch_start_time) * 1000), batch_size=len(batch_entries))
         
         # Only re-queue if it's not a persistent failure pattern
         # Circuit breaker will handle retry logic
@@ -1556,7 +1556,7 @@ async def _build_alert_from_entry(
         title = entry.get("title", "")
         summary = entry.get("summary", "")
         if not title.strip():
-            metrics.increment_error_count("alert_building", "empty_title")
+            metrics.increment("errors.alert_building.empty_title", 1)
             return None
         
         # Extract metadata
@@ -2042,14 +2042,14 @@ async def ingest_all_feeds_to_db(
                     logger.info(f"Successfully wrote {written_count} alerts to database")
                     
                     # Record database operation metrics
-                    metrics.record_database_operation_time(time.time() - start_time, operation="bulk_insert")
+                    metrics.timing("database_operation", int((time.time() - start_time) * 1000), operation="bulk_insert")
                 else:
                     logger.warning("Database functions not available - alerts not written to DB")
-                    metrics.increment_error_count("database", "functions_unavailable")
+                    metrics.increment("errors.database.functions_unavailable", 1)
             except Exception as e:
                 logger.error(f"Database write error: {e}")
                 result["db_error"] = str(e)
-                metrics.increment_error_count("database", "write_failed")
+                metrics.increment("errors.database.write_failed", 1)
         
         logger.info(f"RSS ingest completed: {result}")
         return result
