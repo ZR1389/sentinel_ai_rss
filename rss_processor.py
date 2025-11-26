@@ -1601,19 +1601,20 @@ async def _build_alert_from_entry(
                         'location_confidence': 'pending',
                         '_batch_queued': True
                     }
-                    metrics.record_location_extraction_time(time.time() - location_start_time, method="batch_queue")
+                    # MetricsLogger: record timing for location extraction
+                    metrics.timing("location_extraction", int((time.time() - location_start_time) * 1000), method="batch_queue")
                 else:
                     # Fallback if queueing failed
                     location_data = _extract_location_fallback(text_blob, source_tag)
-                    metrics.record_location_extraction_time(time.time() - location_start_time, method="fallback")
+                    metrics.timing("location_extraction", int((time.time() - location_start_time) * 1000), method="fallback")
             else:
                 # Direct processing (not in batch mode)
                 location_data = _extract_location_fallback(text_blob, source_tag)
-                metrics.record_location_extraction_time(time.time() - location_start_time, method="direct")
+                metrics.timing("location_extraction", int((time.time() - location_start_time) * 1000), method="direct")
         else:
             # Use deterministic location extraction
             location_data = _extract_location_fallback(text_blob, source_tag)
-            metrics.record_location_extraction_time(time.time() - location_start_time, method="deterministic")
+            metrics.timing("location_extraction", int((time.time() - location_start_time) * 1000), method="deterministic")
         
         # Build final alert
         alert = {
@@ -1634,14 +1635,14 @@ async def _build_alert_from_entry(
             alert["source_tag"] = source_tag
         
         # Record metrics
-        alert_building_time = time.time() - start_time
-        metrics.record_database_operation_time(alert_building_time, operation="alert_building")
+        alert_building_time_ms = int((time.time() - start_time) * 1000)
+        metrics.timing("database_operation.alert_building", alert_building_time_ms, operation="alert_building")
         
         return alert
         
     except Exception as e:
         logger.error(f"Alert building failed: {e}")
-        metrics.increment_error_count("alert_building", "exception")
+        metrics.increment("alert_building.exception", 1)
         return None
 
 def _auto_tags(text: str) -> List[str]:
@@ -1668,7 +1669,8 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     start_time = time.time()
     if not feed_specs:
         logger.warning("No feed specs provided!")
-        metrics.increment_error_count("feed_processing", "no_feed_specs")
+        # MetricsLogger compatibility: use generic increment
+        metrics.increment("feed_processing.no_feed_specs", 1)
         return []
     results_alerts: List[Dict[str, Any]] = []
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY, max_keepalive_connections=MAX_CONCURRENCY)
@@ -1691,12 +1693,13 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
             try:
                 # This will be called from timer thread, so we need to handle async properly
                 logger.info(f"Optimized batch flush triggered (timeout: {_BATCH_TIMEOUT_SECONDS}s)")
-                metrics.increment_error_count("batch_processing", "timer_flush")  # Track timer flushes
+                # MetricsLogger: use generic counter for timer flushes
+                metrics.increment("batch_processing.timer_flush", 1)
                 # The actual processing will happen at the end of ingest_feeds
                 # We just log that the timer fired
             except Exception as e:
                 logger.error(f"Batch callback error: {e}")
-                metrics.increment_error_count("batch_processing", "callback_error")
+                metrics.increment("batch_processing.callback_error", 1)
         
         flush_config.flush_callback = batch_callback
         batch_state.set_flush_callback(batch_callback)
