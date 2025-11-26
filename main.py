@@ -1045,6 +1045,33 @@ except Exception as e:
     check_feature_access = requires_feature
     check_feature_limit = requires_feature
 
+# ---------- Admin middleware ----------
+def admin_required(f):
+    """Decorator to require admin role for endpoint access."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not get_logged_in_email or not login_required:
+            return make_response(jsonify({'error': 'Authentication system unavailable'}), 503)
+        
+        # First check if user is logged in
+        try:
+            email = get_logged_in_email()
+        except Exception:
+            return _build_cors_response(make_response(jsonify({'error': 'Unauthorized'}), 401))
+        
+        # Check if user is admin
+        try:
+            is_admin = fetch_one('SELECT is_admin FROM users WHERE email=%s', (email,))
+            if not is_admin or not is_admin.get('is_admin'):
+                logger.warning(f"Non-admin access attempt to {request.path}: {email}")
+                return _build_cors_response(make_response(jsonify({'error': 'Admin access required'}), 403))
+        except Exception as e:
+            logger.error(f"Admin check failed for {email}: {e}")
+            return _build_cors_response(make_response(jsonify({'error': 'Admin check failed'}), 500))
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
 # ---------- Rate limiter setup ----------
 # Use Redis for storage in multi-worker deployments: set RATE_LIMIT_STORAGE to a redis:// URL
 RATE_LIMIT_STORAGE = os.getenv("RATE_LIMIT_STORAGE", None)
@@ -8893,6 +8920,397 @@ def get_itinerary_stats():
     except Exception as e:
         logger.error(f'get_itinerary_stats error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get stats'}), 500))
+
+
+# ========== Phase 3: PDF Export History ==========
+
+@app.route('/api/export/history', methods=['GET'])
+@login_required
+def get_export_history():
+    """
+    Get PDF export history for the logged-in user.
+    
+    Query params:
+        days: Lookback period (default 90, max 365)
+    
+    Returns:
+        Array of export records with download URLs
+    """
+    email = get_logged_in_email()
+    
+    try:
+        from plan_utils import _get_user_id
+        
+        user_id = _get_user_id(email)
+        if not user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        
+        days = min(int(request.args.get('days', 90)), 365)
+        
+        exports = fetch_all("""
+            SELECT id, filename, template, created_at, expires_at, downloaded_at
+            FROM pdf_exports
+            WHERE user_id = %s
+              AND created_at > NOW() - INTERVAL '%s days'
+            ORDER BY created_at DESC
+        """, (user_id, days))
+        
+        result = []
+        now = datetime.utcnow()
+        
+        for exp in exports:
+            file_id = str(exp['id'])
+            expired = now > exp['expires_at']
+            
+            # Determine file size if exists
+            file_path = os.path.join('downloads', f'{file_id}.pdf')
+            size_kb = None
+            if os.path.exists(file_path):
+                size_kb = os.path.getsize(file_path) // 1024
+            
+            result.append({
+                'id': file_id,
+                'filename': exp['filename'],
+                'type': exp['template'],
+                'status': 'expired' if expired else 'available',
+                'created_at': exp['created_at'].isoformat() + 'Z',
+                'expires_at': exp['expires_at'].isoformat() + 'Z',
+                'downloaded_at': exp['downloaded_at'].isoformat() + 'Z' if exp['downloaded_at'] else None,
+                'size_kb': size_kb,
+                'download_url': f'/api/export/download/{file_id}' if not expired else None
+            })
+        
+        return _build_cors_response(jsonify({'ok': True, 'exports': result}))
+        
+    except Exception as e:
+        logger.error(f'get_export_history error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to fetch history'}), 500))
+
+
+@app.route('/api/export/download/<file_id>', methods=['GET'])
+@login_required
+def download_export_file(file_id):
+    """
+    Download a PDF export by ID with ownership validation.
+    
+    Security:
+    - Validates file ownership
+    - Checks expiry
+    - Updates downloaded_at timestamp
+    """
+    email = get_logged_in_email()
+    
+    try:
+        from plan_utils import _get_user_id
+        from flask import send_file
+        
+        user_id = _get_user_id(email)
+        if not user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        
+        # Validate UUID
+        try:
+            uuid.UUID(file_id)
+        except ValueError:
+            return _build_cors_response(make_response(jsonify({'error': 'Invalid file ID'}), 400))
+        
+        # Check ownership and expiry
+        file_meta = fetch_one("""
+            SELECT user_id, filename, expires_at
+            FROM pdf_exports
+            WHERE id = %s
+        """, (file_id,))
+        
+        if not file_meta:
+            return _build_cors_response(make_response(jsonify({'error': 'File not found'}), 404))
+        
+        if file_meta['user_id'] != user_id:
+            logger.warning(f"Unauthorized export download attempt: user={email}, file={file_id}")
+            return _build_cors_response(make_response(jsonify({'error': 'Access denied'}), 403))
+        
+        if datetime.utcnow() > file_meta['expires_at']:
+            return _build_cors_response(make_response(jsonify({'error': 'Download expired'}), 410))
+        
+        # Check file exists on disk
+        file_path = os.path.join('downloads', f'{file_id}.pdf')
+        if not os.path.exists(file_path):
+            logger.error(f"Export file missing from disk: {file_path}")
+            return _build_cors_response(make_response(jsonify({'error': 'File not available'}), 404))
+        
+        # Update downloaded_at timestamp
+        execute("""
+            UPDATE pdf_exports
+            SET downloaded_at = NOW()
+            WHERE id = %s
+        """, (file_id,))
+        
+        metrics.increment("pdf_exports.downloaded", 1)
+        
+        return send_file(
+            file_path,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=file_meta['filename']
+        )
+        
+    except Exception as e:
+        logger.error(f'download_export_file error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Download failed'}), 500))
+
+
+# ========== Phase 4: Admin Panel Endpoints ==========
+
+@app.route('/admin/reports/weekly/schedules', methods=['GET'])
+@login_required
+@admin_required
+def admin_list_weekly_schedules():
+    """
+    Admin: List all weekly digest schedules across all users.
+    
+    Query params:
+        page: Page number (default 1)
+        limit: Results per page (default 50, max 100)
+        filter: active|inactive|failed (optional)
+        user_email: Filter by user email (optional)
+    """
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        limit = min(int(request.args.get('limit', 50)), 100)
+        offset = (page - 1) * limit
+        
+        filter_type = request.args.get('filter', '').lower()
+        user_email = request.args.get('user_email', '').strip()
+        
+        # Build WHERE clause
+        conditions = []
+        params = []
+        
+        if filter_type == 'active':
+            conditions.append('wds.active = true')
+        elif filter_type == 'inactive':
+            conditions.append('wds.active = false')
+        elif filter_type == 'failed':
+            conditions.append('wds.failure_count >= 3')
+        
+        if user_email:
+            conditions.append('u.email ILIKE %s')
+            params.append(f'%{user_email}%')
+        
+        where_sql = ' AND '.join(conditions) if conditions else 'true'
+        
+        # Get total count
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM weekly_digest_schedules wds
+            JOIN users u ON wds.user_id = u.id
+            WHERE {where_sql}
+        """
+        total = fetch_one(count_query, tuple(params))['count']
+        
+        # Get schedules
+        schedules = fetch_all(f"""
+            SELECT 
+                wds.id,
+                u.email,
+                u.plan,
+                wds.timezone,
+                wds.hour,
+                wds.day_of_week,
+                wds.filters,
+                wds.template,
+                wds.active,
+                wds.created_at,
+                wds.last_run,
+                wds.next_run,
+                wds.failure_count
+            FROM weekly_digest_schedules wds
+            JOIN users u ON wds.user_id = u.id
+            WHERE {where_sql}
+            ORDER BY wds.created_at DESC
+            LIMIT %s OFFSET %s
+        """, tuple(params + [limit, offset]))
+        
+        result = []
+        for s in schedules:
+            result.append({
+                'id': s['id'],
+                'user_email': s['email'],
+                'user_plan': s['plan'],
+                'timezone': s['timezone'],
+                'hour': s['hour'],
+                'day_of_week': s['day_of_week'],
+                'filters': s['filters'],
+                'template': s['template'],
+                'active': s['active'],
+                'created_at': s['created_at'].isoformat() + 'Z',
+                'last_run': s['last_run'].isoformat() + 'Z' if s['last_run'] else None,
+                'next_run': s['next_run'].isoformat() + 'Z' if s['next_run'] else None,
+                'failure_count': s['failure_count']
+            })
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'schedules': result,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total,
+                'pages': (total + limit - 1) // limit
+            }
+        }))
+        
+    except Exception as e:
+        logger.error(f'admin_list_weekly_schedules error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to list schedules'}), 500))
+
+
+@app.route('/admin/email/delivery-stats', methods=['GET'])
+@login_required
+@admin_required
+def admin_email_delivery_stats():
+    """
+    Admin: Get email delivery statistics.
+    
+    Query params:
+        range: Time range (7d, 30d, 90d; default 30d)
+    
+    Returns:
+        Email delivery metrics from logs/tracking
+    """
+    try:
+        range_str = request.args.get('range', '30d')
+        days = {'7d': 7, '30d': 30, '90d': 90}.get(range_str, 30)
+        
+        # Weekly digest email stats
+        digest_stats = fetch_one("""
+            SELECT 
+                COUNT(*) as total_sent,
+                COUNT(*) FILTER (WHERE last_run IS NOT NULL) as successful,
+                COUNT(*) FILTER (WHERE failure_count > 0) as with_failures,
+                COUNT(*) FILTER (WHERE failure_count >= 5) as disabled,
+                AVG(failure_count) as avg_failures
+            FROM weekly_digest_schedules
+            WHERE last_run > NOW() - INTERVAL '%s days'
+        """, (days,))
+        
+        # Overall schedule health
+        schedule_health = fetch_one("""
+            SELECT 
+                COUNT(*) FILTER (WHERE active = true) as active_schedules,
+                COUNT(*) FILTER (WHERE active = false) as inactive_schedules,
+                COUNT(*) FILTER (WHERE failure_count >= 3) as failing_schedules
+            FROM weekly_digest_schedules
+        """)
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'range': range_str,
+            'digest_emails': {
+                'total_sent': digest_stats['total_sent'] or 0,
+                'successful': digest_stats['successful'] or 0,
+                'with_failures': digest_stats['with_failures'] or 0,
+                'disabled_due_to_failures': digest_stats['disabled'] or 0,
+                'avg_failure_rate': round(float(digest_stats['avg_failures'] or 0), 2)
+            },
+            'schedule_health': {
+                'active': schedule_health['active_schedules'] or 0,
+                'inactive': schedule_health['inactive_schedules'] or 0,
+                'failing': schedule_health['failing_schedules'] or 0
+            }
+        }))
+        
+    except Exception as e:
+        logger.error(f'admin_email_delivery_stats error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to fetch stats'}), 500))
+
+
+@app.route('/admin/reports/weekly/<int:schedule_id>/run-now', methods=['POST'])
+@login_required
+@admin_required
+def admin_run_digest_now(schedule_id):
+    """
+    Admin: Manually trigger a weekly digest generation and send.
+    
+    Useful for:
+    - Testing digest generation
+    - Recovering from failures
+    - One-off digest requests
+    """
+    try:
+        from weekly_digest_generator import generate_weekly_digest_pdf, send_digest_email
+        from datetime import timedelta
+        
+        # Get schedule details
+        schedule = fetch_one("""
+            SELECT 
+                wds.id,
+                wds.user_id,
+                u.email,
+                wds.filters,
+                wds.template
+            FROM weekly_digest_schedules wds
+            JOIN users u ON wds.user_id = u.id
+            WHERE wds.id = %s
+        """, (schedule_id,))
+        
+        if not schedule:
+            return _build_cors_response(make_response(jsonify({'error': 'Schedule not found'}), 404))
+        
+        # Generate PDF
+        week_end = datetime.utcnow()
+        week_start = week_end - timedelta(days=7)
+        
+        file_path, file_id = generate_weekly_digest_pdf(
+            user_id=schedule['user_id'],
+            email=schedule['email'],
+            filters=schedule['filters'],
+            week_start=week_start,
+            week_end=week_end
+        )
+        
+        if not file_path:
+            return _build_cors_response(make_response(jsonify({'error': 'PDF generation failed'}), 500))
+        
+        # Send email
+        email_sent = send_digest_email(
+            email=schedule['email'],
+            file_path=file_path,
+            week_start=week_start,
+            week_end=week_end
+        )
+        
+        if not email_sent:
+            return _build_cors_response(make_response(jsonify({
+                'ok': True,
+                'warning': 'PDF generated but email failed',
+                'file_id': file_id
+            }), 200))
+        
+        # Update schedule
+        execute("""
+            UPDATE weekly_digest_schedules
+            SET last_run = NOW(),
+                failure_count = 0
+            WHERE id = %s
+        """, (schedule_id,))
+        
+        logger.info(f"Admin triggered digest for schedule {schedule_id}: user={schedule['email']}")
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'message': 'Digest generated and sent',
+            'file_id': file_id,
+            'sent_to': schedule['email']
+        }))
+        
+    except Exception as e:
+        logger.error(f'admin_run_digest_now error: {e}')
+        import traceback
+        traceback.print_exc()
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to run digest', 'details': str(e)}), 500))
+
+
+# ========== End Phase 3 & 4 ==========
 
 # -------------------------------------------------------------------
 # Local development entrypoint
