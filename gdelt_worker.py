@@ -15,6 +15,11 @@ BATCH_INTERVAL = int(os.getenv("GDELT_WORKER_INTERVAL", "60"))  # 1 minute betwe
 
 def main():
     logger.info("🚀 GDELT Worker started - processing enrichment backlog")
+    try:
+        from utils.env_utils import bootstrap_runtime_env
+        bootstrap_runtime_env()
+    except Exception as e:
+        logger.warning(f"Env bootstrap skipped: {e}")
     
     while True:
         try:

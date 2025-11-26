@@ -360,12 +360,31 @@ def should_show_on_travel_map(event_code: str, quad_class: int, goldstein: float
     return quad_class == 1 and goldstein <= -6
 
 def clean_actor(actor: str) -> Optional[str]:
-    """Clean and validate actor name"""
+    """Clean and validate actor name - reject junk/generic terms"""
     if not actor or actor in ["", ".", "---", "Unknown"]:
         return None
     actor = actor.strip()
     if len(actor) <= 1:
         return None
+    
+    # Reject generic business/legal terms that create nonsense alerts
+    junk_terms = [
+        'COMPANY', 'CORPORATION', 'FIRM', 'BUSINESS', 'ENTERPRISE',
+        'BARRISTER', 'LAWYER', 'ATTORNEY', 'DEPUTY', 'OFFICIAL',
+        'SPOKESMAN', 'REPRESENTATIVE', 'MINISTER', 'SECRETARY',
+        'NATIVE AMERICAN', 'EUROPEAN', 'ASIAN', 'AFRICAN',  # Too generic
+        'NVIDIA', 'MICROSOFT', 'GOOGLE', 'APPLE', 'META',  # Tech companies rarely relevant
+        'HOSPITAL', 'UNIVERSITY', 'SCHOOL', 'COLLEGE',
+    ]
+    
+    actor_upper = actor.upper()
+    if any(term in actor_upper for term in junk_terms):
+        return None
+    
+    # Reject pure single-word generic names
+    if ' ' not in actor and len(actor) < 4:
+        return None
+    
     return actor
 
 def build_gdelt_summary(event: Dict[str, Any]) -> str:
@@ -428,6 +447,12 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
         published = datetime.now(timezone.utc)
     actor1 = clean_actor(event.get('actor1', ''))
     actor2 = clean_actor(event.get('actor2', ''))
+    
+    # QUALITY FILTER: Skip if both actors are invalid/generic
+    if not actor1 and not actor2:
+        logger.debug(f"Skipping GDELT event {event['global_event_id']}: no valid actors")
+        return None
+    
     event_code = event.get('event_code', '')
     event_description = get_event_description(event_code)
     quad_class = event.get('quad_class', 0)
@@ -438,6 +463,12 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
     country = event.get('action_country', 'Unknown')
     num_mentions = event.get('num_mentions', 0)
     num_articles = event.get('num_articles', 0)
+    
+    # QUALITY FILTER: Require actual geographic context
+    if not country or country == 'Unknown':
+        logger.debug(f"Skipping GDELT event {event['global_event_id']}: no valid country")
+        return None
+    
     if actor1 and actor2:
         title = f"{actor1} {event_description} involving {actor2}"
     elif actor1:
@@ -547,6 +578,12 @@ def process_batch(conn, batch_size: int = 100) -> int:
                         logger.warning("[gdelt_enrichment] gdelt_filters.py not found; filter disabled")
                 
                 raw_alert = gdelt_to_raw_alert(dict(event))
+                
+                # Skip if quality filter rejected this event (returns None)
+                if raw_alert is None:
+                    filtered_count += 1
+                    processed_ids.append(event['global_event_id'])
+                    continue
                 
                 # Validate and fix coordinates
                 lat = raw_alert.get('latitude')

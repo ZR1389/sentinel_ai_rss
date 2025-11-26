@@ -6,7 +6,13 @@ from psycopg2.extras import DictCursor
 from email_dispatcher import send_pdf_report
 from telegram_dispatcher import send_alerts_to_telegram
 
-load_dotenv()
+# Load environment: Railway uses native env vars
+if not os.getenv('RAILWAY_ENVIRONMENT'):
+    if os.path.exists('.env.production'):
+        load_dotenv('.env.production', override=True)
+    else:
+        load_dotenv()
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_users_with_pdf_quota():

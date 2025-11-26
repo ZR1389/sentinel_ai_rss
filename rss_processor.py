@@ -16,10 +16,14 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Iterable, Tuple
 from urllib.parse import urlparse
 
-# .env loading
+# .env loading: Railway uses native env vars, local dev uses .env files
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    if not os.getenv('RAILWAY_ENVIRONMENT'):
+        if os.path.exists('.env.production'):
+            load_dotenv('.env.production', override=True)
+        else:
+            load_dotenv()
 except Exception:
     pass
 
@@ -1855,25 +1859,51 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
         'location_sharing': False
     }
     
+    # Import city-to-country mapping
+    try:
+        from feeds_catalog import CITY_TO_COUNTRY
+    except ImportError:
+        CITY_TO_COUNTRY = {}
+    
     # Try source tag extraction
     if source_tag:
         # Extract from local:city or country:country tags
         if source_tag.startswith('local:'):
             city_part = source_tag[6:]  # Remove 'local:'
             if ',' in city_part:
+                # Explicit city,country in tag
                 city, country = city_part.split(',', 1)
                 location_data.update({
-                    'city': city.strip(),
+                    'city': city.strip().title(),
                     'country': country.strip(),
                     'location_method': 'feed_tag',
-                    'location_confidence': 'medium'
+                    'location_confidence': 'high'
                 })
+            else:
+                # Just city name - look up correct country from mapping
+                city_lower = city_part.strip().lower()
+                canonical_country = CITY_TO_COUNTRY.get(city_lower)
+                if canonical_country:
+                    location_data.update({
+                        'city': city_part.strip().title(),
+                        'country': canonical_country,
+                        'location_method': 'feed_tag_mapped',
+                        'location_confidence': 'high'
+                    })
+                else:
+                    # No mapping found - mark as ambiguous
+                    logger.warning(f"[LocationExtraction] No country mapping for city feed: {city_part}")
+                    location_data.update({
+                        'city': city_part.strip().title(),
+                        'location_method': 'feed_tag_unmapped',
+                        'location_confidence': 'low'
+                    })
         elif source_tag.startswith('country:'):
             country = source_tag[8:]  # Remove 'country:'
             location_data.update({
-                'country': country.strip(),
+                'country': country.strip().title(),
                 'location_method': 'feed_tag',
-                'location_confidence': 'medium'
+                'location_confidence': 'high'
             })
     
     # Try to add region if we have country

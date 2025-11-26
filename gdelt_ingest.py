@@ -75,7 +75,8 @@ _ingest_metrics = {
     "filtered_rows": 0,  # New: track filter rejections
     "retries_performed": 0,
     "successful_ingests": 0,
-    "failed_ingests": 0
+    "failed_ingests": 0,
+    "geo_invalid_rows": 0  # Rows with out-of-range coordinates sanitized
 }
 
 def safe_int(val, default=0):
@@ -331,6 +332,17 @@ def _parse_and_store_export(zip_bytes: bytes, filename: str) -> int:
                             'action_long': safe_float(gv(59)),  # Column 59 is ActionGeo_Long
                             'raw': row
                         }
+
+                        # Coordinate sanitation: replace out-of-range values with None so downstream geocoding can fill
+                        lat = mapped['action_lat']
+                        lon = mapped['action_long']
+                        # Treat lon==0 as unknown per GDELT convention; also discard impossible ranges
+                        if lat is not None and (lat < -90 or lat > 90):
+                            mapped['action_lat'] = None
+                            _ingest_metrics["geo_invalid_rows"] += 1
+                        if lon is not None and (lon == 0.0 or lon < -180 or lon > 180):
+                            mapped['action_long'] = None
+                            _ingest_metrics["geo_invalid_rows"] += 1
                         
                         # Apply aggressive filtering if enabled
                         if GDELT_ENABLE_FILTERS:
@@ -354,8 +366,8 @@ def _parse_and_store_export(zip_bytes: bytes, filename: str) -> int:
         duration = time.time() - start_time
         _log_metric(duration, events_downloaded, inserted, skipped_this_run, 
                    _ingest_metrics["retries_performed"], filename)
-        logger.info("[gdelt] Ingested %d new events from %s (skipped: %d rows, duration: %.2fs)", 
-                   inserted, filename, skipped_this_run, duration)
+        logger.info("[gdelt] Ingested %d new events from %s (skipped: %d, geo_sanitized: %d, duration: %.2fs)", 
+               inserted, filename, skipped_this_run, _ingest_metrics.get("geo_invalid_rows", 0), duration)
     except Exception as e:
         _ingest_metrics["failed_ingests"] += 1
         duration = time.time() - start_time

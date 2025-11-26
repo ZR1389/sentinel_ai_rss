@@ -449,8 +449,12 @@ def _atomic_write_json(path, data):
             pass  # Temp file may already be cleaned up
         raise
 
-load_dotenv()
-
+# Load environment: Railway uses native env vars, local dev uses .env files
+if not os.getenv('RAILWAY_ENVIRONMENT'):
+    if os.path.exists('.env.production'):
+        load_dotenv('.env.production', override=True)
+    else:
+        load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # used by deepseek_client.py
@@ -690,27 +694,54 @@ def _baseline_metrics(alert) -> dict:
 # ---------- Relevance Filtering ----------
 def is_relevant(alert: dict) -> bool:
     """
-    Lightweight relevance gate to exclude non-security junk while keeping recall.
-    More lenient for raw alerts that haven't been enriched yet.
+    Strict relevance gate to exclude non-security content.
+    Only allows genuine security/risk/threat intelligence through.
     """
     text = (alert.get("title","") + " " + alert.get("summary","")).lower()
     flags = alert.get("relevance_flags") or relevance_flags(text)
 
-    # Sports / entertainment obvious noise
+    # Sports / entertainment / lifestyle noise
     if "sports_context" in (flags or []):
         return False
-    if any(bad in text for bad in [
+    
+    sports_noise = [
         "football","basketball","soccer","tennis","nba","nfl","fifa","cricket","olympics",
-        "concert","music festival","award show","box office","celebrity",
-        "bundesliga","hsv","bvb","rb leipzig","hoffenheim"
-    ]):
+        "rugby","hockey","champion","trophy","tournament","league","match","goal","score",
+        "player","team","coach","stadium","game","athletics","sporting",
+        "concert","music festival","award show","box office","celebrity","entertainment",
+        "bundesliga","hsv","bvb","rb leipzig","hoffenheim","super lig","premiere league"
+    ]
+    if any(noise in text for noise in sports_noise):
         return False
 
-    # Business/finance-only chatter
-    if any(bad in text for bad in ["stock market","ipo","earnings call","celebrity investor"]):
+    # Business/finance/lifestyle content
+    business_noise = [
+        "stock market","asx set to","wall street","ipo","earnings call","superannuation",
+        "coffee reduces risk","health tips","idiotic things passengers","travel tips",
+        "financial advice","investment strategy","retirement planning","shopping",
+        "consumer advice","product review","recipe","diet","exercise routine"
+    ]
+    if any(noise in text for noise in business_noise):
+        return False
+    
+    # Weather/nature/animal stories
+    nature_noise = [
+        "weather forecast","temperature","rain expected","snow expected","viilenee",
+        "dingo snatches","animal attack","wildlife","solar flare","space weather",
+        "astronomy","meteor shower","eclipse"
+    ]
+    if any(noise in text for noise in nature_noise):
+        return False
+    
+    # Ceremonial/cultural/opinion pieces
+    cultural_noise = [
+        "remembrance sunday","ceremony","memorial service","dance enterprise",
+        "opinion piece","editorial","lifestyle","generational","cultural event"
+    ]
+    if any(noise in text for noise in cultural_noise):
         return False
 
-    # Non-security "defense" (require security context)
+    # Non-security "defense" (require actual security context)
     if "defense" in text and not any(sec in text for sec in [
         "military","army","navy","air force","missile","air defense","cyber","national security","homeland security"
     ]):
@@ -1147,9 +1178,11 @@ def summarize_single_alert(alert: dict) -> dict:
     alert.update(_baseline_metrics(alert))
 
     # After baseline metrics calculation - skip zero-incident alerts
-    if alert.get("incident_count_30d", 0) == 0 and alert.get("recent_count_7d", 0) == 0:
+    zero_incidents = (alert.get("incident_count_30d", 0) == 0 and alert.get("recent_count_7d", 0) == 0)
+    is_intel = (str(alert.get("source",""))).lower() in ("gdelt", "acled") or (str(alert.get("source_kind",""))).lower() == "intelligence"
+    if zero_incidents and not is_intel:
         logger.info(f"Skipping alert with zero incidents: {alert.get('title', '')[:80]}")
-        return None  # Don't enrich zero-incident alerts
+        return None  # Don't enrich zero-incident alerts from non-intel sources
 
     # Early warnings
     ewi = early_warning_indicators(historical_incidents) or []

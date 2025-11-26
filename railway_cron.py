@@ -29,25 +29,44 @@ def setup_cron_environment():
     )
     
     logger = logging.getLogger('railway_cron')
-    
-    # Check critical environment variables
-    required_vars = ['DATABASE_URL']
-    missing_vars = []
-    
-    for var in required_vars:
-        if not os.getenv(var):
-            missing_vars.append(var)
-    
-    if missing_vars:
-        logger.error(f"Missing required environment variables: {missing_vars}")
+
+    # Normalize env so DATABASE_URL is available where modules expect it
+    try:
+        # Import after sys.path adjustments
+        from utils.env_utils import bootstrap_runtime_env
+        bootstrap_runtime_env()
+    except Exception as e:
+        logger.warning(f"Env bootstrap skipped: {e}")
+
+    # Verify we have a usable DB URL via either DATABASE_URL or DATABASE_PUBLIC_URL
+    db_url = os.getenv('DATABASE_URL') or os.getenv('DATABASE_PUBLIC_URL')
+    if not db_url:
+        logger.error("Missing required environment variables: ['DATABASE_URL' or 'DATABASE_PUBLIC_URL']")
         logger.info("Available environment variables:")
         for key, value in os.environ.items():
             if any(keyword in key.upper() for keyword in ['DATABASE', 'DB', 'URL', 'RAILWAY']):
-                logger.info(f"  {key}={'*' * len(value) if 'KEY' in key or 'SECRET' in key or 'PASSWORD' in key else value}")
-        
-        # Try to load from potential config sources
-        logger.info("Trying alternative configuration sources...")
+                redacted = value
+                if isinstance(value, str) and '://' in value and '@' in value:
+                    try:
+                        scheme, rest = value.split('://', 1)
+                        host_part = rest.split('@', 1)[1]
+                        redacted = f"{scheme}://***@{host_part}"
+                    except Exception:
+                        redacted = '***'
+                logger.info(f"  {key}={redacted}")
         return False
+    else:
+        # Log effective DB URL masked
+        if '://' in db_url and '@' in db_url:
+            try:
+                scheme, rest = db_url.split('://', 1)
+                host_part = rest.split('@', 1)[1]
+                masked = f"{scheme}://***@{host_part}"
+            except Exception:
+                masked = '***'
+        else:
+            masked = db_url
+        logger.info(f"Effective DATABASE_URL resolved: {masked}")
     
     # Set a flag to indicate cron environment for fallback logic
     os.environ['RAILWAY_CRON_MODE'] = 'true'

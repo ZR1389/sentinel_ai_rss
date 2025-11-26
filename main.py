@@ -5,11 +5,16 @@ import os
 from utils.feature_decorators import feature_required, feature_limit
 from dotenv import load_dotenv
 
-# Load .env.dev if present (for local dev), otherwise fall back to .env
-if os.path.exists('.env.dev'):
+# Load environment: Railway uses native env vars, local dev uses .env files
+if os.getenv('RAILWAY_ENVIRONMENT'):
+    # Railway deployment: skip .env files, use native environment variables
+    pass
+elif os.path.exists('.env.dev'):
     load_dotenv('.env.dev', override=True)
+elif os.path.exists('.env.production'):
+    load_dotenv('.env.production', override=True)
 else:
-    load_dotenv()
+    load_dotenv()  # Fallback to .env if present
 
 # Notes:
 # - Only /chat counts toward plan usage, and only AFTER a successful advisory.

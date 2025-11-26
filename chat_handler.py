@@ -72,7 +72,12 @@ if RAILWAY_ENV:
 else:
     log.info("Running outside Railway or RAILWAY_ENVIRONMENT not set.")
 
-load_dotenv()
+# Load environment: Railway uses native env vars, local dev uses .env files
+if not RAILWAY_ENV:
+    if os.path.exists('.env.production'):
+        load_dotenv('.env.production', override=True)
+    else:
+        load_dotenv()
 
 # ---------------- Optional instrumentation & pooling imports ----------------
 try:

@@ -91,7 +91,12 @@ except Exception:
     def info_ops_flags(text: str) -> List[str]: return []
     def relevance_flags(text: str) -> List[str]: return []
 
-load_dotenv()
+# Load environment: Railway uses native env vars, local dev uses .env files
+if not os.getenv('RAILWAY_ENVIRONMENT'):
+    if os.path.exists('.env.production'):
+        load_dotenv('.env.production', override=True)
+    else:
+        load_dotenv()
 
 from config import CONFIG
 
