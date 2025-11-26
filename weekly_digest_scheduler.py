@@ -10,7 +10,7 @@ import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from db_utils import fetch_all, execute_query
+from db_utils import fetch_all, execute
 from weekly_digest_generator import generate_weekly_digest_pdf, send_digest_email
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ def process_weekly_digests():
                 
                 if email_sent:
                     # Update schedule: reset failure count, update last_run and next_run
-                    execute_query("""
+                    execute("""
                         UPDATE weekly_digest_schedules
                         SET last_run = NOW(),
                             next_run = %s,
@@ -96,7 +96,7 @@ def process_weekly_digests():
                     logger.info(f"Weekly digest sent successfully: schedule_id={schedule_id}, email={email}")
                 else:
                     # Increment failure count
-                    execute_query("""
+                    execute("""
                         UPDATE weekly_digest_schedules
                         SET failure_count = failure_count + 1,
                             next_run = %s
@@ -112,7 +112,7 @@ def process_weekly_digests():
                 traceback.print_exc()
                 
                 # Increment failure count
-                execute_query("""
+                execute("""
                     UPDATE weekly_digest_schedules
                     SET failure_count = failure_count + 1,
                         next_run = %s
@@ -167,7 +167,7 @@ def update_schedule_next_run(schedule):
     try:
         schedule_id = schedule['id'] if isinstance(schedule, dict) else schedule[0]
         next_run = calculate_next_run(schedule)
-        execute_query("""
+        execute("""
             UPDATE weekly_digest_schedules
             SET next_run = %s
             WHERE id = %s

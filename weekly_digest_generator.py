@@ -10,7 +10,7 @@ from typing import Dict, List, Any
 import pytz
 import json
 
-from db_utils import fetch_all, fetch_one, execute_query
+from db_utils import fetch_all, fetch_one, execute
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 import uuid
@@ -157,7 +157,7 @@ def generate_weekly_digest_pdf(user_id: int, email: str, filters: Dict, week_sta
         
         # Save to database
         expires_at = datetime.utcnow() + timedelta(days=7)  # 7-day expiry for digests
-        execute_query("""
+        execute("""
             INSERT INTO pdf_exports (id, user_id, filename, template, expires_at)
             VALUES (%s, %s, %s, %s, %s)
         """, (file_id, user_id, filename, 'weekly_digest', expires_at))
