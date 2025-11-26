@@ -1,0 +1,24 @@
+# Nixpacks configuration for Railway deployment
+# Includes system dependencies for WeasyPrint PDF generation
+
+[phases.setup]
+# System packages required by WeasyPrint for PDF generation
+aptPkgs = [
+  "libpango-1.0-0",
+  "libpangoft2-1.0-0", 
+  "libgdk-pixbuf2.0-0",
+  "libffi-dev",
+  "libjpeg-dev",
+  "libcairo2",
+  "libcairo-gobject2",
+  "libpangocairo-1.0-0"
+]
+
+[phases.install]
+cmds = [
+  "pip install --upgrade pip",
+  "pip install -r requirements.txt"
+]
+
+[start]
+cmd = "gunicorn main:app --bind 0.0.0.0:$PORT --workers 4 --timeout 120 --access-logfile - --error-logfile -"
