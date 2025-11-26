@@ -2874,7 +2874,7 @@ def api_map_alerts():
     where = []
     params = []
 
-    # Quality filter: only show alerts with reliable geocoding (Tier 1)
+    # Quality filter: only show alerts with reliable geocoding (Tier 1 + feed_tag_mapped)
     TIER1_METHODS = [
         'coordinates',           # Original RSS with coords
         'nlp_nominatim',        # Phase 2 NLP extraction + Nominatim
@@ -2885,6 +2885,8 @@ def api_map_alerts():
         'db_cache',             # PostgreSQL cache hits (123 alerts)
         'legacy_precise',       # Backfilled unknown with city coords (250 alerts)
         'moderate',             # Moderate confidence extraction
+        'feed_tag_mapped',      # City-to-country mapping from feeds_catalog
+        'feed_tag',             # Direct feed tag extraction
     ]
     where.append("location_method = ANY(%s)")
     params.append(TIER1_METHODS)
@@ -2894,6 +2896,14 @@ def api_map_alerts():
     where.append("longitude IS NOT NULL")
     where.append("latitude BETWEEN -90 AND 90")
     where.append("longitude BETWEEN -180 AND 180")
+    
+    # Exclude suspicious coordinates
+    where.append("NOT (latitude = 0 AND longitude = 0)")  # Null Island
+    where.append("NOT (ABS(latitude) < 0.1 AND ABS(longitude) < 0.1)")  # Near Null Island
+    
+    # Require country for better location accuracy (city-only alerts often ambiguous)
+    where.append("country IS NOT NULL")
+    where.append("TRIM(country) != ''")
 
     # Time window (use existing published column - skip if days=0 for all historical)
     if days > 0:
@@ -3143,7 +3153,7 @@ def api_map_alerts_aggregates():
     where = []
     params = []
 
-    # Quality filter: only show alerts with reliable geocoding (Tier 1)
+    # Quality filter: only show alerts with reliable geocoding (Tier 1 + feed_tag_mapped)
     TIER1_METHODS = [
         'coordinates',           # Original RSS with coords
         'nlp_nominatim',        # Phase 2 NLP extraction + Nominatim
@@ -3154,6 +3164,8 @@ def api_map_alerts_aggregates():
         'db_cache',             # PostgreSQL cache hits (123 alerts)
         'legacy_precise',       # Backfilled unknown with city coords (250 alerts)
         'moderate',             # Moderate confidence extraction
+        'feed_tag_mapped',      # City-to-country mapping from feeds_catalog
+        'feed_tag',             # Direct feed tag extraction
     ]
     where.append("location_method = ANY(%s)")
     params.append(TIER1_METHODS)
@@ -3163,6 +3175,14 @@ def api_map_alerts_aggregates():
     where.append("longitude IS NOT NULL")
     where.append("latitude BETWEEN -90 AND 90")
     where.append("longitude BETWEEN -180 AND 180")
+    
+    # Exclude suspicious coordinates
+    where.append("NOT (latitude = 0 AND longitude = 0)")  # Null Island
+    where.append("NOT (ABS(latitude) < 0.1 AND ABS(longitude) < 0.1)")  # Near Null Island
+    
+    # Require country for better location accuracy (city-only alerts often ambiguous)
+    where.append("country IS NOT NULL")
+    where.append("TRIM(country) != ''")
 
     # Time window (use existing published column - skip if days=0 for all historical)
     if days > 0:
