@@ -8,13 +8,17 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /app
 
-# Install system dependencies (build + runtime libs for reportlab)
+# Install system dependencies (build + runtime libs for WeasyPrint and reportlab)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc libffi-dev libssl-dev libxml2-dev \
     libxslt1-dev zlib1g-dev curl \
     libfreetype6-dev libfreetype6 \
     libjpeg62-turbo-dev libjpeg62-turbo \
     libpng-dev libpng16-16 \
+    libcairo2 libcairo-gobject2 \
+    libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies

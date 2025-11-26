@@ -95,6 +95,9 @@ APScheduler>=3.10.4
 # PDF generation for exports
 WeasyPrint>=60.1
 
+# Timezone handling for weekly digest scheduler
+pytz>=2024.1
+
 # Testing
 pytest>=8.3.2
 
