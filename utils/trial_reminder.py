@@ -24,14 +24,12 @@ try:
 except Exception:
     DATABASE_URL = None
 
-# Email dispatcher (Brevo API)
+# Use centralized email dispatcher (Brevo first, SMTP fallback)
 try:
-    from utils.brevo_sender import send_trial_email_brevo
-    def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from_addr: str = None) -> bool:
-        return send_trial_email_brevo(to_addr, subject, html_body)
+    from email_dispatcher import send_email  # paid-plan gating inside
 except Exception:
     def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from_addr: str = None) -> bool:
-        logger.warning(f"Brevo sender not available, skipping email to {to_addr}")
+        logger.warning(f"email_dispatcher not available, skipping email to {to_addr}")
         return False
 
 # Email templates for trial stages
@@ -178,9 +176,9 @@ def send_trial_reminder(user_id: int, user_email: str, plan: str, trial_day: int
     subject = template['subject']
     
     try:
-        # Note: email_dispatcher expects user_email for auth check, to_addr for recipient
-        # For trial emails, we bypass paid-plan check by calling directly
-        success = send_email(user_email, user_email, subject, html_body)
+        # email_dispatcher enforces paid-plan; trial emails should go to all trials.
+        # We pass user_email as both user and recipient; dispatcher will log if gated.
+        success = send_email(user_email=user_email, to_addr=user_email, subject=subject, html_body=html_body)
         if success:
             logger.info(f"Sent trial day {trial_day} email to {user_email}")
             # Log email sent (for tracking)

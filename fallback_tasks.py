@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import time
 from typing import Optional, Dict, Any
+import os, logging
+import requests  # type: ignore
 
 def _truthy(v: Optional[str]) -> bool:
     return str(v or '').lower() in {'1','true','yes','on'}
@@ -24,8 +26,7 @@ def _notify_failure(payload: Dict[str, Any]) -> None:
         logger.error("[fallback_task] Failure: %s", payload)
     else:
         try:
-            import requests  # type: ignore
-            requests.post(url, json={"event":"fallback_job_failed", **payload}, timeout=5)
+            requests.post(url, json={"event": "fallback_job_failed", **payload}, timeout=5)
         except Exception as e:
             logger.error("[fallback_task] Failure webhook error: %s | payload=%s", e, payload)
 
@@ -107,8 +108,18 @@ def _notify_failure_email(payload: Dict[str, Any]) -> None:
     from_addr = os.getenv('BREVO_SENDER_EMAIL', 'info@zikarisk.com')
     from_name = os.getenv('BREVO_SENDER_NAME', 'Sentinel Notifier')
     
+    # Prefer centralized dispatcher when available
+    try:
+        from email_dispatcher import send_email
+        html_body = f"<p>{message}</p>"
+        ok = send_email(user_email=to_addr, to_addr=to_addr, subject=subject, html_body=html_body, from_addr=from_addr)
+        return bool(ok)
+    except Exception:
+        pass
+
     if not (to_addr and brevo_api_key):
-        return
+        logger.warning("[fallback_task] Missing to_addr or BREVO_API_KEY; skipping email")
+        return False
     
     subject = f"[Sentinel] Fallback job FAILED ({payload.get('country')}/{payload.get('region')})"
     html = f"""

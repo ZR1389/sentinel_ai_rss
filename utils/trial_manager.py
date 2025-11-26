@@ -27,12 +27,12 @@ try:
 except Exception:
     TRIAL_CONFIG = {}
 
-# Optional email dispatcher (graceful fallback)
+# Optional email dispatcher (Brevo-backed generic sender)
 try:
     from email_dispatcher import send_email  # type: ignore
 except Exception:
-    def send_email(recipient: str, template: str, context: Dict[str, Any]):  # fallback stub
-        pass
+    def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from_addr: str = None) -> bool:
+        return False
 
 # Payment method checker stub (replace with real Stripe logic)
 def check_payment_method(user_id: int) -> bool:
@@ -190,13 +190,17 @@ def check_expired_trials() -> int:
         if has_payment:
             end_trial(u, convert_to_paid=True)
             try:
-                send_email(u['email'], 'trial_converted', {'plan': u['plan']})
+                subject = 'Your Trial Converted to Paid'
+                html = f"<p>Your {u['plan']} subscription has started.</p>"
+                send_email(user_email=u['email'], to_addr=u['email'], subject=subject, html_body=html)
             except Exception:
                 pass
         else:
             end_trial(u, convert_to_paid=False)
             try:
-                send_email(u['email'], 'trial_expired', {'plan': 'FREE'})
+                subject = 'Your Trial Has Expired'
+                html = "<p>Your plan was downgraded to FREE. You can upgrade anytime.</p>"
+                send_email(user_email=u['email'], to_addr=u['email'], subject=subject, html_body=html)
             except Exception:
                 pass
         processed += 1

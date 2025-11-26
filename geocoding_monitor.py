@@ -111,32 +111,45 @@ Next step: Disable aggressive cron in railway.toml
     except Exception as e:
         logger.warning(f"[geocoding_monitor] Telegram notification failed: {e}")
     
-    # Try email (Brevo)
-    try:
-        import sib_api_v3_sdk
-        from sib_api_v3_sdk.rest import ApiException
+        # Try email via centralized dispatcher (Brevo first, SMTP fallback)
+        try:
+            from email_dispatcher import send_email
+            to_addr = os.getenv("MONITOR_EMAIL", "ops@zikarisk.com")
+            subject = "Geocoding Backlog Cleared"
+            html = f"<p>Geocoding backlog cleared. raw_alerts: {status['backlog']}, alerts: {status['with_coords']}</p>"
+            ok = send_email(user_email=to_addr, to_addr=to_addr, subject=subject, html_body=html)
+            if ok:
+                return {"notified": True, "channels": ["email"]}
+        except Exception as e:
+            logger.warning(f"email_dispatcher not available: {e}")
+            # fall through to Brevo direct below
+
+        # Fallback to direct Brevo HTTP if dispatcher unavailable
+        try:
+            import sib_api_v3_sdk
+            from sib_api_v3_sdk.rest import ApiException
         
-        api_key = os.getenv("BREVO_API_KEY")
-        sender_email = os.getenv("BREVO_SENDER_EMAIL", "noreply@zikarisk.com")
-        admin_email = os.getenv("ADMIN_EMAIL", "info@zikarisk.com")
+            api_key = os.getenv("BREVO_API_KEY")
+            sender_email = os.getenv("BREVO_SENDER_EMAIL", "noreply@zikarisk.com")
+            admin_email = os.getenv("ADMIN_EMAIL", "info@zikarisk.com")
         
-        if api_key and admin_email:
-            configuration = sib_api_v3_sdk.Configuration()
-            configuration.api_key['api-key'] = api_key
-            api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+            if api_key and admin_email:
+                configuration = sib_api_v3_sdk.Configuration()
+                configuration.api_key['api-key'] = api_key
+                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
             
-            send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-                to=[{"email": admin_email}],
-                sender={"email": sender_email, "name": "Sentinel AI Monitor"},
-                subject="🎯 Geocoding Backlog Cleared",
-                html_content=message.replace('\n', '<br>')
-            )
+                send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+                    to=[{"email": admin_email}],
+                    sender={"email": sender_email, "name": "Sentinel AI Monitor"},
+                    subject="🎯 Geocoding Backlog Cleared",
+                    html_content=message.replace('\n', '<br>')
+                )
             
-            api_instance.send_transac_email(send_smtp_email)
-            sent_via.append("Email")
-            logger.info("[geocoding_monitor] Notification sent via Email")
-    except Exception as e:
-        logger.warning(f"[geocoding_monitor] Email notification failed: {e}")
+                api_instance.send_transac_email(send_smtp_email)
+                sent_via.append("Email")
+                logger.info("[geocoding_monitor] Notification sent via Email")
+        except Exception as e:
+            logger.warning(f"[geocoding_monitor] Email notification failed: {e}")
     
     if sent_via:
         _last_notification_time = datetime.utcnow()
