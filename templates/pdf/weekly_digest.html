@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}Weekly Threat Digest - {{ week_start }} to {{ week_end }}{% endblock %}
+
+{% block content %}
+<h1>Weekly Threat Digest</h1>
+
+<div class="metadata">
+    <div class="metadata-item">
+        <div class="metadata-label">Period</div>
+        <div class="metadata-value">{{ week_start }} - {{ week_end }}</div>
+    </div>
+    
+    <div class="metadata-item">
+        <div class="metadata-label">Total Alerts</div>
+        <div class="metadata-value">{{ summary.total_alerts }}</div>
+    </div>
+    
+    <div class="metadata-item">
+        <div class="metadata-label">Critical</div>
+        <div class="metadata-value" style="color: #991b1b;">{{ summary.critical_count }}</div>
+    </div>
+    
+    <div class="metadata-item">
+        <div class="metadata-label">High</div>
+        <div class="metadata-value" style="color: #9a3412;">{{ summary.high_count }}</div>
+    </div>
+    
+    <div class="metadata-item">
+        <div class="metadata-label">Trend</div>
+        <div class="metadata-value">
+            {% if summary.trend == 'up' %}
+            ↑ {{ summary.trend_percent }}% vs last week
+            {% elif summary.trend == 'down' %}
+            ↓ {{ summary.trend_percent }}% vs last week
+            {% else %}
+            → Stable
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<h2>Executive Summary</h2>
+<p>{{ summary.executive_summary }}</p>
+
+{% if top_threats and top_threats|length > 0 %}
+<h2>Top Threats This Week</h2>
+{% for threat in top_threats %}
+<div class="alert-box" style="border-left-color: {% if threat.severity == 'CRITICAL' %}#dc2626{% elif threat.severity == 'HIGH' %}#ea580c{% else %}#2563eb{% endif %};">
+    <h3 style="margin-top: 0;">
+        <span class="severity-badge severity-{{ threat.severity }}">{{ threat.severity }}</span>
+        {{ threat.title }}
+    </h3>
+    <p><strong>Location:</strong> {{ threat.city or 'N/A' }}, {{ threat.country }}</p>
+    <p><strong>Date:</strong> {{ threat.published_at }}</p>
+    <p>{{ threat.summary }}</p>
+    {% if threat.threat_score %}
+    <p><strong>Threat Score:</strong> {{ "%.1f"|format(threat.threat_score) }}/10</p>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if geographic_breakdown and geographic_breakdown|length > 0 %}
+<h2>Geographic Breakdown</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Country</th>
+            <th>Total Alerts</th>
+            <th>Critical</th>
+            <th>High</th>
+            <th>Medium</th>
+            <th>Low</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for geo in geographic_breakdown %}
+        <tr>
+            <td><strong>{{ geo.country }}</strong></td>
+            <td>{{ geo.total }}</td>
+            <td style="color: #991b1b;">{{ geo.critical }}</td>
+            <td style="color: #9a3412;">{{ geo.high }}</td>
+            <td style="color: #92400e;">{{ geo.medium }}</td>
+            <td style="color: #166534;">{{ geo.low }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if category_breakdown and category_breakdown|length > 0 %}
+<h2>Threat Categories</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Category</th>
+            <th>Count</th>
+            <th>Trend</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for cat in category_breakdown %}
+        <tr>
+            <td><strong>{{ cat.category }}</strong></td>
+            <td>{{ cat.count }}</td>
+            <td>
+                {% if cat.trend > 0 %}
+                <span style="color: #dc2626;">↑ {{ cat.trend }}%</span>
+                {% elif cat.trend < 0 %}
+                <span style="color: #16a34a;">↓ {{ cat.trend|abs }}%</span>
+                {% else %}
+                <span style="color: #6b7280;">→</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if recommendations and recommendations|length > 0 %}
+<div class="warning-box">
+    <h3>Key Recommendations</h3>
+    <ul>
+        {% for rec in recommendations %}
+        <li>{{ rec }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="page-break"></div>
+
+{% if all_alerts and all_alerts|length > 0 %}
+<h2>All Alerts This Week</h2>
+{% for alert in all_alerts %}
+<div style="margin-bottom: 20px; padding: 12px; background-color: #f9fafb; border-left: 3px solid {% if alert.severity == 'CRITICAL' %}#dc2626{% elif alert.severity == 'HIGH' %}#ea580c{% elif alert.severity == 'MEDIUM' %}#f59e0b{% else %}#22c55e{% endif %};">
+    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+        <strong style="font-size: 11pt;">{{ alert.title }}</strong>
+        <span class="severity-badge severity-{{ alert.severity }}" style="margin-left: 8px;">{{ alert.severity }}</span>
+    </div>
+    <div style="font-size: 9pt; color: #6b7280; margin-bottom: 6px;">
+        <strong>{{ alert.country }}</strong>
+        {% if alert.city %} • {{ alert.city }}{% endif %}
+        • {{ alert.published_at }}
+        {% if alert.source_name %} • {{ alert.source_name }}{% endif %}
+    </div>
+    <p style="font-size: 10pt; margin: 0;">{{ alert.summary }}</p>
+</div>
+{% endfor %}
+{% endif %}
+
+<div class="footer" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+    <p style="font-size: 9pt; color: #6b7280;">
+        <strong>About This Digest:</strong> This weekly digest is generated from public threat intelligence sources and filtered according to your preferences. 
+        Data is aggregated from {{ summary.source_count or 'multiple' }} sources including GDELT, ACLED, and RSS feeds.
+    </p>
+    <p style="font-size: 9pt; color: #6b7280; margin-top: 8px;">
+        <strong>Disclaimer:</strong> Sentinel AI does not guarantee completeness or accuracy of threat intelligence. 
+        Users should verify information independently and consult local authorities for official guidance.
+    </p>
+</div>
+{% endblock %}

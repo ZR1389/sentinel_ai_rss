@@ -128,6 +128,17 @@ if os.getenv('GDELT_ENABLED', 'false').lower() == 'true':
 else:
     logger.info("[main] GDELT polling disabled (GDELT_ENABLED not set)")
 
+# Start weekly digest scheduler if enabled
+if os.getenv('WEEKLY_DIGEST_ENABLED', 'true').lower() == 'true':
+    try:
+        from weekly_digest_scheduler import start_weekly_digest_scheduler
+        start_weekly_digest_scheduler()
+        logger.info("✓ Weekly digest scheduler started")
+    except Exception as e:
+        logger.warning(f"[main] Weekly digest scheduler not started: {e}")
+else:
+    logger.info("[main] Weekly digest scheduler disabled (WEEKLY_DIGEST_ENABLED=false)")
+
 # Apply socmint rate limits post-registration to avoid circular import issues
 if 'Limiter' in globals() and Limiter and get_remote_address:
     try:
@@ -7410,6 +7421,279 @@ def chat_threads_export_pdf(thread_uuid):
     except Exception as e:
         logger.error(f'chat_threads_export_pdf error: {e}')
         return _build_cors_response(make_response(jsonify({'error': 'export failed'}), 500))
+
+# ========== Weekly Digest Scheduling Endpoints ==========
+
+@app.route('/api/reports/weekly/schedule', methods=['POST'])
+@login_required
+def create_weekly_digest_schedule():
+    """Create a recurring weekly digest schedule."""
+    try:
+        email = get_logged_in_email()
+        payload = request.get_json(silent=True) or {}
+        
+        # Get user plan and limits
+        from plan_utils import get_plan_limits
+        from config_data.plans import get_plan_feature
+        limits = get_plan_limits(email)
+        plan = limits.get('plan', 'FREE')
+        
+        # Check schedule limit
+        schedule_limit = get_plan_feature(plan, 'weekly_digest_schedules')
+        if schedule_limit == 0:
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Weekly digests not available on FREE plan',
+                'feature_locked': True,
+                'required_plan': 'PRO'
+            }), 403))
+        
+        # Get user_id
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        # Count existing schedules
+        if schedule_limit is not None:  # None = unlimited
+            existing_count = fetch_one(
+                'SELECT COUNT(*) as count FROM weekly_digest_schedules WHERE user_id=%s AND active=true',
+                (user_id,)
+            )
+            count = existing_count['count'] if isinstance(existing_count, dict) else existing_count[0]
+            if count >= schedule_limit:
+                return _build_cors_response(make_response(jsonify({
+                    'error': f'Maximum {schedule_limit} weekly digest schedules reached',
+                    'feature_locked': True,
+                    'current_count': count,
+                    'limit': schedule_limit,
+                    'upgrade_plans': ['BUSINESS', 'ENTERPRISE'] if plan == 'PRO' else ['ENTERPRISE']
+                }), 429))
+        
+        # Validate required fields
+        required_fields = ['timezone', 'hour', 'day_of_week']
+        for field in required_fields:
+            if field not in payload:
+                return _build_cors_response(make_response(jsonify({
+                    'error': f'Missing required field: {field}'
+                }), 400))
+        
+        timezone = payload['timezone']
+        hour = int(payload['hour'])
+        day_of_week = int(payload['day_of_week'])
+        filters = payload.get('filters', {})
+        template = payload.get('template', 'weekly_digest')
+        
+        # Validate ranges
+        if hour < 0 or hour > 23:
+            return _build_cors_response(make_response(jsonify({'error': 'hour must be 0-23'}), 400))
+        if day_of_week < 0 or day_of_week > 6:
+            return _build_cors_response(make_response(jsonify({'error': 'day_of_week must be 0-6'}), 400))
+        
+        # Create schedule
+        from datetime import datetime, timedelta
+        import pytz
+        
+        # Calculate next_run in UTC
+        tz = pytz.timezone(timezone)
+        now_utc = datetime.now(pytz.UTC)
+        now_local = now_utc.astimezone(tz)
+        
+        # Find next occurrence of day_of_week at specified hour
+        days_ahead = day_of_week - now_local.weekday()
+        if days_ahead < 0:  # Target day already happened this week
+            days_ahead += 7
+        elif days_ahead == 0 and now_local.hour >= hour:  # Today but past the hour
+            days_ahead = 7
+        
+        next_run_local = now_local.replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+        next_run_utc = next_run_local.astimezone(pytz.UTC).replace(tzinfo=None)
+        
+        schedule_id = execute_query("""
+            INSERT INTO weekly_digest_schedules 
+            (user_id, email, timezone, hour, day_of_week, filters, template, next_run)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (user_id, email, timezone, hour, day_of_week, json.dumps(filters), template, next_run_utc))
+        
+        if schedule_id:
+            schedule_id = schedule_id[0] if isinstance(schedule_id, (list, tuple)) else schedule_id
+        
+        logger.info(f'Weekly digest schedule created: user={email}, plan={plan}, id={schedule_id}')
+        metrics.increment('weekly_digest.schedule_created', 1, plan=plan)
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'schedule_id': schedule_id,
+            'timezone': timezone,
+            'hour': hour,
+            'day_of_week': day_of_week,
+            'next_run': next_run_utc.isoformat() + 'Z',
+            'active': True
+        }))
+        
+    except Exception as e:
+        logger.error(f'create_weekly_digest_schedule error: {e}')
+        import traceback
+        traceback.print_exc()
+        return _build_cors_response(make_response(jsonify({'error': 'schedule creation failed'}), 500))
+
+
+@app.route('/api/reports/weekly/<int:schedule_id>/status', methods=['GET'])
+@login_required
+def get_weekly_digest_status(schedule_id):
+    """Get status of a weekly digest schedule."""
+    try:
+        email = get_logged_in_email()
+        
+        # Get user_id
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        # Get schedule
+        schedule = fetch_one("""
+            SELECT id, user_id, email, timezone, hour, day_of_week, filters, template,
+                   active, created_at, last_run, next_run, failure_count
+            FROM weekly_digest_schedules
+            WHERE id=%s
+        """, (schedule_id,))
+        
+        if not schedule:
+            return _build_cors_response(make_response(jsonify({'error': 'Schedule not found'}), 404))
+        
+        # Verify ownership
+        schedule_user_id = schedule['user_id'] if isinstance(schedule, dict) else schedule[1]
+        if schedule_user_id != user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'Unauthorized'}), 403))
+        
+        # Format response
+        if isinstance(schedule, dict):
+            result = {
+                'id': schedule['id'],
+                'email': schedule['email'],
+                'timezone': schedule['timezone'],
+                'hour': schedule['hour'],
+                'day_of_week': schedule['day_of_week'],
+                'filters': schedule['filters'],
+                'template': schedule['template'],
+                'active': schedule['active'],
+                'created_at': schedule['created_at'].isoformat() if schedule['created_at'] else None,
+                'last_run': schedule['last_run'].isoformat() + 'Z' if schedule['last_run'] else None,
+                'next_run': schedule['next_run'].isoformat() + 'Z' if schedule['next_run'] else None,
+                'failure_count': schedule['failure_count']
+            }
+        else:
+            result = {
+                'id': schedule[0],
+                'email': schedule[2],
+                'timezone': schedule[3],
+                'hour': schedule[4],
+                'day_of_week': schedule[5],
+                'filters': schedule[6],
+                'template': schedule[7],
+                'active': schedule[8],
+                'created_at': schedule[9].isoformat() if schedule[9] else None,
+                'last_run': schedule[10].isoformat() + 'Z' if schedule[10] else None,
+                'next_run': schedule[11].isoformat() + 'Z' if schedule[11] else None,
+                'failure_count': schedule[12]
+            }
+        
+        return _build_cors_response(jsonify(result))
+        
+    except Exception as e:
+        logger.error(f'get_weekly_digest_status error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'status check failed'}), 500))
+
+
+@app.route('/api/reports/weekly/<int:schedule_id>', methods=['DELETE'])
+@login_required
+def delete_weekly_digest_schedule(schedule_id):
+    """Delete/deactivate a weekly digest schedule."""
+    try:
+        email = get_logged_in_email()
+        
+        # Get user_id
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        # Verify ownership
+        schedule = fetch_one('SELECT user_id FROM weekly_digest_schedules WHERE id=%s', (schedule_id,))
+        if not schedule:
+            return _build_cors_response(make_response(jsonify({'error': 'Schedule not found'}), 404))
+        
+        schedule_user_id = schedule['user_id'] if isinstance(schedule, dict) else schedule[0]
+        if schedule_user_id != user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'Unauthorized'}), 403))
+        
+        # Deactivate (soft delete)
+        execute_query('UPDATE weekly_digest_schedules SET active=false WHERE id=%s', (schedule_id,))
+        
+        logger.info(f'Weekly digest schedule deleted: user={email}, id={schedule_id}')
+        metrics.increment('weekly_digest.schedule_deleted', 1)
+        
+        return _build_cors_response(jsonify({'ok': True, 'message': 'Schedule deactivated'}))
+        
+    except Exception as e:
+        logger.error(f'delete_weekly_digest_schedule error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'deletion failed'}), 500))
+
+
+@app.route('/api/reports/weekly/schedules', methods=['GET'])
+@login_required
+def list_weekly_digest_schedules():
+    """List all active weekly digest schedules for current user."""
+    try:
+        email = get_logged_in_email()
+        
+        # Get user_id
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        # Get all schedules
+        schedules = fetch_all("""
+            SELECT id, timezone, hour, day_of_week, filters, template, active, next_run, failure_count
+            FROM weekly_digest_schedules
+            WHERE user_id=%s
+            ORDER BY active DESC, created_at DESC
+        """, (user_id,))
+        
+        result = []
+        for schedule in schedules:
+            if isinstance(schedule, dict):
+                result.append({
+                    'id': schedule['id'],
+                    'timezone': schedule['timezone'],
+                    'hour': schedule['hour'],
+                    'day_of_week': schedule['day_of_week'],
+                    'filters': schedule['filters'],
+                    'template': schedule['template'],
+                    'active': schedule['active'],
+                    'next_run': schedule['next_run'].isoformat() + 'Z' if schedule['next_run'] else None,
+                    'failure_count': schedule['failure_count']
+                })
+            else:
+                result.append({
+                    'id': schedule[0],
+                    'timezone': schedule[1],
+                    'hour': schedule[2],
+                    'day_of_week': schedule[3],
+                    'filters': schedule[4],
+                    'template': schedule[5],
+                    'active': schedule[6],
+                    'next_run': schedule[7].isoformat() + 'Z' if schedule[7] else None,
+                    'failure_count': schedule[8]
+                })
+        
+        return _build_cors_response(jsonify({'ok': True, 'schedules': result}))
+        
+    except Exception as e:
+        logger.error(f'list_weekly_digest_schedules error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'list failed'}), 500))
 
 @app.route('/api/briefing/package', methods=['POST'])
 @login_required
