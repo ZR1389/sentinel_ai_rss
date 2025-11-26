@@ -92,6 +92,9 @@ rq>=1.16.2
 # Background job scheduler for cron tasks
 APScheduler>=3.10.4
 
+# PDF generation for exports
+WeasyPrint>=60.1
+
 # Testing
 pytest>=8.3.2
 

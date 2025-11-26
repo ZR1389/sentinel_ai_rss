@@ -208,6 +208,7 @@ def get_plan_limits(email: str) -> dict:
 def _maybe_monthly_reset(email: str) -> None:
     """
     If last_reset is prior to current month, reset usage to 0 and set last_reset to first-of-month.
+    Resets both chat_messages_used and pdf_exports_used.
     """
     user_id = _get_user_id(email)
     if not user_id:
@@ -220,15 +221,15 @@ def _maybe_monthly_reset(email: str) -> None:
         if not row:
             # initialize row (should have been created in ensure_user_exists)
             cur.execute(
-                "INSERT INTO user_usage (user_id, chat_messages_used, last_reset) VALUES (%s, %s, %s)",
-                (user_id, 0, anchor),
+                "INSERT INTO user_usage (user_id, chat_messages_used, pdf_exports_used, last_reset) VALUES (%s, %s, %s, %s)",
+                (user_id, 0, 0, anchor),
             )
             conn.commit()
             return
         _, last_reset = row
         if last_reset is None or last_reset < anchor:
             cur.execute(
-                "UPDATE user_usage SET chat_messages_used = 0, last_reset = %s WHERE user_id=%s",
+                "UPDATE user_usage SET chat_messages_used = 0, pdf_exports_used = 0, last_reset = %s WHERE user_id=%s",
                 (anchor, user_id),
             )
             conn.commit()

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Threat Alert: {{ alert.title }}{% endblock %}
+
+{% block content %}
+<h1>Threat Alert</h1>
+
+<div class="metadata">
+    <div class="metadata-item">
+        <div class="metadata-label">Severity</div>
+        <div class="metadata-value">
+            <span class="severity-badge severity-{{ alert.severity }}">{{ alert.severity }}</span>
+        </div>
+    </div>
+    
+    {% if alert.threat_score %}
+    <div class="metadata-item">
+        <div class="metadata-label">Threat Score</div>
+        <div class="metadata-value">{{ "%.1f"|format(alert.threat_score) }}/10</div>
+    </div>
+    {% endif %}
+    
+    <div class="metadata-item">
+        <div class="metadata-label">Location</div>
+        <div class="metadata-value">
+            {% if alert.city and alert.country %}
+                {{ alert.city }}, {{ alert.country }}
+            {% elif alert.country %}
+                {{ alert.country }}
+            {% elif alert.region %}
+                {{ alert.region }}
+            {% else %}
+                Location not specified
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="metadata-item">
+        <div class="metadata-label">Date</div>
+        <div class="metadata-value">{{ alert.published_at }}</div>
+    </div>
+    
+    {% if alert.source_name %}
+    <div class="metadata-item">
+        <div class="metadata-label">Source</div>
+        <div class="metadata-value">{{ alert.source_name }}</div>
+    </div>
+    {% endif %}
+</div>
+
+<h2>{{ alert.title }}</h2>
+
+{% if alert.summary %}
+<div class="info-box">
+    <strong>Summary:</strong>
+    <p>{{ alert.summary }}</p>
+</div>
+{% endif %}
+
+{% if alert.description %}
+<h3>Description</h3>
+<p>{{ alert.description }}</p>
+{% endif %}
+
+{% if alert.categories and alert.categories|length > 0 %}
+<h3>Threat Categories</h3>
+<ul>
+    {% for category in alert.categories %}
+    <li>{{ category }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if alert.recommendations %}
+<div class="warning-box">
+    <h3>Recommendations</h3>
+    <p>{{ alert.recommendations }}</p>
+</div>
+{% endif %}
+
+{% if alert.affected_areas and alert.affected_areas|length > 0 %}
+<h3>Affected Areas</h3>
+<ul>
+    {% for area in alert.affected_areas %}
+    <li>{{ area }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if alert.latitude and alert.longitude %}
+<h3>Coordinates</h3>
+<p>Latitude: {{ "%.6f"|format(alert.latitude) }}, Longitude: {{ "%.6f"|format(alert.longitude) }}</p>
+{% endif %}
+
+{% if alert.link %}
+<h3>Original Source</h3>
+<p><a href="{{ alert.link }}">{{ alert.link }}</a></p>
+{% endif %}
+
+<div class="footer" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+    <p style="font-size: 9pt; color: #6b7280;">
+        <strong>Disclaimer:</strong> This alert is generated from publicly available threat intelligence sources. 
+        Sentinel AI does not guarantee completeness or accuracy. Users should verify information independently 
+        and consult local authorities for official guidance.
+    </p>
+</div>
+{% endblock %}

@@ -7091,6 +7091,252 @@ def export_alerts():
     file_url = f"/downloads/alerts_export_{fmt}_{len(alert_ids)}.dat"
     return _build_cors_response(jsonify({'ok': True,'download_url': file_url,'format': fmt,'plan': plan}))
 
+@app.route('/api/export/pdf', methods=['POST'])
+@login_required
+def export_pdf():
+    """
+    Generate branded PDF exports with plan-gated monthly limits.
+    
+    Plan Limits:
+    - FREE: 1 PDF/month
+    - PRO: 10 PDFs/month
+    - BUSINESS: Unlimited
+    - ENTERPRISE: Unlimited
+    
+    Request Body:
+    {
+        "template": "threat_alert",  // Template name (threat_alert, weekly_digest, travel_brief)
+        "data": {...},               // Template-specific data
+        "filename": "my_report",     // Optional filename (auto-generated if omitted)
+        "options": {                 // Optional PDF rendering options
+            "landscape": false,
+            "margins": {"top": "2cm", "right": "2cm", "bottom": "2cm", "left": "2cm"},
+            "page_size": "A4",
+            "primary_color": "#2563eb",
+            "logo_url": null
+        }
+    }
+    
+    Response:
+    {
+        "ok": true,
+        "id": "uuid",
+        "url": "/downloads/uuid.pdf",
+        "filename": "threat_alert_20251125.pdf",
+        "expires_at": "2025-11-26T12:00:00Z",
+        "usage": {"used": 1, "limit": 10, "remaining": 9}
+    }
+    """
+    email = get_logged_in_email()
+    
+    try:
+        # Get user plan and check PDF export limits
+        from plan_utils import get_plan_limits, _get_user_id, ensure_user_exists, _maybe_monthly_reset
+        from config_data.plans import get_plan_feature
+        
+        ensure_user_exists(email)
+        _maybe_monthly_reset(email)
+        
+        limits = get_plan_limits(email)
+        plan = limits['plan']
+        user_id = _get_user_id(email)
+        
+        if not user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        
+        # Get monthly limit for PDF exports
+        monthly_limit = get_plan_feature(plan, 'pdf_exports_monthly')
+        
+        # Check current usage
+        from db_utils import fetch_one
+        usage_row = fetch_one('SELECT pdf_exports_used FROM user_usage WHERE user_id=%s', (user_id,))
+        pdf_exports_used = usage_row['pdf_exports_used'] if usage_row else 0
+        
+        # Enforce limit (None = unlimited)
+        if monthly_limit is not None and pdf_exports_used >= monthly_limit:
+            remaining_limit = max(0, monthly_limit - pdf_exports_used)
+            return _build_cors_response(make_response(jsonify({
+                'error': 'Monthly PDF export limit reached',
+                'feature_locked': True,
+                'usage': {
+                    'used': pdf_exports_used,
+                    'limit': monthly_limit,
+                    'remaining': remaining_limit
+                },
+                'upgrade_plans': ['PRO', 'BUSINESS', 'ENTERPRISE'] if plan == 'FREE' else (['BUSINESS', 'ENTERPRISE'] if plan == 'PRO' else [])
+            }), 429))
+        
+        # Parse request
+        payload = request.get_json(silent=True) or {}
+        template_name = payload.get('template', 'threat_alert')
+        data = payload.get('data', {})
+        filename = payload.get('filename') or f"{template_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        options = payload.get('options', {})
+        
+        # Validate template exists
+        template_path = f"templates/pdf/{template_name}.html"
+        if not os.path.exists(template_path):
+            return _build_cors_response(make_response(jsonify({
+                'error': f'Template not found: {template_name}',
+                'available_templates': ['threat_alert', 'weekly_digest', 'travel_brief']
+            }), 400))
+        
+        # Generate PDF
+        from jinja2 import Environment, FileSystemLoader
+        from weasyprint import HTML
+        
+        # Setup Jinja2 environment
+        env = Environment(loader=FileSystemLoader('templates/pdf'))
+        template = env.get_template(f'{template_name}.html')
+        
+        # Merge options with data for template rendering
+        template_context = {
+            **data,
+            'generated_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC'),
+            'user_email': email,
+            'page_size': options.get('page_size', 'A4'),
+            'margin_top': options.get('margins', {}).get('top', '2cm'),
+            'margin_right': options.get('margins', {}).get('right', '2cm'),
+            'margin_bottom': options.get('margins', {}).get('bottom', '2cm'),
+            'margin_left': options.get('margins', {}).get('left', '2cm'),
+            'primary_color': options.get('primary_color', '#2563eb'),
+            'logo_url': options.get('logo_url')
+        }
+        
+        # Render HTML
+        html_content = template.render(**template_context)
+        
+        # Generate unique file ID and path
+        file_id = str(uuid.uuid4())
+        pdf_filename = f"{file_id}.pdf"
+        pdf_path = os.path.join('downloads', pdf_filename)
+        
+        # Ensure downloads directory exists
+        os.makedirs('downloads', exist_ok=True)
+        
+        # Convert HTML to PDF
+        HTML(string=html_content, base_url=request.url_root).write_pdf(pdf_path)
+        
+        # Increment usage counter
+        from db_utils import execute_query
+        execute_query(
+            'UPDATE user_usage SET pdf_exports_used = pdf_exports_used + 1 WHERE user_id=%s',
+            (user_id,)
+        )
+        
+        # Calculate expiry (24 hours from now)
+        expires_at = datetime.utcnow().replace(microsecond=0)
+        from datetime import timedelta
+        expires_at = (expires_at + timedelta(hours=24)).isoformat() + 'Z'
+        
+        # Store metadata for download validation
+        execute_query(
+            '''INSERT INTO pdf_exports (id, user_id, filename, template, created_at, expires_at)
+               VALUES (%s, %s, %s, %s, NOW(), NOW() + INTERVAL '24 hours')''',
+            (file_id, user_id, filename, template_name)
+        )
+        
+        # Calculate remaining exports
+        new_used = pdf_exports_used + 1
+        remaining = None if monthly_limit is None else max(0, monthly_limit - new_used)
+        
+        logger.info(f"PDF export generated: user={email}, plan={plan}, template={template_name}, id={file_id}")
+        metrics.increment("pdf_exports.generated", 1, plan=plan, template=template_name)
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'id': file_id,
+            'url': f'/downloads/{file_id}.pdf',
+            'filename': f'{filename}.pdf',
+            'expires_at': expires_at,
+            'usage': {
+                'used': new_used,
+                'limit': monthly_limit,
+                'remaining': remaining
+            }
+        }))
+        
+    except Exception as e:
+        logger.error(f'export_pdf error: {e}', exc_info=True)
+        metrics.increment("pdf_exports.error", 1, error_type=type(e).__name__)
+        return _build_cors_response(make_response(jsonify({'error': 'PDF generation failed', 'details': str(e)}), 500))
+
+@app.route('/downloads/<file_id>.pdf', methods=['GET'])
+@login_required
+def download_pdf(file_id):
+    """
+    Download generated PDF with authentication and expiry validation.
+    
+    Security:
+    - Requires valid JWT authentication
+    - Validates file ownership (user_id match)
+    - Checks expiry (24h default)
+    - Prevents unauthorized access
+    """
+    email = get_logged_in_email()
+    
+    try:
+        from plan_utils import _get_user_id
+        from db_utils import fetch_one
+        from flask import send_file
+        
+        user_id = _get_user_id(email)
+        if not user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        
+        # Validate UUID format
+        try:
+            uuid.UUID(file_id)
+        except ValueError:
+            return _build_cors_response(make_response(jsonify({'error': 'Invalid file ID'}), 400))
+        
+        # Check file metadata and ownership
+        file_meta = fetch_one(
+            '''SELECT user_id, filename, expires_at, created_at
+               FROM pdf_exports
+               WHERE id=%s''',
+            (file_id,)
+        )
+        
+        if not file_meta:
+            return _build_cors_response(make_response(jsonify({'error': 'File not found'}), 404))
+        
+        # Verify ownership
+        if file_meta['user_id'] != user_id:
+            logger.warning(f"Unauthorized PDF access attempt: user={email}, file={file_id}")
+            metrics.increment("pdf_exports.unauthorized_access", 1)
+            return _build_cors_response(make_response(jsonify({'error': 'Access denied'}), 403))
+        
+        # Check expiry
+        expires_at = file_meta['expires_at']
+        if datetime.utcnow() > expires_at:
+            logger.info(f"Expired PDF download attempt: user={email}, file={file_id}, expired={expires_at}")
+            return _build_cors_response(make_response(jsonify({'error': 'Download link expired'}), 410))
+        
+        # Validate file exists on disk
+        pdf_path = os.path.join('downloads', f'{file_id}.pdf')
+        if not os.path.exists(pdf_path):
+            logger.error(f"PDF file missing from disk: {pdf_path}")
+            return _build_cors_response(make_response(jsonify({'error': 'File not available'}), 404))
+        
+        # Stream file
+        filename = file_meta['filename']
+        if not filename.endswith('.pdf'):
+            filename += '.pdf'
+        
+        metrics.increment("pdf_exports.downloaded", 1)
+        
+        return send_file(
+            pdf_path,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        logger.error(f'download_pdf error: {e}', exc_info=True)
+        return _build_cors_response(make_response(jsonify({'error': 'Download failed', 'details': str(e)}), 500))
+
 @app.route('/api/map/features', methods=['GET'])
 @login_required
 def map_feature_matrix():
