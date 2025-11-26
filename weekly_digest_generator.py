@@ -301,6 +301,20 @@ def send_digest_email(email: str, file_path: str, week_start: datetime, week_end
         
         api_response = api_instance.send_transac_email(send_smtp_email)
         logger.info(f"Weekly digest email sent: email={email}, message_id={api_response.message_id}")
+        
+        # Send push notification
+        try:
+            from webpush_send import broadcast_to_user
+            broadcast_to_user(
+                user_email=email,
+                title="📧 Weekly Digest Ready",
+                body=f"Your threat digest for {week_start.strftime('%b %d')} - {week_end.strftime('%b %d')} has been sent",
+                url="/reports/weekly",
+                icon="/logo192.png"
+            )
+        except Exception as push_err:
+            logger.warning(f"Push notification failed for {email}: {push_err}")
+        
         return True
         
     except Exception as e:

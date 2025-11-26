@@ -181,6 +181,25 @@ def send_trial_reminder(user_id: int, user_email: str, plan: str, trial_day: int
         success = send_email(user_email=user_email, to_addr=user_email, subject=subject, html_body=html_body)
         if success:
             logger.info(f"Sent trial day {trial_day} email to {user_email}")
+            
+            # Send push notification
+            try:
+                from webpush_send import broadcast_to_user
+                push_messages = {
+                    1: "Welcome! Your trial has started",
+                    3: "Day 3: Set up location monitoring",
+                    5: "2 days left - Try our Trip Planner",
+                    6: "Your trial ends tomorrow"
+                }
+                broadcast_to_user(
+                    user_email=user_email,
+                    title=f"Trial Day {trial_day}",
+                    body=push_messages.get(trial_day, f"Trial reminder - Day {trial_day}"),
+                    url="/settings/billing"
+                )
+            except Exception as push_err:
+                logger.warning(f"Push notification failed for {user_email}: {push_err}")
+            
             # Log email sent (for tracking)
             try:
                 with _conn() as conn, conn.cursor() as cur:

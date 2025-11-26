@@ -378,13 +378,53 @@ def _send_threat_alert(traveler_id: int, email: str, name: str, threats: List[Di
             
             conn.commit()
         
-        # TODO: Actually send the email/SMS here
-        logger.info(f"[proximity] Would send alert to {email} ({name}): {len(threats)} threats")
+        logger.info(f"[proximity] Sending alert to {email} ({name}): {len(threats)} threats")
         
-        # Example email content:
-        # subject = f"⚠️ {len(threats)} Security Threats Near Your Location"
-        # body = format_threat_alert_email(name, threats)
-        # send_email(email, subject, body)
+        # Send email notification
+        try:
+            from email_dispatcher import send_email
+            subject = f"⚠️ {len(threats)} Security Threats Near Your Location"
+            
+            # Format threats list
+            threats_html = "<ul>"
+            for t in threats[:5]:  # Top 5 threats
+                threats_html += f"<li><strong>{t.get('source', 'Unknown')}</strong>: {t.get('description', 'Threat detected')} ({t.get('distance_km', 0):.1f} km away)</li>"
+            threats_html += "</ul>"
+            
+            body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif;">
+                <h2>Security Alert for {name}</h2>
+                <p>We detected <strong>{len(threats)} security threats</strong> within {threats[0].get('radius_km', 50)} km of your location.</p>
+                <h3>Top Threats:</h3>
+                {threats_html}
+                <p style="margin-top: 20px;">
+                    <a href="https://sentinel-ai.app/trip-planner" style="background-color: #dc3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">
+                        View Full Threat Map
+                    </a>
+                </p>
+                <p style="color: #6b7280; font-size: 12px; margin-top: 30px;">
+                    This alert was triggered by your traveler profile. To adjust alert radius or disable alerts, visit your settings.
+                </p>
+            </body>
+            </html>
+            """
+            send_email(user_email=email, to_addr=email, subject=subject, html_body=body)
+        except Exception as e:
+            logger.warning(f"[proximity] Email alert failed for {email}: {e}")
+        
+        # Send push notification
+        try:
+            from webpush_send import broadcast_to_user
+            broadcast_to_user(
+                user_email=email,
+                title=f"⚠️ {len(threats)} Threats Nearby",
+                body=f"Security threats detected within {threats[0].get('radius_km', 50)} km of your location",
+                url="/trip-planner",
+                icon="/logo192.png"
+            )
+        except Exception as e:
+            logger.warning(f"[proximity] Push alert failed for {email}: {e}")
         
         return True
         

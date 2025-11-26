@@ -47,3 +47,73 @@ def send_web_push(subscription: Dict[str, Any], payload: Dict[str, Any]) -> Opti
     except Exception as e:
         logger.error("webpush failed: %s", e)
         return None
+
+def broadcast_to_user(user_email: str, title: str, body: str, url: str = "/dashboard", icon: str = "/logo192.png") -> int:
+    """
+    Send push notification to all of a user's browser subscriptions.
+    
+    Args:
+        user_email: User email address
+        title: Notification title
+        body: Notification body text
+        url: URL to open when notification is clicked
+        icon: Notification icon URL
+    
+    Returns:
+        Number of successful sends
+    """
+    import psycopg2
+    
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        logger.warning("DATABASE_URL not set; skipping push broadcast")
+        return 0
+    
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT endpoint, p256dh, auth 
+                    FROM web_push_subscriptions 
+                    WHERE user_email = %s
+                """, (user_email,))
+                subs = cur.fetchall()
+        
+        if not subs:
+            logger.debug(f"No push subscriptions for {user_email}")
+            return 0
+        
+        payload = {
+            "title": title,
+            "body": body,
+            "url": url,
+            "icon": icon
+        }
+        
+        dead = []
+        sent = 0
+        
+        for row in subs:
+            sub = {"endpoint": row[0], "keys": {"p256dh": row[1], "auth": row[2]}}
+            result = send_web_push(sub, payload)
+            if result is True:
+                sent += 1
+            elif result is False:
+                dead.append(row[0])
+        
+        # Cleanup expired subscriptions
+        if dead:
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "DELETE FROM web_push_subscriptions WHERE endpoint=%s",
+                        [(e,) for e in dead]
+                    )
+                    conn.commit()
+            logger.info(f"Removed {len(dead)} expired push subscriptions for {user_email}")
+        
+        logger.info(f"Sent {sent} push notifications to {user_email}")
+        return sent
+    except Exception as e:
+        logger.error(f"broadcast_to_user failed for {user_email}: {e}")
+        return 0
