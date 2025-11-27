@@ -20,6 +20,11 @@ CITY_TO_COUNTRY = {
         "tucson": "United States",
         "new london": "United States",
         "miami": "United States",
+    "atlanta": "United States",
+    "honolulu": "United States",
+    "chicago": "United States",
+    "indianapolis": "United States",
+    "kansas city": "United States",
     "mumbai": "India",
     "moscow": "Russia",
     "sydney": "Australia",
@@ -131,6 +136,21 @@ LOCAL_FEEDS = {
     "tucson": ["https://feeds.tucsonpost.com/rss/a548abef580c2494"],
     "new london": ["https://theday.com/live-content/rss/"],
     "miami": ["https://feeds.miamimirror.com/rss/9406bbb67f053bb2"],
+    "atlanta": [
+        "https://feeds.atlantaleader.com/rss/ffe56b8f30c50146",
+        "https://theatlantavoice.com/feed/"
+    ],
+    "honolulu": [
+        "https://www.civilbeat.org/feed/",
+        "https://feeds.hawaiitelegraph.com/rss/6b17ec7a35065289",
+        "https://www.hawaiifreepress.com/DesktopModules/DnnForge%20-%20NewsArticles/RSS.aspx?TabID=56&ModuleID=380&MaxCount=25"
+    ],
+    "chicago": ["https://feeds.chicagochronicle.com/rss/c8ac3000ee01c7aa"],
+    "indianapolis": [
+        "https://thedepauw.com/feed/",
+        "https://feeds.indianapolispost.com/rss/43a9fd3724cda141"
+    ],
+    "kansas city": ["https://feeds.kansascitypost.com/rss/cc264e50ceab3697"],
     "san diego": ["https://timesofsandiego.com/feed/"],
     "san francisco": ["https://el-observador.com/feed/"],
     "mumbai": ["https://timesofindia.indiatimes.com/rssfeeds/-2128838597.cms"],
