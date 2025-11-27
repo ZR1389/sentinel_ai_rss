@@ -1540,6 +1540,43 @@ def _apply_moonshot_locations(alerts: List[Dict], location_map: Dict):
 
 # ---------------- Build alert ------
 
+# Hard denylist for clearly non-risk / entertainment content
+_RSS_DENYLIST_DEFAULT = [
+    # Entertainment / lifestyle
+    "horoscope", "horóscopo", "zodiac", "astrology", "astrological", "tarot",
+    "celebrity", "entertainment", "lifestyle", "fashion", "beauty", "recipe", "cooking",
+    # Common noisy Spanish / Portuguese variants
+    "horoscopo", "signos", "signo zodiacal",
+    # Award / media culture
+    "oscars", "hollywood", "film festival", "music awards", "tv show", "series finale",
+]
+
+def _load_rss_denylist() -> List[str]:
+    raw = os.getenv("RSS_DENYLIST", "").strip()
+    tokens: List[str] = []
+    if raw:
+        for part in raw.split(","):
+            p = part.strip().lower()
+            if p:
+                tokens.append(p)
+    # Merge with defaults, keeping unique
+    base = set(t.lower() for t in _RSS_DENYLIST_DEFAULT)
+    for t in tokens:
+        base.add(t.lower())
+    return sorted(base)
+
+_RSS_DENYLIST = _load_rss_denylist()
+
+def _is_denylisted(text: str) -> Optional[str]:
+    """Return the matching denylist token if text is entertainment/noise."""
+    if not text:
+        return None
+    tl = text.lower()
+    for token in _RSS_DENYLIST:
+        if token in tl:
+            return token
+    return None
+
 async def _build_alert_from_entry(
     entry: Dict[str, Any],
     source_url: str,
@@ -1574,16 +1611,34 @@ async def _build_alert_from_entry(
         except Exception:
             pass
         
-        # Language detection
+        # Language detection + gating
         text_blob = f"{title}\n{summary}"
         try:
             language = detect(text_blob[:200]) if text_blob.strip() else "en"
-        except:
+        except Exception:
             language = "en"
+        allowed_langs = [l.strip().lower() for l in os.getenv("RSS_ALLOWED_LANGS", "en").split(",") if l.strip()]
+        if allowed_langs and language.lower() not in allowed_langs:
+            logger.debug(f"[Filter] Skip non-allowed language lang={language} title='{title[:70]}'")
+            try:
+                metrics.increment("rss.skip.language", 1)
+            except Exception:
+                pass
+            return None
         
         # Keyword filtering
         passes_filter, kw_match = _passes_keyword_filter(text_blob)
         if not passes_filter:
+            return None
+
+        # Denylist filtering (post keyword so we still count potential matches for metrics)
+        matched_noise = _is_denylisted(text_blob)
+        if matched_noise:
+            logger.info(f"[Filter] Skipping denylisted RSS entry token='{matched_noise}' title='{title[:80]}'")
+            try:
+                metrics.increment("rss.skip.denylist", 1)
+            except Exception:
+                pass
             return None
         
         # Location extraction with batch processing
@@ -1807,47 +1862,39 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     return _dedupe_batch(results_alerts)
 
 def _passes_keyword_filter(text: str) -> tuple[bool, str]:
-    """Check if text passes keyword filter and return matching keyword"""
+    """Deterministic keyword filter; no permissive fallback."""
     if not text:
         return False, ""
-    
     text_lower = text.lower()
-    
-    # Use centralized keywords loader
+    matched: Optional[str] = None
     try:
         from keywords_loader import get_all_keywords
-        all_keywords = get_all_keywords()
-        
-        # Check against all keywords
-        for keyword in all_keywords:
-            if keyword.lower() in text_lower:
-                return True, keyword
-                    
+        for kw in get_all_keywords():
+            k = kw.lower()
+            if k and k in text_lower:
+                matched = kw
+                break
     except Exception as e:
-        logger.debug(f"Centralized keyword check failed, using fallback: {e}")
-        # Fallback: try loading JSON directly
+        logger.debug(f"Keyword loader failed: {e}")
+        # Load static threat keywords file
         try:
-            keywords_path = os.path.join(os.path.dirname(__file__), "config", "threat_keywords.json")
-            with open(keywords_path, "r", encoding="utf-8") as f:
-                threat_keywords = json.load(f)
-            
-            # Check against each category
-            for category, keywords in threat_keywords.items():
-                if isinstance(keywords, list):
-                    for keyword in keywords:
-                        if keyword.lower() in text_lower:
-                            return True, keyword
-                        
+            path = os.path.join(os.path.dirname(__file__), "config", "threat_keywords.json")
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for category_vals in data.values():
+                if isinstance(category_vals, list):
+                    for kw in category_vals:
+                        k = str(kw).lower()
+                        if k and k in text_lower:
+                            matched = kw
+                            break
+                    if matched:
+                        break
         except Exception as e2:
-            logger.debug(f"JSON keyword fallback also failed: {e2}")
-    
-    # Final fallback basic keywords
-    basic_keywords = ["attack", "threat", "security", "breach", "incident", "alert", "warning", "emergency"]
-    for keyword in basic_keywords:
-        if keyword in text_lower:
-            return True, keyword
-    
-    return True, "general"  # Allow all for now
+            logger.debug(f"Static keyword fallback failed: {e2}")
+    if matched:
+        return True, matched
+    return False, ""
 
 def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> Dict[str, Any]:
     """Fallback location extraction without batch processing"""

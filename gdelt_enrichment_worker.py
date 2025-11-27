@@ -10,6 +10,7 @@ import time
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
+import pycountry
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -387,6 +388,28 @@ def clean_actor(actor: str) -> Optional[str]:
     
     return actor
 
+def _resolve_country_name(name: Optional[str]) -> Optional[str]:
+    """Return canonical country name if `name` looks like a country, else None.
+    Uses pycountry fuzzy search with conservative checks to avoid ADM1 like 'Gujarat'."""
+    if not name:
+        return None
+    try:
+        # Fast exact match by common country names
+        exact = pycountry.countries.get(name=name)
+        if exact:
+            return exact.name
+        # Fuzzy match, prefer strong matches (first result) and reject very short tokens
+        if len(name) >= 4:
+            matches = pycountry.countries.search_fuzzy(name)
+            if matches:
+                # Guard: ensure input appears as a word in the matched country name
+                cand = matches[0]
+                if name.lower() in cand.name.lower():
+                    return cand.name
+    except Exception:
+        pass
+    return None
+
 def build_gdelt_summary(event: Dict[str, Any]) -> str:
     """Build contextual summary for threat engine enrichment"""
     
@@ -402,16 +425,24 @@ def build_gdelt_summary(event: Dict[str, Any]) -> str:
     num_articles = event.get('num_articles', 0)
     num_sources = event.get('num_sources', 0)
     
+    # Country normalization for safer phrasing
+    actor1_country = _resolve_country_name(actor1)
+    actor2_country = _resolve_country_name(actor2)
+
     # Build natural language summary
     parts = []
     
     # Event description with location
-    if actor1 and actor2:
-        base = f"{actor1} {event_description} involving {actor2}"
-    elif actor1:
+    if actor1 and actor2 and actor2_country:
+        # Only include "involving {actor2}" when actor2 is a country
+        subj = actor1 if not actor1_country else None
+        base = f"{subj + ' ' if subj else ''}{event_description} involving {actor2_country}"
+    elif actor1 and not actor1_country:
+        # Keep specific non-country actor as subject
         base = f"{actor1} {event_description}"
     else:
-        base = f"{threat_category} reported"
+        # Generic phrasing without noisy actors
+        base = f"{event_description.capitalize()}"
     
     if country and country != 'Unknown':
         base += f" in {country}"
@@ -469,12 +500,19 @@ def gdelt_to_raw_alert(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug(f"Skipping GDELT event {event['global_event_id']}: no valid country")
         return None
     
-    if actor1 and actor2:
-        title = f"{actor1} {event_description} involving {actor2}"
-    elif actor1:
+    actor1_country = _resolve_country_name(actor1)
+    actor2_country = _resolve_country_name(actor2)
+
+    if actor1 and actor2 and actor2_country:
+        # Only show involving if actor2 is a recognized country
+        subject = actor1 if not actor1_country else None
+        title = f"{(subject + ' ') if subject else ''}{event_description} involving {actor2_country}"
+    elif actor1 and not actor1_country:
         title = f"{actor1} {event_description}"
     else:
-        title = f"Conflict event reported in {country}"
+        # Neutral, location-led title
+        pretty_event = event_description.capitalize()
+        title = f"{pretty_event} in {country}"
     
     # Use improved summary generation
     summary = build_gdelt_summary(event)
