@@ -87,6 +87,10 @@ CITY_TO_COUNTRY = {
     "ottawa": "Canada",
     "toronto": "Canada",
     "edmonton": "Canada",
+    "birmingham": "United States",
+    "tuscaloosa": "United States",
+    "mountain brook": "United States",
+    "seldovia": "United States",
     "quebec city": "Canada",
     "winnipeg": "Canada",
     "halifax": "Canada",
@@ -96,6 +100,7 @@ CITY_TO_COUNTRY = {
     "nis": "Serbia",
     "sankt petersburg": "Russia",
     "tallinn": "Estonia",
+    "trieste": "Italy",
 }
 
 # ---------------------- Local city feeds ----------------------
@@ -118,9 +123,16 @@ LOCAL_FEEDS = {
     "manila": ["https://www.philstar.com/rss/nation"],
     "port moresby": ["https://feeds.feedburner.com/pngfacts/PcXZ"],
     "boston": ["https://www.boston.com/tag/local-news/feed/"],
-    "washington": ["https://wtop.com/local/feed/"],
+    "washington": [
+        "https://wtop.com/local/feed/",
+        "https://feeds.washingtonpost.com/rss/local?itid=sf_local"
+    ],
     "miami": ["https://www.local10.com/arc/outboundfeeds/rss/category/news/?outputType=xml&size=10"],
     "houston": ["https://www.click2houston.com/arc/outboundfeeds/rss/category/news/local/?outputType=xml&size=10"],
+    "birmingham": ["https://feeds.birminghamstar.com/rss/0cd1f7701040892f"],
+    "tuscaloosa": ["https://feeds.tuscaloosatimes.com/rss/7e50c85536b0a892"],
+    "mountain brook": ["https://www.villagelivingonline.com/api/rss/content.rss"],
+    "seldovia": ["https://www.seldovia.com/feed/"],
     "amsterdam": ["https://www.parool.nl/amsterdam/rss.xml"],
     "vienna": ["https://www.derstandard.at/rss/international"],
     "zurich": ["https://www.nzz.ch/zuerich.rss"],
@@ -284,6 +296,23 @@ GLOBAL_FEEDS = [
     "https://feeds.feedburner.com/TheHackersNews",
     "https://www.csoonline.com/feed/",
     "https://intel471.com/blog/feed",
+    # New York Times global/region desks
+    "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Africa.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Americas.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/AsiaPacific.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Europe.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/MiddleEast.xml",
+    # United Nations global/region/topic feeds
+    "https://news.un.org/feed/subscribe/en/news/region/global/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/region/middle-east/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/region/africa/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/region/europe/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/region/americas/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/region/asia-pacific/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/topic/peace-and-security/feed/rss.xml",
+    "https://news.un.org/feed/subscribe/en/news/topic/health/feed/rss.xml",
+    # Government advisories and global disaster alerts
     "https://www.gov.uk/foreign-travel-advice.atom",
     "https://travel.state.gov/_res/rss/TAsTWs.xml",
     "https://www.smartraveller.gov.au/countries/documents/do-not-travel.rss",
