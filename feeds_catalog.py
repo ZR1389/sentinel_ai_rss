@@ -14,6 +14,12 @@ CITY_TO_COUNTRY = {
     "los angeles": "United States",
     "san diego": "United States",
     "san francisco": "United States",
+        "denver": "United States",
+        "durango": "United States",
+        "phoenix": "United States",
+        "tucson": "United States",
+        "new london": "United States",
+        "miami": "United States",
     "mumbai": "India",
     "moscow": "Russia",
     "sydney": "Australia",
@@ -116,6 +122,15 @@ LOCAL_FEEDS = {
         "https://www.latimes.com/local/rss2.0.xml",
         "https://feeds.feedburner.com/breitbart"
     ],
+    "denver": ["https://feeds.denversun.com/rss/73aa4032e9682bab"],
+    "durango": [
+        "https://durangodowntown.com/feed/",
+        "https://www.durangoherald.com/rss-feeds/"
+    ],
+    "phoenix": ["https://feeds.phoenixherald.com/rss/caf48823f1822eb3"],
+    "tucson": ["https://feeds.tucsonpost.com/rss/a548abef580c2494"],
+    "new london": ["https://theday.com/live-content/rss/"],
+    "miami": ["https://feeds.miamimirror.com/rss/9406bbb67f053bb2"],
     "san diego": ["https://timesofsandiego.com/feed/"],
     "san francisco": ["https://el-observador.com/feed/"],
     "mumbai": ["https://timesofindia.indiatimes.com/rssfeeds/-2128838597.cms"],
