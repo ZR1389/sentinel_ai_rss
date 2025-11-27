@@ -1614,17 +1614,22 @@ async def _build_alert_from_entry(
         # Language detection + gating
         text_blob = f"{title}\n{summary}"
         try:
-            language = detect(text_blob[:200]) if text_blob.strip() else "en"
+            language = detect(text_blob[:500]) if text_blob.strip() else "en"
         except Exception:
             language = "en"
-        allowed_langs = [l.strip().lower() for l in os.getenv("RSS_ALLOWED_LANGS", "en").split(",") if l.strip()]
-        if allowed_langs and language.lower() not in allowed_langs:
-            logger.debug(f"[Filter] Skip non-allowed language lang={language} title='{title[:70]}'")
-            try:
-                metrics.increment("rss.skip.language", 1)
-            except Exception:
-                pass
-            return None
+        
+        # Language filter: Only skip if EXPLICITLY set to filter AND detected language is NOT in allowed list
+        # If RSS_ALLOWED_LANGS is empty/not set, allow all languages (permissive default)
+        allowed_langs_env = os.getenv("RSS_ALLOWED_LANGS", "").strip()
+        if allowed_langs_env:
+            allowed_langs = [l.strip().lower() for l in allowed_langs_env.split(",") if l.strip()]
+            if allowed_langs and language.lower() not in allowed_langs:
+                logger.debug(f"[Filter] Skip non-allowed language lang={language} title='{title[:70]}'")
+                try:
+                    metrics.increment("rss.skip.language", 1)
+                except Exception:
+                    pass
+                return None
         
         # Keyword filtering
         passes_filter, kw_match = _passes_keyword_filter(text_blob)
