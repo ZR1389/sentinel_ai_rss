@@ -12,6 +12,8 @@ CITY_TO_COUNTRY = {
     "paris": "France",
     "new york": "United States",
     "los angeles": "United States",
+    "san diego": "United States",
+    "san francisco": "United States",
     "mumbai": "India",
     "moscow": "Russia",
     "sydney": "Australia",
@@ -110,7 +112,12 @@ LOCAL_FEEDS = {
     "hong kong": ["https://www.scmp.com/rss/2/feed/"],
     "paris": ["https://www.lemonde.fr/rss/une.xml"],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
-    "los angeles": ["https://www.latimes.com/local/rss2.0.xml"],
+    "los angeles": [
+        "https://www.latimes.com/local/rss2.0.xml",
+        "https://feeds.feedburner.com/breitbart"
+    ],
+    "san diego": ["https://timesofsandiego.com/feed/"],
+    "san francisco": ["https://el-observador.com/feed/"],
     "mumbai": ["https://timesofindia.indiatimes.com/rssfeeds/-2128838597.cms"],
     "moscow": ["https://www.themoscowtimes.com/rss/news"],
     "sydney": ["https://www.abc.net.au/news/feed/2942460/rss.xml"],
