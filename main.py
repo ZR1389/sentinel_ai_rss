@@ -139,6 +139,39 @@ if os.getenv('WEEKLY_DIGEST_ENABLED', 'true').lower() == 'true':
 else:
     logger.info("[main] Weekly digest scheduler disabled (WEEKLY_DIGEST_ENABLED=false)")
 
+# Start RSS scheduler (periodic background ingestion)
+if os.getenv('RSS_ENABLED', 'true').lower() in ('1','true','yes','y'):
+    try:
+        import threading, asyncio
+        from rss_processor import ingest_all_feeds_to_db
+
+        _RSS_INTERVAL_SEC = int(os.getenv('RSS_INTERVAL_SEC', '900'))  # default 15 minutes
+
+        def _run_rss_cycle():
+            try:
+                logger.info(f"[rss] Scheduled run starting (interval={_RSS_INTERVAL_SEC}s)")
+                loop = None
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                res = loop.run_until_complete(ingest_all_feeds_to_db(limit=int(os.getenv('RSS_BATCH_LIMIT','400')), write_to_db=True))
+                logger.info(f"[rss] Scheduled run completed: alerts={res.get('alerts_processed')}, written={res.get('written_to_db')}, feeds={res.get('feeds_processed')}")
+            except Exception as e:
+                logger.warning(f"[rss] Scheduled run error: {e}")
+            finally:
+                # re-schedule next run
+                threading.Timer(_RSS_INTERVAL_SEC, _run_rss_cycle).start()
+
+        # kick off first run shortly after startup
+        threading.Timer(5, _run_rss_cycle).start()
+        logger.info("✓ RSS scheduler started")
+    except Exception as e:
+        logger.warning(f"[main] RSS scheduler not started: {e}")
+else:
+    logger.info("[main] RSS scheduler disabled (RSS_ENABLED=false)")
+
 # Apply socmint rate limits post-registration to avoid circular import issues
 if 'Limiter' in globals() and Limiter and get_remote_address:
     try:
