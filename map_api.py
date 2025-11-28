@@ -360,6 +360,11 @@ def map_alerts():
         if fetch_all is None:
             raise RuntimeError("db_utils.fetch_all unavailable")
         rows = fetch_all(q, tuple(bbox_values)) if bbox_values else fetch_all(q) or []
+        try:
+            current_app.logger.info(f"[map_alerts] Query returned {len(list(rows)) if rows else 0} rows")
+            rows = fetch_all(q, tuple(bbox_values)) if bbox_values else fetch_all(q) or []  # Re-fetch after logging
+        except Exception:
+            pass
     except Exception as e:
         try:
             current_app.logger.error("/map_alerts query failed: %s", e)
