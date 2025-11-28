@@ -71,9 +71,15 @@ def _normalize(text: str) -> str:
     return t.strip()
 
 # ---------------------- Utilities ----------------------
+def _has_keyword(text: str, keyword: str) -> bool:
+    """Check if keyword exists as whole word in text."""
+    pattern = r'\b' + re.escape(keyword) + r'\b'
+    return bool(re.search(pattern, text))
+
 def _count_hits(text: str, keywords: List[str]) -> int:
+    """Count keyword matches using whole-word boundaries."""
     t = _normalize(text)
-    return sum(1 for k in keywords if k in t)
+    return sum(1 for k in keywords if _has_keyword(t, k))
 
 # Expose a flattened, deduped keyword list (useful for RSS processor)
 def get_all_keywords() -> List[str]:
@@ -122,38 +128,38 @@ def run_forecast(text: str, location: Optional[str] = None) -> str:
     to match threat_engine usage; ignored if None.
     """
     t = _normalize(text)
-    if any(k in t for k in ["protest","riot","unrest","clash"]):
+    if any(_has_keyword(t, k) for k in ["protest","riot","unrest","clash"]):
         base = "Short-term risk of renewed protests remains; expect pop-up roadblocks and police activity."
         return f"{base} ({location})" if location else base
-    if any(k in t for k in ["ransomware","breach","phishing","malware"]):
+    if any(_has_keyword(t, k) for k in ["ransomware","breach","phishing","malware"]):
         base = "Cyber threat remains elevated; harden MFA/passkeys and monitor admin anomalies."
         return f"{base} ({location})" if location else base
-    if any(k in t for k in ["flood","storm","wildfire","hurricane"]):
+    if any(_has_keyword(t, k) for k in ["flood","storm","wildfire","hurricane"]):
         base = "Weather-related disruption likely; plan daylight moves and check closures hourly."
         return f"{base} ({location})" if location else base
     return "No clear short-term escalation signal from content alone."
 
 def run_legal_risk(text: str, region: Optional[str] = None) -> str:
     t = _normalize(text)
-    if "curfew" in t or "checkpoint" in t:
+    if _has_keyword(t, "curfew") or _has_keyword(t, "checkpoint"):
         return "Verify curfew windows and checkpoint orders; carry ID/permits where applicable."
-    if "visa" in t or "immigration" in t or "border" in t:
+    if _has_keyword(t, "visa") or _has_keyword(t, "immigration") or _has_keyword(t, "border"):
         return "Confirm current visa/entry rules and device search policies; minimize device data at ports."
     return "No immediate legal or regulatory constraints identified."
 
 def run_cyber_ot_risk(text: str) -> str:
     t = _normalize(text)
-    if any(k in t for k in ["ransomware","malware","breach","data","ddos","phishing","credential","cve","zero-day","zero day","exploit","credential stuffing","wiper"]):
+    if any(_has_keyword(t, k) for k in ["ransomware","malware","breach","data","ddos","phishing","credential","cve","zero-day","zero day","exploit","credential stuffing","wiper"]):
         return "Prioritize passkeys/MFA, patching of exposed services, and geo-fencing of admin access."
-    if any(k in t for k in ["scada","ics","ot","plc","hmi"]):
+    if any(_has_keyword(t, k) for k in ["scada","ics","ot","plc","hmi"]):
         return "Segment OT networks, disable unsolicited remote access, and enforce break-glass accounts."
     return "No priority cyber/OT actions from the text alone."
 
 def run_environmental_epidemic_risk(text: str) -> str:
     t = _normalize(text)
-    if any(k in t for k in ["flood","wildfire","hurricane","storm","heatwave","earthquake","landslide","tornado","cyclone","mudslide"]):
+    if any(_has_keyword(t, k) for k in ["flood","wildfire","hurricane","storm","heatwave","earthquake","landslide","tornado","cyclone","mudslide"]):
         return "Prepare for environmental disruptions: closures, air quality, and power issues."
-    if any(k in t for k in ["epidemic","pandemic","cholera","dengue","covid","ebola","avian flu","outbreak"]):
+    if any(_has_keyword(t, k) for k in ["epidemic","pandemic","cholera","dengue","covid","ebola","avian flu","outbreak"]):
         return "Maintain hygiene protocols and review medical access; consider masks and bottled water."
     return "No immediate environmental or epidemic flags."
 
@@ -171,7 +177,7 @@ def extract_threat_subcategory(text: str, category: str) -> str:
     t = _normalize(text)
     mapping = SUBCATEGORY_MAP.get(category, {})
     for k, sub in mapping.items():
-        if k in t:
+        if _has_keyword(t, k):
             return sub
     return "Unspecified"
 
@@ -182,7 +188,7 @@ def detect_domains(text: str) -> List[str]:
     t = _normalize(text)
     hits = []
     for dom, kws in DOMAIN_KEYWORDS.items():
-        if any(k in t for k in kws):
+        if any(_has_keyword(t, k) for k in kws):
             hits.append(dom)
     # category-driven augmentation
     cat, _ = extract_threat_category(text)
