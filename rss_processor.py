@@ -1719,6 +1719,18 @@ async def _build_alert_from_entry(
             **location_data
         }
         
+        # Add ingestion quality metadata for monitoring and debugging
+        if kw_match:
+            alert["ingestion_quality"] = {
+                "keyword_matched": kw_match.get("keyword"),
+                "match_type": kw_match.get("match_type", "unknown"),
+                "title_length": len(title) if title else 0,
+                "summary_length": len(summary) if summary else 0,
+                "text_length": len(text_blob),
+                "language": language,
+                "has_summary": bool(summary and len(summary) > 20),
+            }
+        
         if source_tag:
             alert["source_tag"] = source_tag
         
@@ -1895,12 +1907,16 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     
     return _dedupe_batch(results_alerts)
 
-def _passes_keyword_filter(text: str) -> tuple[bool, str]:
-    """Deterministic keyword filter with whole-word matching; no permissive fallback."""
+def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
+    """
+    Deterministic keyword filter with whole-word matching; no permissive fallback.
+    Returns (passes: bool, match_info: dict with quality metrics)
+    """
     if not text:
-        return False, ""
+        return False, {}
     text_lower = text.lower()
     matched: Optional[str] = None
+    match_type: Optional[str] = None
     
     # Use word boundary regex for accurate matching
     import re
@@ -1922,6 +1938,7 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
         # Combine: base + translated only
         all_keywords = set(base_keywords + translated_keywords)
         
+        # Track match quality
         for kw in all_keywords:
             k = kw.lower()
             if not k:
@@ -1931,6 +1948,11 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
             pattern = r'\b' + re.escape(k) + r'\b'
             if re.search(pattern, text_lower):
                 matched = kw
+                # Determine match type for quality scoring
+                if kw in base_keywords:
+                    match_type = "base"  # Direct base keyword match (highest quality)
+                else:
+                    match_type = "translated"  # Translated keyword match
                 break
     except Exception as e:
         logger.debug(f"Keyword loader failed: {e}")
@@ -1948,14 +1970,22 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
                         pattern = r'\b' + re.escape(k) + r'\b'
                         if re.search(pattern, text_lower):
                             matched = kw
+                            match_type = "fallback"
                             break
                     if matched:
                         break
         except Exception as e2:
             logger.debug(f"Static keyword fallback failed: {e2}")
+    
     if matched:
-        return True, matched
-    return False, ""
+        # Return detailed match info for quality tracking
+        match_info = {
+            "keyword": matched,
+            "match_type": match_type or "unknown",
+            "rule": "direct"  # For compatibility with threat_scorer
+        }
+        return True, match_info
+    return False, {}
 
 def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> Dict[str, Any]:
     """Fallback location extraction without batch processing"""

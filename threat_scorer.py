@@ -238,12 +238,33 @@ def _score_components(
 ) -> Tuple[float, Dict[str, float]]:
     """
     Deterministic mapping of signals → points. Returns (total_points, breakdown).
-    - keyword salience (0..55)
-    - triggers (0..25)
-    - severity (0..20)
-    - kw_rule bonus (+0/+5/+8)
-    - mobility/infra bonus (+3)
-    - nudges (+ up to 10)
+    
+    SCORING WEIGHTS RATIONALE:
+    - Keyword salience (0..55): Primary threat indicator, highest weight.
+      Uses compute_keyword_weight() which measures keyword density and coverage.
+      55 points allows fine-grained distinction between high/medium/low keyword matches.
+    
+    - Triggers (0..25): Secondary signals from structured categories/tags.
+      25 points (5 per trigger, max 6) provides substantial weight without overshadowing keywords.
+      Saturates at 6 to prevent trigger spam from inflating scores.
+    
+    - Severity (0..20): Critical incident markers (IED, suicide bomber, mass shooting).
+      20 points (5 per hit, max 4) adds significant boost for catastrophic events.
+      Lower than keywords to avoid false positives from severe terms in non-threat contexts.
+    
+    - KW rule bonus (+0/+5/+8): Rewards high-quality keyword matches.
+      +8 for direct matches, +5 for broad+impact in same sentence, +0 for window matches.
+      Modest bonus to distinguish match quality without dominating score.
+    
+    - Mobility/infra bonus (+3): Small boost for infrastructure/transportation impact.
+      Conservative +3 to flag logistical concerns without inflating threat score.
+    
+    - Contextual nudges (+10 max): Situational bonuses for specific threat combinations.
+      Examples: suicide bomber+checkpoint (+5), CVE+ransomware (+5), curfew+checkpoint (+5).
+      Capped at +10 to prevent excessive stacking.
+    
+    TOTAL RANGE: 5-100 points (global clamp for safety)
+    LABEL MAPPING: 85+ Critical, 65-84 High, 35-64 Moderate, 5-34 Low
     """
     breakdown: Dict[str, float] = {}
 
@@ -283,15 +304,25 @@ def assess_threat_level(
 ) -> Dict[str, Any]:
     """
     Main scoring function used by the Threat Engine.
+    
     Returns keys consumed by the engine/advisor:
-      - label (Low/Moderate/High/Critical)
-      - score (0..100)
-      - confidence (0..1)
-      - reasoning (short string)
-      - sentiment (aux)
-      - domains (aux)
-      - kw_rule (aux, for debugging)
-      - score_breakdown (aux dict of point buckets)
+      - label (Low/Moderate/High/Critical): Threat severity category
+      - score (0..100): Deterministic point-based threat score
+      - confidence (0..1): Signal quality measure (NOT score extremity)
+        * Based on: source reliability, location precision, keyword match quality
+        * High confidence = strong signals, low false positive risk
+        * Low confidence = weak signals, higher uncertainty
+      - reasoning (short string): Concise explanation of scoring factors
+      - sentiment (aux): Negative/neutral/positive classification
+      - domains (aux): Threat domain tags (physical_safety, cyber_it, etc.)
+      - kw_rule (aux, for debugging): Keyword matching rule used
+      - score_breakdown (aux dict): Point allocation by component
+    
+    Confidence calculation prioritizes signal quality over score magnitude:
+      - Source: Intelligence (ACLED/GDELT) +0.20, RSS +0.10
+      - Location: High precision +0.15, Medium +0.10, Low +0.05
+      - Keywords: Direct match +0.10, Sentence context +0.07, Window +0.04
+      - Triggers: Multiple categories +0.05
     """
     text = _norm(alert_text or "")
     kw_match = (source_alert or {}).get("kw_match") if source_alert else None
@@ -299,21 +330,52 @@ def assess_threat_level(
     # Points
     score, breakdown = _score_components(text, triggers, kw_match=kw_match)
 
-    # Confidence:
-    # base 0.60 + distance-from-50 + keyword bonus + trigger bonus + kw_rule bonus
-    kw_weight = compute_keyword_weight(text)              # 0..1
-    trig_norm = min(len(triggers or []), 6) / 6.0         # 0..1
+    # Confidence: Signal quality (NOT score extremity)
+    # Measures reliability of threat detection, not severity.
+    # High confidence = strong signals, low false positive risk
+    # Low confidence = weak signals, higher uncertainty
+    
+    kw_weight = compute_keyword_weight(text)              # 0..1 (keyword quality)
+    trig_norm = min(len(triggers or []), 6) / 6.0         # 0..1 (trigger count)
 
-    conf = 0.60
-    conf += 0.20 * (abs(score - 50.0) / 50.0)
-    conf += 0.10 * (1.0 if kw_weight > 0.60 else 0.0)
-    conf += 0.05 * (1.0 if trig_norm > 0.50 else 0.0)
+    # Base confidence
+    conf = 0.50
+    
+    # Source reliability: Intelligence sources > RSS feeds
+    source_kind = (source_alert or {}).get("source_kind", "")
+    source_name = (source_alert or {}).get("source", "")
+    if source_kind == "intelligence" or source_name.lower() in ["acled", "gdelt"]:
+        conf += 0.20  # Intelligence data has higher baseline reliability
+    else:
+        conf += 0.10  # RSS feeds are good but less structured
+    
+    # Location confidence: Geocoded > Inferred > Unknown
+    location_conf = (source_alert or {}).get("location_confidence", "none")
+    if location_conf == "high":
+        conf += 0.15  # Precise geocoding
+    elif location_conf == "medium":
+        conf += 0.10  # City-level or inferred
+    elif location_conf == "low":
+        conf += 0.05  # Country-level only
+    # else: +0 for none/unknown
+    
+    # Keyword match quality: Direct > Sentence > Window
     if kw_match and isinstance(kw_match.get("rule"), str):
         r = kw_match["rule"].lower()
-        if "broad+impact" in r and ("sentence" in r or "sent" in r):
-            conf += 0.05
+        if "direct" in r or "exact" in r:
+            conf += 0.10  # High confidence: direct threat keyword
+        elif "broad+impact" in r and ("sentence" in r or "sent" in r):
+            conf += 0.07  # Medium-high: contextual match in same sentence
         elif "broad+impact" in r and "window" in r:
-            conf += 0.03
+            conf += 0.04  # Medium: contextual match within window
+    else:
+        # Fallback: use keyword weight if no match rule
+        conf += 0.10 * kw_weight
+    
+    # Trigger count: Multiple triggers increase confidence
+    if trig_norm > 0.50:
+        conf += 0.05  # Multiple category tags corroborate threat
+    
     confidence = round(_clamp(conf, 0.40, 0.95), 2)
 
     # Sentiment & domains (aux)
@@ -330,6 +392,7 @@ def assess_threat_level(
     sev_hits = sum(1 for k in SEVERE_TERMS if _has_keyword(text, k))
     reasoning_bits = [
         f"score={round(score,1)}",
+        f"conf={confidence}",
         f"salience={kw_weight:.2f}",
         f"sev_hits={sev_hits}",
         f"triggers={len(triggers or [])}",
@@ -339,8 +402,11 @@ def assess_threat_level(
         reasoning_bits.append(f"domains={','.join(domains[:4])}")
     if kw_match and kw_match.get("rule"):
         reasoning_bits.append(f"kw_rule={kw_match.get('rule')}")
-    if source_alert and source_alert.get("source"):
-        reasoning_bits.append(f"source={source_alert.get('source')}")
+    if source_alert:
+        if source_alert.get("source"):
+            reasoning_bits.append(f"source={source_alert.get('source')}")
+        if source_alert.get("location_confidence"):
+            reasoning_bits.append(f"loc_conf={source_alert.get('location_confidence')}")
     reasoning = "; ".join(reasoning_bits)
 
     # Attach a compact view of kw matches for debugging
