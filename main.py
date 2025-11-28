@@ -117,8 +117,10 @@ try:
 except Exception as e:
     logger.warning(f"[main] PostGIS check/install: {e}")
 
-# Start GDELT polling thread if enabled
-if os.getenv('GDELT_ENABLED', 'false').lower() == 'true':
+# Start GDELT polling thread if enabled and not force-disabled
+_GDELT_FORCE_DISABLE = os.getenv('GDELT_FORCE_DISABLE', 'false').lower() in ('1','true','yes','y')
+_GDELT_ENABLED = os.getenv('GDELT_ENABLED', 'false').lower() in ('1','true','yes','y')
+if _GDELT_ENABLED and not _GDELT_FORCE_DISABLE:
     try:
         from gdelt_ingest import start_gdelt_polling
         start_gdelt_polling()
@@ -126,7 +128,10 @@ if os.getenv('GDELT_ENABLED', 'false').lower() == 'true':
     except Exception as e:
         logger.warning(f"[main] GDELT polling not started: {e}")
 else:
-    logger.info("[main] GDELT polling disabled (GDELT_ENABLED not set)")
+    if _GDELT_FORCE_DISABLE:
+        logger.info("[main] GDELT polling force-disabled (GDELT_FORCE_DISABLE=true)")
+    else:
+        logger.info("[main] GDELT polling disabled (GDELT_ENABLED=false)")
 
 # Start weekly digest scheduler if enabled
 if os.getenv('WEEKLY_DIGEST_ENABLED', 'true').lower() == 'true':
@@ -863,6 +868,103 @@ def run_opencage_migration():
             "error": str(e),
             "traceback": traceback.format_exc(),
             "success": False
+        }), 500
+
+@app.route("/admin/rss/diag", methods=["GET"])
+def rss_diagnostics():
+    """Get RSS ingestion diagnostics (admin only).
+    
+    Returns recent RSS ingest runs, skip reasons, and DB write stats.
+    
+    Example:
+        GET /admin/rss/diag?api_key=your_admin_key
+    """
+    try:
+        # Admin auth check
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        import psycopg2
+        db_url = os.getenv('DATABASE_URL')
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        
+        # Check if diag table exists
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'rss_ingest_diag'
+            );
+        """)
+        diag_exists = cur.fetchone()[0]
+        
+        diag_runs = []
+        if diag_exists:
+            cur.execute("""
+                SELECT run_at, feeds_processed, entries_seen, alerts_built,
+                       skip_language, skip_keywords, skip_denylist, skip_duplicate
+                FROM rss_ingest_diag 
+                ORDER BY run_at DESC 
+                LIMIT 20
+            """)
+            for row in cur.fetchall():
+                diag_runs.append({
+                    "run_at": row[0].isoformat() if row[0] else None,
+                    "feeds_processed": row[1],
+                    "entries_seen": row[2],
+                    "alerts_built": row[3],
+                    "skip_language": row[4],
+                    "skip_keywords": row[5],
+                    "skip_denylist": row[6],
+                    "skip_duplicate": row[7]
+                })
+        
+        # Recent raw_alerts by any source
+        cur.execute("""
+            SELECT COUNT(*), MAX(ingested_at) as last_ingested
+            FROM raw_alerts
+            WHERE ingested_at > NOW() - INTERVAL '24 hours'
+        """)
+        row = cur.fetchone()
+        recent_raw = {"count_24h": row[0], "last_ingested": row[1].isoformat() if row[1] else None}
+        
+        # Overall raw_alerts count
+        cur.execute("SELECT COUNT(*) FROM raw_alerts")
+        total_raw = cur.fetchone()[0]
+        
+        # Check env vars (from current process)
+        env_check = {
+            "RSS_WRITE_TO_DB": os.getenv("RSS_WRITE_TO_DB"),
+            "RSS_STRICT_FILTER": os.getenv("RSS_STRICT_FILTER"),
+            "RSS_ALLOWED_LANGS": os.getenv("RSS_ALLOWED_LANGS"),
+            "RSS_DEBUG": os.getenv("RSS_DEBUG"),
+            "GDELT_FORCE_DISABLE": os.getenv("GDELT_FORCE_DISABLE"),
+            "DATABASE_URL_SET": "yes" if os.getenv("DATABASE_URL") else "no"
+        }
+        
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "diag_table_exists": diag_exists,
+            "recent_runs": diag_runs,
+            "raw_alerts_stats": {
+                "total": total_raw,
+                "last_24h": recent_raw
+            },
+            "env_vars": env_check,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }), 500
 
 @app.route("/admin/acled/run", methods=["POST"])

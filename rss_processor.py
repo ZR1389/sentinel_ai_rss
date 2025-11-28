@@ -14,6 +14,7 @@ from __future__ import annotations
 import os, re, time, hashlib, contextlib, asyncio, json, sys, threading
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Iterable, Tuple
+from collections import defaultdict
 from urllib.parse import urlparse
 
 # .env loading: Railway uses native env vars, local dev uses .env files
@@ -128,6 +129,16 @@ logger.info(f"Batch processing optimized: size_threshold={_BATCH_SIZE_THRESHOLD}
 # Legacy globals during transition (TODO: Remove after full migration)
 _LOCATION_BATCH_BUFFER: List[Tuple[Dict[str, Any], str, str]] = []
 _LOCATION_BATCH_LOCK = threading.Lock()
+
+# RSS ingest diagnostics (persisted after each run)
+_RSS_DIAG = defaultdict(int)
+def _reset_rss_diag():
+    _RSS_DIAG.clear()
+def _diag_inc(key: str, inc: int = 1):
+    try:
+        _RSS_DIAG[key] += inc
+    except Exception:
+        pass
 
 # Memory leak prevention constants
 MAX_BUFFER_SIZE = int(os.getenv("MOONSHOT_MAX_BUFFER_SIZE", "1000"))
@@ -1588,6 +1599,7 @@ async def _build_alert_from_entry(
     Build alert from RSS entry with integrated batch processing.
     """
     start_time = time.time()
+    _diag_inc('entries_seen', 1)
     try:
         # Basic validation
         title = entry.get("title", "")
@@ -1607,6 +1619,9 @@ async def _build_alert_from_entry(
             if fetch_one:
                 exists = fetch_one("SELECT 1 FROM raw_alerts WHERE uuid=%s", (uuid,))
                 if exists:
+                    _diag_inc('skip_duplicate', 1)
+                    if os.getenv("RSS_DEBUG", "false").strip().lower() in ("1","true","yes","y"):
+                        logger.info(f"[RSS_DEBUG] skip: duplicate uuid={uuid} title='{title[:120]}'")
                     return None
         except Exception:
             pass
@@ -1621,29 +1636,42 @@ async def _build_alert_from_entry(
         # Language filter: Only skip if EXPLICITLY set to filter AND detected language is NOT in allowed list
         # If RSS_ALLOWED_LANGS is empty/not set, allow all languages (permissive default)
         allowed_langs_env = os.getenv("RSS_ALLOWED_LANGS", "").strip()
+        _rss_debug = os.getenv("RSS_DEBUG", "false").strip().lower() in ("1","true","yes","y")
         if allowed_langs_env:
             allowed_langs = [l.strip().lower() for l in allowed_langs_env.split(",") if l.strip()]
             if allowed_langs and language.lower() not in allowed_langs:
-                logger.debug(f"[Filter] Skip non-allowed language lang={language} title='{title[:70]}'")
+                if _rss_debug:
+                    logger.info(f"[RSS_DEBUG] skip: language lang={language} allowed={allowed_langs} title='{title[:120]}'")
                 try:
                     metrics.increment("rss.skip.language", 1)
                 except Exception:
                     pass
+                _diag_inc('skip_language', 1)
                 return None
         
-        # Keyword filtering
-        passes_filter, kw_match = _passes_keyword_filter(text_blob)
+        # Keyword filtering (configurable; can be relaxed via RSS_STRICT_FILTER=false)
+        strict_filter = os.getenv("RSS_STRICT_FILTER", "true").strip().lower() in ("1","true","yes","y")
+        if strict_filter:
+            passes_filter, kw_match = _passes_keyword_filter(text_blob)
+        else:
+            passes_filter, kw_match = (True, "")
         if not passes_filter:
+            if _rss_debug:
+                logger.info(f"[RSS_DEBUG] skip: keywords title='{title[:120]}'")
+            _diag_inc('skip_keywords', 1)
             return None
 
         # Denylist filtering (post keyword so we still count potential matches for metrics)
         matched_noise = _is_denylisted(text_blob)
         if matched_noise:
             logger.info(f"[Filter] Skipping denylisted RSS entry token='{matched_noise}' title='{title[:80]}'")
+            if _rss_debug:
+                logger.info(f"[RSS_DEBUG] skip: denylist token='{matched_noise}' title='{title[:120]}'")
             try:
                 metrics.increment("rss.skip.denylist", 1)
             except Exception:
                 pass
+            _diag_inc('skip_denylist', 1)
             return None
         
         # Location extraction with batch processing
@@ -1698,6 +1726,7 @@ async def _build_alert_from_entry(
         alert_building_time_ms = int((time.time() - start_time) * 1000)
         metrics.timing("database_operation.alert_building", alert_building_time_ms, operation="alert_building")
         
+        _diag_inc('alerts_built', 1)
         return alert
         
     except Exception as e:
@@ -2061,6 +2090,7 @@ async def ingest_all_feeds_to_db(
         Dict with processing statistics and results
     """
     logger.info(f"Starting RSS ingest: limit={limit}, write_to_db={write_to_db}")
+    _reset_rss_diag()
     
     start_time = time.time()  # Add timing for the entire operation
     
@@ -2068,6 +2098,7 @@ async def ingest_all_feeds_to_db(
         # Get all feed specifications
         feed_specs = _coalesce_all_feed_specs(group_names)
         logger.info(f"Processing {len(feed_specs)} feed specifications")
+        _diag_inc('feeds_processed', len(feed_specs))
         
         # Process feeds using the main ingest function
         alerts = await ingest_feeds(feed_specs, limit=limit)
@@ -2085,25 +2116,70 @@ async def ingest_all_feeds_to_db(
         result["batch_stats"] = batch_stats
         
         # Handle database writing if enabled
+        logger.info(f"[RSS_WRITE] Checking write conditions: write_to_db={write_to_db}, alerts_count={len(alerts)}, save_fn_available={save_raw_alerts_to_db is not None}")
+        
         if write_to_db and alerts:
             try:
                 # Use standardized database write functionality from db_utils
                 if save_raw_alerts_to_db:
+                    logger.info(f"[RSS_WRITE] Attempting to write {len(alerts)} alerts to database...")
                     written_count = save_raw_alerts_to_db(alerts)
                     result["written_to_db"] = written_count
-                    logger.info(f"Successfully wrote {written_count} alerts to database")
+                    logger.info(f"[RSS_WRITE] ✓ Successfully wrote {written_count} alerts to database")
                     
                     # Record database operation metrics
                     metrics.timing("database_operation", int((time.time() - start_time) * 1000), operation="bulk_insert")
                 else:
-                    logger.warning("Database functions not available - alerts not written to DB")
+                    logger.error("[RSS_WRITE] ✗ save_raw_alerts_to_db function is None - DB functions not imported!")
+                    logger.error("[RSS_WRITE] Check: DATABASE_URL=%s", "SET" if os.getenv("DATABASE_URL") else "MISSING")
                     metrics.increment("errors.database.functions_unavailable", 1)
             except Exception as e:
-                logger.error(f"Database write error: {e}")
+                logger.error(f"[RSS_WRITE] ✗ Database write error: {e}")
+                import traceback
+                logger.error(f"[RSS_WRITE] Traceback: {traceback.format_exc()}")
                 result["db_error"] = str(e)
                 metrics.increment("errors.database.write_failed", 1)
+        elif not write_to_db:
+            logger.info("[RSS_WRITE] Skipped: write_to_db=False")
+        elif not alerts:
+            logger.warning("[RSS_WRITE] Skipped: No alerts to write (all filtered out)")
         
         logger.info(f"RSS ingest completed: {result}")
+
+        # Persist diagnostics to DB for post-run analysis
+        try:
+            if 'execute' in globals() and callable(execute):
+                execute("""
+                    CREATE TABLE IF NOT EXISTS rss_ingest_diag (
+                        run_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                        feeds_processed INT,
+                        entries_seen INT,
+                        alerts_built INT,
+                        skip_language INT,
+                        skip_keywords INT,
+                        skip_denylist INT,
+                        skip_duplicate INT
+                    )
+                """)
+                execute(
+                    """
+                    INSERT INTO rss_ingest_diag (
+                        feeds_processed, entries_seen, alerts_built,
+                        skip_language, skip_keywords, skip_denylist, skip_duplicate
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        _RSS_DIAG.get('feeds_processed', 0),
+                        _RSS_DIAG.get('entries_seen', 0),
+                        _RSS_DIAG.get('alerts_built', 0),
+                        _RSS_DIAG.get('skip_language', 0),
+                        _RSS_DIAG.get('skip_keywords', 0),
+                        _RSS_DIAG.get('skip_denylist', 0),
+                        _RSS_DIAG.get('skip_duplicate', 0),
+                    )
+                )
+        except Exception as e:
+            logger.warning(f"[rss] Failed to persist ingest diagnostics: {e}")
         return result
         
     except Exception as e:

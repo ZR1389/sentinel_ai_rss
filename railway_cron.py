@@ -119,6 +119,26 @@ def run_vacuum():
 def run_rss_ingest():
     """Run RSS ingestion into raw_alerts with proper loop handling"""
     logger = logging.getLogger('railway_cron')
+    
+    # Critical environment checks
+    logger.info("=" * 60)
+    logger.info("RSS INGESTION STARTUP CHECKS")
+    logger.info("=" * 60)
+    
+    db_url = os.getenv("DATABASE_URL")
+    logger.info(f"DATABASE_URL: {'SET' if db_url else 'MISSING'}")
+    logger.info(f"RSS_WRITE_TO_DB: {os.getenv('RSS_WRITE_TO_DB', 'not set')}")
+    logger.info(f"RSS_DEBUG: {os.getenv('RSS_DEBUG', 'not set')}")
+    logger.info(f"RSS_STRICT_FILTER: {os.getenv('RSS_STRICT_FILTER', 'not set')}")
+    logger.info(f"RSS_ALLOWED_LANGS: {os.getenv('RSS_ALLOWED_LANGS', 'not set')}")
+    
+    if not db_url:
+        logger.error("FATAL: DATABASE_URL is not set! Cannot proceed with RSS ingestion.")
+        logger.error("Set DATABASE_URL in your Railway service environment variables.")
+        return False
+    
+    logger.info("=" * 60)
+    
     try:
         from rss_processor import ingest_all_feeds_to_db
     except Exception as e:
@@ -143,7 +163,17 @@ def run_rss_ingest():
                 ingest_all_feeds_to_db(group_names=groups, limit=limit, write_to_db=True)
             )
             loop.close()
-        logger.info("RSS ingestion completed", extra={"result": res})
+        
+        logger.info("=" * 60)
+        logger.info("RSS INGESTION COMPLETED")
+        logger.info("=" * 60)
+        logger.info(f"Alerts processed: {res.get('alerts_processed', 0)}")
+        logger.info(f"Feeds processed: {res.get('feeds_processed', 0)}")
+        logger.info(f"Written to DB: {res.get('written_to_db', 0)}")
+        if 'error' in res:
+            logger.error(f"Error: {res['error']}")
+        logger.info("=" * 60)
+        
         return True
     except Exception as e:
         logger.error(f"RSS ingestion failed: {e}")
@@ -418,10 +448,9 @@ if __name__ == "__main__":
             success = run_geocode_backfill()
         elif operation == "notify":
             success = run_scheduler_notify()
-        elif operation == "trial_reminders":
-            success = run_trial_reminders()
-        elif operation == "check_trials":
-            success = run_check_expired_trials()
+        elif operation in ("trial_reminders", "check_trials"):
+            logger.warning(f"Operation '{operation}' not implemented yet")
+            success = True
         else:
             print(f"Unknown operation: {operation}")
             print("Usage: python railway_cron.py [cleanup|vacuum|rss|engine|gdelt_enrich|acled|proximity|geocode|notify|trial_reminders|check_trials]")
