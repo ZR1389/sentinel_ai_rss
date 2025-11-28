@@ -2931,7 +2931,7 @@ def api_map_alerts():
     is_authenticated = auth_header.startswith("Bearer ") and len(auth_header) > 7
 
     # Enforce plan-based days cap for authenticated users
-    max_days_allowed = 2  # FREE default for unauthenticated
+    max_days_allowed = 30  # FREE default: 30-day window for unauthenticated
     user_plan = 'FREE'
     if is_authenticated:
         try:
