@@ -1896,16 +1896,25 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
     return _dedupe_batch(results_alerts)
 
 def _passes_keyword_filter(text: str) -> tuple[bool, str]:
-    """Deterministic keyword filter; no permissive fallback."""
+    """Deterministic keyword filter with whole-word matching; no permissive fallback."""
     if not text:
         return False, ""
     text_lower = text.lower()
     matched: Optional[str] = None
+    
+    # Use word boundary regex for accurate matching
+    import re
+    
     try:
         from keywords_loader import get_all_keywords
         for kw in get_all_keywords():
             k = kw.lower()
-            if k and k in text_lower:
+            if not k:
+                continue
+            # Use word boundaries for multi-word phrases and single words
+            # This prevents "ot" from matching "shooting" or "cardinals"
+            pattern = r'\b' + re.escape(k) + r'\b'
+            if re.search(pattern, text_lower):
                 matched = kw
                 break
     except Exception as e:
@@ -1919,7 +1928,10 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
                 if isinstance(category_vals, list):
                     for kw in category_vals:
                         k = str(kw).lower()
-                        if k and k in text_lower:
+                        if not k:
+                            continue
+                        pattern = r'\b' + re.escape(k) + r'\b'
+                        if re.search(pattern, text_lower):
                             matched = kw
                             break
                     if matched:
