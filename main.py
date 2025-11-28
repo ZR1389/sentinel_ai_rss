@@ -3060,6 +3060,7 @@ def api_map_alerts():
         'moderate',             # Moderate confidence extraction
         'feed_tag_mapped',      # City-to-country mapping from feeds_catalog
         'feed_tag',             # Direct feed tag extraction
+        'country_centroid',     # Country-level centroid (276 alerts) - acceptable for regional overview
     ]
     where.append("location_method = ANY(%s)")
     params.append(TIER1_METHODS)
@@ -3339,6 +3340,7 @@ def api_map_alerts_aggregates():
         'moderate',             # Moderate confidence extraction
         'feed_tag_mapped',      # City-to-country mapping from feeds_catalog
         'feed_tag',             # Direct feed tag extraction
+        'country_centroid',     # Country-level centroid (276 alerts) - acceptable for regional overview
     ]
     where.append("location_method = ANY(%s)")
     params.append(TIER1_METHODS)
