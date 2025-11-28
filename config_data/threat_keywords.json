@@ -65,7 +65,16 @@
 
     "piracy", "pirate attack", "pirate skiff", "boarding", "hijack vessel",
 
-    "police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion"
+    "police brutality", "brutal attack", "false imprisonment", "blackmail", "extortion",
+
+    "war", "armed conflict", "ukraine", "russia", "invasion", "occupation", "annexation",
+    "ceasefire", "peace talks", "sanctions", "military offensive", "troops", "deployment",
+    "combat zone", "casualties", "frontline", "war crimes", "international tribunal",
+    "aggression charges", "aggression", "amputees", "military operation",
+
+    "antisemitic", "anti-semitic", "hate crime", "hate speech", "discrimination",
+    "xenophobia", "racism", "islamophobia", "homophobia", "ethnic violence",
+    "religious persecution", "pogrom", "genocide", "ethnic cleansing"
   ],
 
   "conditional": {
@@ -360,6 +369,32 @@
       "it": ["brutalità della polizia", "attacco brutale", "detenzione illegittima", "ricatto", "estorsione"],
       "pt": ["brutalidade policial", "ataque brutal", "prisão ilegal", "chantagem", "extorsão"],
       "de": ["Polizeigewalt", "brutaler Angriff", "unrechtmäßige Inhaftierung", "Erpressung", "Nötigung"]
+    },
+
+    "geopolitical conflict": {
+      "en": ["ukraine", "russia", "invasion", "occupation", "annexation", "ceasefire", "peace talks", "sanctions", "military offensive", "troops", "deployment", "combat zone", "casualties", "frontline", "war crimes", "international tribunal", "aggression charges", "amputees", "military operation"],
+      "es": ["ucrania", "rusia", "invasión", "ocupación", "anexión", "alto el fuego", "conversaciones de paz", "sanciones", "ofensiva militar", "tropas", "despliegue", "zona de combate", "bajas", "primera línea", "crímenes de guerra", "tribunal internacional", "cargos de agresión", "amputados", "operación militar"],
+      "fr": ["ukraine", "russie", "invasion", "occupation", "annexion", "cessez-le-feu", "pourparlers de paix", "sanctions", "offensive militaire", "troupes", "déploiement", "zone de combat", "pertes", "ligne de front", "crimes de guerre", "tribunal international", "accusations d'agression", "amputés", "opération militaire"],
+      "zh": ["烏克蘭", "俄羅斯", "入侵", "佔領", "吞併", "停火", "和平談判", "制裁", "軍事進攻", "部隊", "部署", "戰區", "傷亡", "前線", "戰爭罪", "國際法庭", "侵略指控", "截肢者", "軍事行動"],
+      "ru": ["украина", "россия", "вторжение", "оккупация", "аннексия", "прекращение огня", "мирные переговоры", "санкции", "военное наступление", "войска", "развертывание", "зона боевых действий", "потери", "линия фронта", "военные преступления", "международный трибунал", "обвинения в агрессии", "инвалиды", "военная операция"],
+      "hi": ["यूक्रेन", "रूस", "आक्रमण", "कब्जा", "विलयन", "युद्धविराम", "शांति वार्ता", "प्रतिबंध", "सैन्य आक्रमण", "सेना", "तैनाती", "युद्ध क्षेत्र", "हताहत", "मोर्चा", "युद्ध अपराध", "अंतर्राष्ट्रीय न्यायाधिकरण", "आक्रामकता के आरोप", "अंग विच्छेदन", "सैन्य अभियान"],
+      "sr": ["украјина", "русија", "инвазија", "окупација", "анексија", "примирје", "мировни разговори", "санкције", "војна офанзива", "трупе", "распоред", "борбена зона", "жртве", "фронт", "ратни злочини", "међународни трибунал", "оптужбе за агресију", "ампутирци", "војна операција"],
+      "it": ["ucraina", "russia", "invasione", "occupazione", "annessione", "cessate il fuoco", "colloqui di pace", "sanzioni", "offensiva militare", "truppe", "dispiegamento", "zona di combattimento", "vittime", "prima linea", "crimini di guerra", "tribunale internazionale", "accuse di aggressione", "amputati", "operazione militare"],
+      "pt": ["ucrânia", "rússia", "invasão", "ocupação", "anexação", "cessar-fogo", "negociações de paz", "sanções", "ofensiva militar", "tropas", "desdobramento", "zona de combate", "baixas", "linha de frente", "crimes de guerra", "tribunal internacional", "acusações de agressão", "amputados", "operação militar"],
+      "de": ["ukraine", "russland", "invasion", "besatzung", "annexion", "waffenstillstand", "friedensgespräche", "sanktionen", "militäroffensive", "truppen", "einsatz", "kampfzone", "verluste", "frontlinie", "kriegsverbrechen", "internationaler gerichtshof", "aggressionsvorwürfe", "amputierte", "militäroperation"]
+    },
+
+    "hate crimes": {
+      "en": ["antisemitic", "anti-semitic", "hate crime", "hate speech", "discrimination", "xenophobia", "racism", "islamophobia", "homophobia", "ethnic violence", "religious persecution", "pogrom", "genocide", "ethnic cleansing"],
+      "es": ["antisemita", "crimen de odio", "discurso de odio", "discriminación", "xenofobia", "racismo", "islamofobia", "homofobia", "violencia étnica", "persecución religiosa", "pogromo", "genocidio", "limpieza étnica"],
+      "fr": ["antisémite", "crime de haine", "discours de haine", "discrimination", "xénophobie", "racisme", "islamophobie", "homophobie", "violence ethnique", "persécution religieuse", "pogrom", "génocide", "nettoyage ethnique"],
+      "zh": ["反猶太主義", "仇恨犯罪", "仇恨言論", "歧視", "排外主義", "種族主義", "伊斯蘭恐懼症", "恐同症", "種族暴力", "宗教迫害", "大屠殺", "種族滅絕", "種族清洗"],
+      "ru": ["антисемитский", "преступление на почве ненависти", "разжигание ненависти", "дискриминация", "ксенофобия", "расизм", "исламофобия", "гомофобия", "этническое насилие", "религиозное преследование", "погром", "геноцид", "этническая чистка"],
+      "hi": ["यहूदी-विरोधी", "घृणा अपराध", "घृणा भाषण", "भेदभाव", "विदेशी द्वेष", "नस्लवाद", "इस्लामोफोबिया", "समलैंगिकता का डर", "जातीय हिंसा", "धार्मिक उत्पीड़न", "नरसंहार", "जाति सफाई"],
+      "sr": ["антисемитски", "злочин из мржње", "говор мржње", "дискриминација", "ксенофобија", "расизам", "исламофобија", "хомофобија", "етничко насиље", "верско прогањање", "погром", "геноцид", "етничко чишћење"],
+      "it": ["antisemita", "crimine d'odio", "discorso d'odio", "discriminazione", "xenofobia", "razzismo", "islamofobia", "omofobia", "violenza etnica", "persecuzione religiosa", "pogrom", "genocidio", "pulizia etnica"],
+      "pt": ["antissemita", "crime de ódio", "discurso de ódio", "discriminação", "xenofobia", "racismo", "islamofobia", "homofobia", "violência étnica", "perseguição religiosa", "pogrom", "genocídio", "limpeza étnica"],
+      "de": ["antisemitisch", "hassverbrechen", "hassrede", "diskriminierung", "fremdenfeindlichkeit", "rassismus", "islamophobie", "homophobie", "ethnische gewalt", "religiöse verfolgung", "pogrom", "völkermord", "ethnische säuberung"]
     }
   }
 }
