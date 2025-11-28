@@ -77,7 +77,13 @@
 
     "antisemitic", "anti-semitic", "hate crime", "hate speech", "discrimination",
     "xenophobia", "racism", "islamophobia", "homophobia", "ethnic violence",
-    "religious persecution", "pogrom", "genocide", "ethnic cleansing"
+    "religious persecution", "pogrom", "genocide", "ethnic cleansing",
+
+    "killed", "dead", "deaths", "fatalities", "fatality",
+    "blast",
+    "rebel", "rebels", "militant", "militants", "insurgent", "insurgents", "separatist", "separatists",
+    "embargo",
+    "protest", "protests", "protester", "protesters", "demonstration", "demonstrations", "demonstrator", "demonstrators"
   ],
 
   "conditional": {

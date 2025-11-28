@@ -50,6 +50,7 @@ from risk_shared import (
     detect_domains,
     baseline_from_counts,
     ewma_anomaly,
+    _has_keyword,  # For whole-word keyword matching
 )
 
 # --------------------------- utilities ---------------------------
@@ -201,8 +202,9 @@ def _severity_points(text_norm: str) -> Tuple[float, int]:
     """
     Each severe hit → +5 points, cap at 20.
     Return (points, hit_count).
+    Uses whole-word matching to avoid false positives (e.g., 'shortage' matching 'short').
     """
-    hits = sum(1 for k in SEVERE_TERMS if k in text_norm)
+    hits = sum(1 for k in SEVERE_TERMS if _has_keyword(text_norm, k))
     pts = min(20.0, 5.0 * float(hits))
     return pts, hits
 
@@ -325,7 +327,7 @@ def assess_threat_level(
     label = _label_from_score(score)
 
     # Reasoning: concise and deterministic
-    sev_hits = sum(1 for k in SEVERE_TERMS if k in text)
+    sev_hits = sum(1 for k in SEVERE_TERMS if _has_keyword(text, k))
     reasoning_bits = [
         f"score={round(score,1)}",
         f"salience={kw_weight:.2f}",
