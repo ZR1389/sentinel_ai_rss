@@ -19,6 +19,7 @@
     "road ambush",
 
     "military coup", "coup d'etat", "military takeover", "military raid",
+    "coup", "regime change",
 
     "state of emergency", "martial law", "curfew",
     "roadblock", "road block", "checkpoint closed", "crossing closed", "police raid",
@@ -26,6 +27,7 @@
     "riot", "uprising", "insurrection",
     "clashes", "looting", "arson", "barricades", "tire burning", "stone throwing",
     "tear gas", "rubber bullets", "water cannon", "live fire",
+    "attack", "strike", "raid",
 
     "border closure",
     "flight cancellation", "flight cancellations", "airport closure", "runway closure",
@@ -39,7 +41,7 @@
     "embassy alert", "travel ban", "evacuation",
 
     "natural disaster", "earthquake", "tsunami", "tornado", "hurricane",
-    "flood", "flash flood", "wildfire", "wild fire",
+    "flood", "flash flood", "wildfire", "wild fire", "fire",
     "landslide", "mudslide", "rockslide", "avalanche",
     "volcanic eruption", "ash plume", "lahar",
     "heatwave", "heat wave", "blizzard", "snowstorm", "cold snap",

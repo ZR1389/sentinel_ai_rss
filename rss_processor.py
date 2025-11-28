@@ -1906,8 +1906,23 @@ def _passes_keyword_filter(text: str) -> tuple[bool, str]:
     import re
     
     try:
-        from keywords_loader import get_all_keywords
-        for kw in get_all_keywords():
+        # Use base keywords from JSON ONLY (most selective for RSS filtering)
+        from keywords_loader import KEYWORD_DATA
+        
+        # Get base keywords from threat_keywords.json
+        base_keywords = KEYWORD_DATA.get("keywords", [])
+        
+        # Get translated keywords (all languages)
+        translated = KEYWORD_DATA.get("translated", {})
+        translated_keywords = []
+        for category_translations in translated.values():
+            for lang_terms in category_translations.values():
+                translated_keywords.extend(lang_terms)
+        
+        # Combine: base + translated only
+        all_keywords = set(base_keywords + translated_keywords)
+        
+        for kw in all_keywords:
             k = kw.lower()
             if not k:
                 continue
