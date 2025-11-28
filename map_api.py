@@ -324,6 +324,11 @@ def map_alerts():
     Output keys match your frontend expectations: risk_level, risk_color, risk_radius.
     Query params: ?bbox=minLon,minLat,maxLon,maxLat (optional spatial filter)
     """
+    try:
+        current_app.logger.info("[map_alerts] START - endpoint called")
+    except Exception:
+        pass
+    
     # Parse bounding box filter
     bbox_param = request.args.get('bbox', '').strip()
     bbox_filter = ""
@@ -353,6 +358,10 @@ def map_alerts():
         ORDER BY published DESC NULLS LAST
         LIMIT 500
     """
+    try:
+        current_app.logger.info(f"[map_alerts] Query: {q[:200]}")
+    except Exception:
+        pass
     
     # Execute query with bbox params if provided
     rows: Iterable[Any] = []
@@ -362,13 +371,10 @@ def map_alerts():
         rows = fetch_all(q, tuple(bbox_values)) if bbox_values else fetch_all(q) or []
         # Convert to list to allow inspection and reuse
         rows = list(rows) if rows else []
-        try:
-            current_app.logger.info(f"[map_alerts] Query returned {len(rows)} rows")
-        except Exception:
-            pass
+        current_app.logger.info(f"[map_alerts] Query returned {len(rows)} rows, fetch_all worked")
     except Exception as e:
         try:
-            current_app.logger.error("/map_alerts query failed: %s", e)
+            current_app.logger.error(f"[map_alerts] Query FAILED: {e}")
         except Exception:
             pass
         rows = []
@@ -437,6 +443,11 @@ def map_alerts():
         ft = to_feature(r)
         if ft:
             features.append(ft)
+
+    try:
+        current_app.logger.info(f"[map_alerts] Built {len(features)} features from {len(rows)} rows")
+    except Exception:
+        pass
 
     response = jsonify({"type": "FeatureCollection", "features": features})
     
