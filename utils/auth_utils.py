@@ -13,11 +13,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from security_log_utils import log_security_event
+from utils.security_log_utils import log_security_event
 from core.config import CONFIG
 
 # INJECT: Password strength check
-from password_strength_utils import is_strong_password
+from utils.password_strength_utils import is_strong_password
 
 DATABASE_URL = CONFIG.database.url
 JWT_SECRET = CONFIG.security.jwt_secret  # DO NOT default in production

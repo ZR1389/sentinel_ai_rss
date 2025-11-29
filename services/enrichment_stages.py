@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
-from risk_shared import likely_sports_context
+from utils.risk_shared import likely_sports_context
 
 # Structured logging setup
 from core.logging_config import get_logger, get_metrics_logger
@@ -21,7 +21,7 @@ _SCORELINE_PATTERN = re.compile(r"\b\d{1,2}\s*[-–:]\s*\d{1,2}\b")
 _VERSUS_PATTERN = re.compile(r"\bvs\.?\b|\bversus\b", re.IGNORECASE)
 
 # Input validation
-from validation import validate_alert, validate_enrichment_data
+from utils.validation import validate_alert, validate_enrichment_data
 
 @dataclass
 class EnrichmentContext:
@@ -209,28 +209,28 @@ class RiskAnalysisStage(EnrichmentStage):
         return alert
 
 class LLMSummaryStage(EnrichmentStage):
-    \"\"\"LLM summary DISABLED to save tokens - uses existing summary instead.\"\"\"
+    """LLM summary DISABLED to save tokens - uses existing summary instead."""
     
     def __init__(self):
-        super().__init__(\"llm_summary\")
+        super().__init__("llm_summary")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
         # DISABLED: Expensive LLM call for every alert
         # from threat_engine import route_llm, THREAT_SUMMARIZE_SYSTEM_PROMPT, TEMPERATURE, _model_usage_counts
         # messages = [
-        #     {\"role\": \"system\", \"content\": THREAT_SUMMARIZE_SYSTEM_PROMPT},
-        #     {\"role\": \"user\", \"content\": context.full_text},
+        #     {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
+        #     {"role": "user", "content": context.full_text},
         # ]
         # g_summary, model_used = route_llm(
         #     messages, 
         #     temperature=TEMPERATURE, 
         #     usage_counts=_model_usage_counts, 
-        #     task_type=\"enrichment\"
+        #     task_type="enrichment"
         # )
         
         # Use existing summary instead of expensive LLM generation
-        alert[\"gpt_summary\"] = alert.get(\"summary\") or alert.get(\"en_snippet\") or \"\"
-        alert[\"model_used\"] = \"disabled_to_save_tokens\"
+        alert["gpt_summary"] = alert.get("summary") or alert.get("en_snippet") or ""
+        alert["model_used"] = "disabled_to_save_tokens"
         
         return alert
 
@@ -373,7 +373,7 @@ class ContentFilterStage(EnrichmentStage):
         has_strong_entertainment = any(keyword in full_text_lower for keyword in strong_entertainment_indicators)
         
         # Additional signals from shared heuristics & scoreline patterns
-        from risk_shared import likely_sports_context
+        from utils.risk_shared import likely_sports_context
         sports_flagged = "sports_context" in (alert.get("relevance_flags") or [])
         sports_heuristic_hit = likely_sports_context(context.full_text)
 
@@ -417,7 +417,7 @@ class DomainDetectionStage(EnrichmentStage):
         super().__init__("domain_detection")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from risk_shared import detect_domains
+        from utils.risk_shared import detect_domains
         
         try:
             alert["domains"] = alert.get("domains") or detect_domains(context.full_text)

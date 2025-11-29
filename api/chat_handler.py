@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from dotenv import load_dotenv
 
 # DB helpers
-from db_utils import (
+from utils.db_utils import (
     fetch_alerts_from_db_strict_geo,
     fetch_past_incidents,
     fetch_user_profile,

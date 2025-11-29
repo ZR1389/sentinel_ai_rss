@@ -10,8 +10,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from contextlib import contextmanager
 
 # Import database utilities and embedding functionality
-from db_utils import _get_db_connection, fetch_one, fetch_all
-from risk_shared import get_embedding, embedding_manager
+from utils.db_utils import _get_db_connection, fetch_one, fetch_all
+from utils.risk_shared import get_embedding, embedding_manager
 
 logger = logging.getLogger(__name__)
 

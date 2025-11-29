@@ -10,8 +10,8 @@ import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from db_utils import fetch_all, execute
-from weekly_digest_generator import generate_weekly_digest_pdf, send_digest_email
+from utils.db_utils import fetch_all, execute
+from utils.weekly_digest_generator import generate_weekly_digest_pdf, send_digest_email
 
 logger = logging.getLogger(__name__)
 

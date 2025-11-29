@@ -5,8 +5,8 @@ import json
 from datetime import datetime
 from collections import deque
 from psycopg2.extras import Json
-from db_utils import execute
-from db_utils import fetch_one
+from utils.db_utils import execute
+from utils.db_utils import fetch_one
 
 logger = logging.getLogger(__name__)
 

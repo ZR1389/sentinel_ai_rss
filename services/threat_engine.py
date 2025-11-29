@@ -27,7 +27,7 @@ logger = get_logger("threat_engine")
 metrics = get_metrics_logger("threat_engine")
 
 # Input validation
-from validation import validate_alert, validate_alert_batch, validate_enrichment_data
+from utils.validation import validate_alert, validate_alert_batch, validate_enrichment_data
 
 # -------- Optional LLM clients / prompts (do not fail engine if absent) --------
 try:
@@ -69,7 +69,7 @@ except Exception:
     )
 
 # -------- Project imports --------
-from risk_shared import (
+from utils.risk_shared import (
     compute_keyword_weight,
     enrich_log,  # kept for compatibility even if unused
     run_sentiment_analysis,
@@ -83,7 +83,7 @@ from risk_shared import (
     relevance_flags,         # <-- sports/info-ops light flags
 )
 
-from db_utils import (
+from utils.db_utils import (
     fetch_raw_alerts_from_db,
     save_alerts_to_db,
     fetch_past_incidents,
@@ -506,7 +506,7 @@ if openai_client is None and ENABLE_SEMANTIC_DEDUP:
 
 # New modular enrichment system
 try:
-    from enrichment_stages import get_enrichment_pipeline, enrich_single_alert as modular_enrich_alert
+    from services.enrichment_stages import get_enrichment_pipeline, enrich_single_alert as modular_enrich_alert
     MODULAR_ENRICHMENT_AVAILABLE = True
 except ImportError as e:
     logger.warning("modular_enrichment_unavailable", error=str(e))
@@ -602,7 +602,7 @@ def deduplicate_alerts(
                 if emb:
                     try:
                         # pgvector-compatible approach using REAL[] arrays
-                        from db_utils import fetch_one
+                        from utils.db_utils import fetch_one
                         row = fetch_one(
                             "SELECT uuid, 1 - (embedding <=> %s::REAL[]) as similarity FROM alerts WHERE embedding IS NOT NULL AND 1 - (embedding <=> %s::REAL[]) > %s ORDER BY embedding <=> %s::REAL[] LIMIT 1",
                             (emb, emb, sim_threshold, emb)
@@ -965,7 +965,7 @@ def summarize_single_alert(alert: dict) -> dict:
             
             if result is None:
                 # Check if this was a validation error vs. content filtering
-                from validation import validate_alert
+                from utils.validation import validate_alert
                 is_valid, error = validate_alert(alert)
                 if not is_valid:
                     raise ValueError(f"Alert validation failed: {error}")

@@ -47,7 +47,7 @@ except Exception as e:
         return s
 
 # Core imports for timer-based batch processing
-from batch_state_manager import get_batch_state_manager, reset_batch_state_manager
+from utils.batch_state_manager import get_batch_state_manager, reset_batch_state_manager
 
 # Metrics integration for performance monitoring
 try:
@@ -105,10 +105,10 @@ except ImportError:
     moonshot_circuit = MockCircuitBreaker()
 
 # Import proper batch state management (eliminates function attribute anti-pattern)
-from batch_state_manager import get_batch_state_manager
+from utils.batch_state_manager import get_batch_state_manager
 
 # Core imports for timer-based batch processing
-from batch_state_manager import get_batch_state_manager, reset_batch_state_manager
+from utils.batch_state_manager import get_batch_state_manager, reset_batch_state_manager
 
 # === Moonshot Location Batching (Using Proper State Management) ===
 # ANTI-PATTERN FIXED: No longer using function attributes or module globals
@@ -354,7 +354,7 @@ GEOCODE_ENABLED = config.geocode_enabled
 
 # Standardized database access - using db_utils.py only
 try:
-    from db_utils import save_raw_alerts_to_db, fetch_one, execute
+    from utils.db_utils import save_raw_alerts_to_db, fetch_one, execute
     logger.info("Database utilities loaded successfully from db_utils.py")
 except Exception as e:
     logger.error("db_utils import failed: %s", e)
@@ -1812,7 +1812,7 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
         batch_results = {}  # Initialize batch results dictionary
         
         # Configure optimized batch processing
-        from batch_state_manager import BatchFlushConfig
+        from utils.batch_state_manager import BatchFlushConfig
         flush_config = BatchFlushConfig(
             size_threshold=_BATCH_SIZE_THRESHOLD,
             time_threshold_seconds=_BATCH_TIMEOUT_SECONDS,

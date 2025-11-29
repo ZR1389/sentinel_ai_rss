@@ -253,6 +253,9 @@ def run_acled_collect():
         result = run_acled_collector(countries=countries, days_back=days_back)
         ok = bool(result.get("success"))
         return False
+    except Exception as e:
+        logger.error(f"ACLED collection failed: {e}")
+        return False
 
 # GDELT and ACLED functions removed - no longer used in the system
 

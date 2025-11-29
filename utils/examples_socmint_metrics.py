@@ -6,7 +6,7 @@ Example usage patterns for the enhanced SOCMINT subsystem
 
 # 1. Basic Metrics Access
 # ======================
-from socmint_service import get_cache_metrics
+from utils.socmint_service import get_cache_metrics
 
 metrics = get_cache_metrics()
 print(f"Cache Hit Rate: {metrics['hit_rate_percent']}%")
@@ -14,14 +14,14 @@ print(f"Apify Calls Saved: {metrics['hits']}")
 
 # 2. Performance Logging
 # ======================
-from socmint_service import log_cache_performance_summary
+from utils.socmint_service import log_cache_performance_summary
 
 # Call this periodically (hourly/daily in production)
 log_cache_performance_summary()
 
 # 3. Cache Operations (automatic tracking)
 # ========================================
-from socmint_service import SocmintService
+from utils.socmint_service import SocmintService
 
 service = SocmintService()
 
@@ -75,7 +75,7 @@ Example Response:
 
 # 6. Periodic Maintenance
 # =======================
-from socmint_service import reset_cache_metrics
+from utils.socmint_service import reset_cache_metrics
 import schedule  # pip install schedule
 
 def daily_metrics_report():

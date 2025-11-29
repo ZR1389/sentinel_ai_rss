@@ -10,7 +10,7 @@ from typing import Dict, List, Any
 import pytz
 import json
 
-from db_utils import fetch_all, fetch_one, execute
+from utils.db_utils import fetch_all, fetch_one, execute
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 import uuid

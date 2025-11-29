@@ -69,7 +69,7 @@ from core.logging_config import get_logger, get_metrics_logger, setup_logging
 setup_logging("sentinel-api")
 logger = get_logger("sentinel.main")
 metrics = get_metrics_logger("sentinel.main")
-from cache_utils import HybridCache
+from utils.cache_utils import HybridCache
 
 app = Flask(__name__)
 
@@ -136,7 +136,7 @@ else:
 # Start weekly digest scheduler if enabled
 if os.getenv('WEEKLY_DIGEST_ENABLED', 'true').lower() == 'true':
     try:
-        from weekly_digest_scheduler import start_weekly_digest_scheduler
+        from utils.weekly_digest_scheduler import start_weekly_digest_scheduler
         start_weekly_digest_scheduler()
         logger.info("✓ Weekly digest scheduler started")
     except Exception as e:
@@ -201,7 +201,7 @@ def handle_500_error(e):
     return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 # ---------- Input validation ----------
-from validation import validate_alert_batch, validate_enrichment_data
+from utils.validation import validate_alert_batch, validate_enrichment_data
 
 # ---------- CORS (more restrictive default) ----------
 # Import centralized configuration
@@ -274,7 +274,7 @@ def ping():
 @app.route("/auth/status", methods=["GET"])  # returns auth context from Bearer token
 def auth_status():
     try:
-        from auth_utils import decode_token
+        from utils.auth_utils import decode_token
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
             return _build_cors_response(make_response(jsonify({"error": "Unauthorized"}), 401))
@@ -291,7 +291,7 @@ def auth_status():
         all_limits = {}
         plan_features = {}
         try:
-            from plan_utils import get_usage, get_plan_limits
+            from utils.plan_utils import get_usage, get_plan_limits
             from config_data.plans import get_plan_feature
             u = get_usage(email) if get_usage else None
             if isinstance(u, dict):
@@ -1020,7 +1020,7 @@ def trigger_acled_collection():
 
 # ---------- Imports: plan / advisor / engines ----------
 try:
-    from plan_utils import (
+    from utils.plan_utils import (
         ensure_user_exists,
         get_plan_limits,
         check_user_message_quota,
@@ -1040,22 +1040,22 @@ except Exception as e:
 _advisor_callable = None
 try:
     # full payload: returns { reply, alerts, plan, usage, session_id }
-    from chat_handler import handle_user_query as _advisor_callable
+    from api.chat_handler import handle_user_query as _advisor_callable
 except Exception:
     try:
         # fallback: if someone provided a matching entrypoint in advisor.py
-        from advisor import handle_user_query as _advisor_callable
+        from api.advisor import handle_user_query as _advisor_callable
     except Exception:
         try:
             # last-gasp fallbacks to legacy names
-            from advisor import generate_advice as _advisor_callable
+            from api.advisor import generate_advice as _advisor_callable
         except Exception as e:
             logger.error("advisor/chat_handler import failed: %s", e)
             _advisor_callable = None
 
 # Try to import background status helper from chat_handler (optional)
 try:
-    from chat_handler import get_background_status, start_background_job, handle_user_query
+    from api.chat_handler import get_background_status, start_background_job, handle_user_query
     logger.info("Successfully imported chat_handler background functions")
 except Exception as e:
     logger.info("chat_handler background functions import failed: %s", e)
@@ -1078,39 +1078,39 @@ except Exception as e:
 
 # Newsletter (unmetered; login required & verified)
 try:
-    from newsletter import subscribe_to_newsletter
+    from api.newsletter import subscribe_to_newsletter
 except Exception as e:
     logger.error("newsletter import failed: %s", e)
     subscribe_to_newsletter = None
 
 # Paid, unmetered feature modules (guarded by plan)
 try:
-    from generate_pdf import generate_pdf_advisory
+    from utils.generate_pdf import generate_pdf_advisory
 except Exception as e:
     logger.error("generate_pdf import failed: %s", e)
     generate_pdf_advisory = None
 
 try:
-    from email_dispatcher import send_email
+    from utils.email_dispatcher import send_email
 except Exception as e:
     logger.error("email_dispatcher import failed: %s", e)
     send_email = None
 
 try:
-    from push_dispatcher import send_push
+    from utils.push_dispatcher import send_push
 except Exception as e:
     logger.error("push_dispatcher import failed: %s", e)
     send_push = None
 
 try:
-    from telegram_dispatcher import send_telegram_message
+    from utils.telegram_dispatcher import send_telegram_message
 except Exception as e:
     logger.error("telegram_dispatcher import failed: %s", e)
     send_telegram_message = None
 
 # Auth / Verification
 try:
-    from auth_utils import (
+    from utils.auth_utils import (
         register_user,
         authenticate_user,
         rotate_refresh_token,
@@ -1125,7 +1125,7 @@ except Exception as e:
     get_logged_in_email = None
 
 try:
-    from verification_utils import (
+    from utils.verification_utils import (
         issue_verification_code,
         verify_code as verify_email_code,
         verification_status,
@@ -1447,7 +1447,7 @@ def _load_user_profile(email: str) -> Dict[str, Any]:
     chat_used = 0
     all_limits = {}
     try:
-        from plan_utils import get_usage, get_plan_limits
+        from utils.plan_utils import get_usage, get_plan_limits
         u = get_usage(email) if get_usage else None
         if isinstance(u, dict):
             chat_used = int(u.get("chat_messages_used", 0))
@@ -1568,7 +1568,7 @@ def auth_login():
     # Get usage data
     usage_data = {"chat_messages_used": 0, "chat_messages_limit": 3}
     try:
-        from plan_utils import get_usage, get_plan_limits
+        from utils.plan_utils import get_usage, get_plan_limits
         u = get_usage(email)
         if isinstance(u, dict):
             usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
@@ -1834,7 +1834,7 @@ def _chat_impl():
                 used_val = 0
                 limit_val = 3
                 try:
-                    from plan_utils import get_usage
+                    from utils.plan_utils import get_usage
                     u = get_usage(email)
                     if isinstance(u, dict):
                         used_val = int(u.get("chat_messages_used", 0))
@@ -1895,7 +1895,7 @@ def _chat_impl():
         
         # Resolve current quota after accepting request (usage has been incremented)
         try:
-            from plan_utils import get_usage, get_plan_limits
+            from utils.plan_utils import get_usage, get_plan_limits
             plan_name = (get_plan(email) if get_plan else os.getenv("DEFAULT_PLAN", "FREE")).strip().upper()
             used_val = 0
             lim_val = 3
@@ -1992,7 +1992,7 @@ def debug_quota():
     used_val = 0
     limit_val = 3
     try:
-        from plan_utils import get_usage, get_plan_limits
+        from utils.plan_utils import get_usage, get_plan_limits
         u = get_usage(email) if get_usage else None
         if isinstance(u, dict):
             used_val = int(u.get("chat_messages_used", 0))
@@ -2338,7 +2338,7 @@ def user_plan():
     # Get current usage
     usage_data = {"chat_messages_used": 0}
     try:
-        from plan_utils import get_usage
+        from utils.plan_utils import get_usage
         u = get_usage(email)
         if isinstance(u, dict):
             usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
@@ -2592,7 +2592,7 @@ def alerts_latest():
 
     # Get user's plan limits
     try:
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         limits = get_plan_limits(email)
         plan_days_cap = limits.get("alerts_days", 7)
         plan_results_cap = limits.get("alerts_max_results", 30)
@@ -3602,7 +3602,7 @@ def analytics_timeline():
         if jwt_plan:
             plan = str(jwt_plan).strip().upper()
         else:
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             email = g.user_email
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
@@ -3687,7 +3687,7 @@ def stats_overview():
         if jwt_plan:
             plan = str(jwt_plan).strip().upper()
         else:
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             email = get_logged_in_email()
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
@@ -3702,7 +3702,7 @@ def stats_overview():
     try:
         # Get user plan limits
         email = get_logged_in_email()
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         limits = get_plan_limits(email) or {}
         max_window_days = limits.get("statistics_days", 7)
         
@@ -3842,7 +3842,7 @@ def stats_overview():
         email = get_logged_in_email()
         chat_messages_month = 0
         try:
-            from plan_utils import get_usage
+            from utils.plan_utils import get_usage
             usage = get_usage(email) or {}
             chat_messages_month = int(usage.get("chat_messages_used", 0))
         except Exception:
@@ -3891,7 +3891,7 @@ def analytics_statistics():
         return _build_cors_response(make_response(jsonify({"error": "Database not available"}), 503))
     
     try:
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         email = g.user_email
         limits = get_plan_limits(email) or {}
         statistics_days = limits.get("statistics_days", 7)
@@ -5694,7 +5694,7 @@ def travel_risk_assessment():
         if output_format == "structured":
             try:
                 alert = _assessment_to_alert_for_advisor(assessment, destination)
-                from advisor import render_advisory
+                from api.advisor import render_advisory
                 profile = {"location": destination} if destination else {}
                 user_msg = destination or f"{lat},{lon}"
                 advisory_text = render_advisory(alert, user_msg, profile)
@@ -6723,7 +6723,7 @@ def sentinel_chat():
     
     try:
         email = get_logged_in_email()
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         limits = get_plan_limits(email)
         plan = limits['plan']
         payload = request.get_json(silent=True) or {}
@@ -6792,7 +6792,7 @@ def sentinel_chat():
         # For paid plans, call the full chat handler which now includes metadata
         # This will return proper intelligence with sources and confidence
         try:
-            from chat_handler import handle_user_query
+            from api.chat_handler import handle_user_query
             response = handle_user_query(
                 message=message,
                 email=email,
@@ -6849,7 +6849,7 @@ def map_alerts_gated():
         return _build_cors_response(make_response(jsonify({'error': 'Database unavailable'}), 503))
     try:
         email = get_logged_in_email()
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         limits = get_plan_limits(email)
         plan = limits['plan']
         
@@ -6967,7 +6967,7 @@ def stats_overview_gated():
     """Extended stats with tiered detail level."""
     try:
         email = get_logged_in_email()
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         limits = get_plan_limits(email)
         level = get_plan_feature(limits['plan'], 'statistics_dashboard')
         if not level:
@@ -7153,7 +7153,7 @@ def safe_zones_list():
             plan = str(jwt_plan).strip().upper()
         else:
             email = get_logged_in_email()
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
@@ -7175,7 +7175,7 @@ def team_invite():
             plan = str(jwt_plan).strip().upper()
         else:
             email = get_logged_in_email()
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
@@ -7222,7 +7222,7 @@ def issue_api_token():
             plan = str(jwt_plan).strip().upper()
         else:
             email = get_logged_in_email()
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
@@ -7254,7 +7254,7 @@ def analyst_intelligence():
             plan = str(jwt_plan).strip().upper()
         else:
             email = get_logged_in_email()
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
@@ -7282,7 +7282,7 @@ def monthly_briefing():
             plan = str(jwt_plan).strip().upper()
         else:
             email = get_logged_in_email()
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
@@ -7308,7 +7308,7 @@ def custom_report():
             plan = str(jwt_plan).strip().upper()
         else:
             email = get_logged_in_email()
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits = get_plan_limits(email) or {}
             plan = (limits.get('plan') or 'FREE').upper()
         
@@ -7333,7 +7333,7 @@ def custom_report():
 def export_alerts():
     """Export alerts in formats gated by plan."""
     email = get_logged_in_email()
-    from plan_utils import get_plan_limits
+    from utils.plan_utils import get_plan_limits
     limits = get_plan_limits(email)
     plan = limits['plan']
     payload = request.get_json(silent=True) or {}
@@ -7401,7 +7401,7 @@ def export_pdf():
     
     try:
         # Get user plan and check PDF export limits
-        from plan_utils import get_plan_limits, _get_user_id, ensure_user_exists, _maybe_monthly_reset
+        from utils.plan_utils import get_plan_limits, _get_user_id, ensure_user_exists, _maybe_monthly_reset
         from config_data.plans import get_plan_feature
         
         ensure_user_exists(email)
@@ -7546,7 +7546,7 @@ def download_pdf(file_id):
     email = get_logged_in_email()
     
     try:
-        from plan_utils import _get_user_id
+        from utils.plan_utils import _get_user_id
         from db_utils import fetch_one
         from flask import send_file
         
@@ -7618,7 +7618,7 @@ def map_feature_matrix():
         if jwt_plan:
             plan = str(jwt_plan).strip().upper()
         else:
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits_info = get_plan_limits(email) or {}
             plan = (limits_info.get('plan') or 'FREE').upper()
         from config_data.plans import get_plan_feature
@@ -7645,7 +7645,7 @@ def chat_threads_export_pdf(thread_uuid):
         if jwt_plan:
             plan = str(jwt_plan).strip().upper()
         else:
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits_info = get_plan_limits(get_logged_in_email()) or {}
             plan = (limits_info.get('plan') or 'FREE').upper()
         from utils.thread_manager import get_thread
@@ -7667,7 +7667,7 @@ def chat_threads_export_pdf(thread_uuid):
         body_text = '\n'.join(lines)
         title = thread_data['thread'].get('title') or 'Chat Thread'
         try:
-            from generate_pdf import generate_pdf_advisory
+            from utils.generate_pdf import generate_pdf_advisory
             pdf_path = generate_pdf_advisory(email, title, body_text)
         except Exception:
             pdf_path = None
@@ -7692,7 +7692,7 @@ def create_weekly_digest_schedule():
         payload = request.get_json(silent=True) or {}
         
         # Get user plan and limits
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         from config_data.plans import get_plan_feature
         limits = get_plan_limits(email)
         plan = limits.get('plan', 'FREE')
@@ -7966,7 +7966,7 @@ def briefing_package():
         if jwt_plan:
             plan = str(jwt_plan).strip().upper()
         else:
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits_info = get_plan_limits(email) or {}
             plan = (limits_info.get('plan') or 'FREE').upper()
         from config_data.plans import get_plan_feature
@@ -8187,7 +8187,7 @@ def chat_threads_create():
     """1. Create thread with dual-limit validation."""
     try:
         from utils.thread_manager import create_thread
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         from config_data.plans import get_plan_feature
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
@@ -8254,7 +8254,7 @@ def chat_threads_list():
     """2. List threads with pagination and filtering."""
     try:
         from utils.thread_manager import list_threads
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8288,7 +8288,7 @@ def chat_threads_get(thread_uuid):
     """3. Get full thread with all messages."""
     try:
         from utils.thread_manager import get_thread
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8320,7 +8320,7 @@ def chat_threads_add_messages(thread_uuid):
     """4. Add messages to existing thread."""
     try:
         from utils.thread_manager import add_messages, get_usage_stats, get_thread_limits
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8416,7 +8416,7 @@ def chat_threads_archive(thread_uuid):
     """6. Archive thread (PRO+ only)."""
     try:
         from utils.thread_manager import archive_thread
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8457,7 +8457,7 @@ def chat_threads_unarchive(thread_uuid):
     """7. Restore thread from archive."""
     try:
         from utils.thread_manager import unarchive_thread
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8497,7 +8497,7 @@ def chat_threads_delete(thread_uuid):
     """8. Soft delete thread (30-day restore window)."""
     try:
         from utils.thread_manager import delete_thread
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8529,7 +8529,7 @@ def chat_threads_restore(thread_uuid):
     """9. Restore soft-deleted thread (within 30 days)."""
     try:
         from utils.thread_manager import restore_thread, get_usage_stats
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8575,7 +8575,7 @@ def chat_threads_usage():
     """10. Get comprehensive usage statistics."""
     try:
         from utils.thread_manager import get_usage_overview
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
     except Exception as e:
         logger.error('thread_manager import failed: %s', e)
         return _build_cors_response(make_response(jsonify({'error': 'Thread system unavailable'}), 500))
@@ -8703,7 +8703,7 @@ def create_travel_itinerary():
         user_plan = str(jwt_plan).strip().upper()
     else:
         try:
-            from plan_utils import get_plan_limits
+            from utils.plan_utils import get_plan_limits
             limits_info = get_plan_limits(email) or {}
             user_plan = (limits_info.get('plan') or os.getenv('DEFAULT_PLAN', 'FREE')).strip().upper()
         except Exception:
@@ -8959,7 +8959,7 @@ def update_travel_itinerary(itinerary_uuid):
 
     # Resolve plan
     try:
-        from plan_utils import get_plan_limits
+        from utils.plan_utils import get_plan_limits
         limits_info = get_plan_limits(email) or {}
         user_plan = (limits_info.get('plan') or os.getenv('DEFAULT_PLAN', 'FREE')).strip().upper()
     except Exception:
@@ -9171,7 +9171,7 @@ def get_export_history():
     email = get_logged_in_email()
     
     try:
-        from plan_utils import _get_user_id
+        from utils.plan_utils import _get_user_id
         
         user_id = _get_user_id(email)
         if not user_id:
@@ -9233,7 +9233,7 @@ def download_export_file(file_id):
     email = get_logged_in_email()
     
     try:
-        from plan_utils import _get_user_id
+        from utils.plan_utils import _get_user_id
         from flask import send_file
         
         user_id = _get_user_id(email)

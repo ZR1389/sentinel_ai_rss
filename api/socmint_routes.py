@@ -1,10 +1,10 @@
 from flask import Blueprint, request, jsonify
-from socmint_service import SocmintService, get_cache_metrics, reset_cache_metrics
-import auth_utils
+from utils.socmint_service import SocmintService, get_cache_metrics, reset_cache_metrics
+from utils import auth_utils
 from functools import wraps
 import logging
 import urllib.parse
-from db_utils import fetch_one
+from utils.db_utils import fetch_one
 
 socmint_bp = Blueprint('socmint', __name__)
 apify_service = SocmintService()
@@ -17,6 +17,11 @@ except ImportError:
     limiter = None
     SOCMINT_INSTAGRAM_RATE = "30 per minute"
     SOCMINT_FACEBOOK_RATE = "10 per minute"
+
+def set_socmint_limiter(lim):
+    """Set the limiter for socmint routes to avoid circular import"""
+    global limiter
+    limiter = lim
 
 # Instagram endpoint
 @socmint_bp.route('/instagram/<username>', methods=['GET'])
@@ -152,46 +157,6 @@ def get_socmint_status(platform, identifier):
     except Exception as e:
         logger.error(f"Status check failed: {str(e)}", exc_info=True)
         return jsonify(success=False, error="Server error"), 500
-
-# Metrics endpoints
-@socmint_bp.route('/metrics', methods=['GET'])
-@auth_utils.login_required
-def get_metrics():
-    """Get SOCMINT cache performance metrics.
-    
-    Returns:
-        JSON with cache hits, misses, hit rate, Apify calls, etc.
-    
-    Example:
-        GET /api/socmint/metrics
-    """
-    try:
-        metrics = get_cache_metrics()
-        return jsonify({
-            "status": "success",
-            "metrics": metrics
-        }), 200
-    except Exception as e:
-        logger.error(f"Metrics retrieval failed: {e}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@socmint_bp.route('/metrics/reset', methods=['POST'])
-@auth_utils.login_required
-def reset_metrics():
-    """Reset SOCMINT cache metrics counters.
-    
-    Example:
-        POST /api/socmint/metrics/reset
-    """
-    try:
-        reset_cache_metrics()
-        return jsonify({
-            "status": "success",
-            "message": "Cache metrics reset successfully"
-        }), 200
-    except Exception as e:
-        logger.error(f"Metrics reset failed: {e}")
-        return jsonify({"error": "Internal server error"}), 500
 
 # Dashboard endpoint
 @socmint_bp.route('/dashboard', methods=['GET'])

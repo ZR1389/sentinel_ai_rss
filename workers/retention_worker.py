@@ -39,7 +39,7 @@ def load_environment():
 # Load environment before importing db_utils
 load_environment()
 
-from db_utils import execute
+from utils.db_utils import execute
 
 # Structured logging setup with fallback
 try:

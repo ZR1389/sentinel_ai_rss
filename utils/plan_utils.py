@@ -7,7 +7,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 import logging
 
-from security_log_utils import log_security_event  # keep your existing logger
+from utils.security_log_utils import log_security_event  # keep your existing logger
 from core.config import CONFIG
 
 DATABASE_URL = CONFIG.database.url

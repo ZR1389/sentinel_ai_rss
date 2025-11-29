@@ -44,7 +44,7 @@ except ImportError:
             return False
 
 # Shared heuristics/taxonomy
-from risk_shared import (
+from utils.risk_shared import (
     compute_keyword_weight,
     run_sentiment_analysis,
     detect_domains,

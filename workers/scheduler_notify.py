@@ -3,8 +3,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import DictCursor
-from email_dispatcher import send_pdf_report
-from telegram_dispatcher import send_alerts_to_telegram
+from utils.email_dispatcher import send_pdf_report
+from utils.telegram_dispatcher import send_alerts_to_telegram
 
 # Load environment: Railway uses native env vars
 if not os.getenv('RAILWAY_ENVIRONMENT'):

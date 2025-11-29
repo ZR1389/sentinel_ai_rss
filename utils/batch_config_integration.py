@@ -10,7 +10,7 @@ from typing import Optional, Callable
 
 try:
     from core.config import CONFIG
-    from batch_state_manager import (
+    from utils.batch_state_manager import (
         BatchStateManager, 
         BatchFlushConfig, 
         BatchOptimizationConfig,

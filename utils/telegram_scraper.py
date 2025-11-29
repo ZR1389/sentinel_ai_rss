@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from core.config import CONFIG
 
-from db_utils import save_raw_alerts_to_db
+from utils.db_utils import save_raw_alerts_to_db
 
 logger = logging.getLogger("telegram_scraper")
 logging.basicConfig(level=CONFIG.security.log_level)
