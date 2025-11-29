@@ -428,7 +428,7 @@ def apply_migration_endpoint():
             migration_sql = f.read()
         
         # Apply via connection pool
-        from db_utils import get_connection_pool
+        from utils.db_utils import get_connection_pool
         pool = get_connection_pool()
         conn = pool.getconn()
         
@@ -675,7 +675,7 @@ def update_user_plan():
         if new_plan not in allowed_plans:
             return jsonify({"error": f"Invalid plan. Must be one of: {allowed_plans}"}), 400
         
-        from db_utils import get_connection_pool
+        from utils.db_utils import get_connection_pool
         pool = get_connection_pool()
         conn = pool.getconn()
         
@@ -1136,7 +1136,7 @@ except Exception as e:
 
 # DB utils for some handy reads / writes
 try:
-    from db_utils import fetch_all, fetch_one, execute
+    from utils.db_utils import fetch_all, fetch_one, execute
 except Exception:
     fetch_all = None
     fetch_one = None
@@ -4561,7 +4561,7 @@ def cleanup_corrupted_coordinates():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
             cur = conn.cursor()
@@ -4656,7 +4656,7 @@ def fix_coordinates_simple():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         # Country centroids (major countries only, enough for GDELT)
         CENTROIDS = {
@@ -4762,7 +4762,7 @@ def geocode_backfill():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         from services.geocoding_service import geocode
         
         batch_size = int(request.args.get("batch_size", 100))
@@ -4838,7 +4838,7 @@ def check_alert_sources():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
             cur = conn.cursor()
@@ -4901,7 +4901,7 @@ def geocoding_status():
     
     try:
         from geocoding_monitor import get_geocoding_status
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
             status = get_geocoding_status(conn)
@@ -4993,7 +4993,7 @@ def geocoding_dashboard():
     try:
         # Coverage/backlog
         from geocoding_monitor import get_geocoding_status
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         with _get_db_connection() as conn:
             coverage = get_geocoding_status(conn)
 
@@ -5041,7 +5041,7 @@ def geocoding_dashboard_view():
     try:
         # Coverage/backlog
         from geocoding_monitor import get_geocoding_status
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         with _get_db_connection() as conn:
             coverage = get_geocoding_status(conn)
 
@@ -5114,7 +5114,7 @@ def location_validations_list():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import fetch_all
+        from utils.db_utils import fetch_all
         
         # Get pagination parameters
         limit = request.args.get('limit', 50, type=int)
@@ -5185,7 +5185,7 @@ def gdelt_reprocess_coords():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
             cur = conn.cursor()
@@ -5256,7 +5256,7 @@ def gdelt_health():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
             cur = conn.cursor()
@@ -6384,7 +6384,7 @@ def batch_geocode_smart_endpoint():
             return jsonify({"error": "Unauthorized - valid API key required"}), 401
         
         from services.geocoding_service import batch_geocode
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         data = request.json or {}
         limit = data.get('limit', 2000)
@@ -7418,7 +7418,7 @@ def export_pdf():
         monthly_limit = get_plan_feature(plan, 'pdf_exports_monthly')
         
         # Check current usage
-        from db_utils import fetch_one
+        from utils.db_utils import fetch_one
         usage_row = fetch_one('SELECT pdf_exports_used FROM user_usage WHERE user_id=%s', (user_id,))
         pdf_exports_used = usage_row['pdf_exports_used'] if usage_row else 0
         
@@ -7488,7 +7488,7 @@ def export_pdf():
         HTML(string=html_content, base_url=request.url_root).write_pdf(pdf_path)
         
         # Increment usage counter
-        from db_utils import execute_query
+        from utils.db_utils import execute_query
         execute_query(
             'UPDATE user_usage SET pdf_exports_used = pdf_exports_used + 1 WHERE user_id=%s',
             (user_id,)
@@ -7547,7 +7547,7 @@ def download_pdf(file_id):
     
     try:
         from utils.plan_utils import _get_user_id
-        from db_utils import fetch_one
+        from utils.db_utils import fetch_one
         from flask import send_file
         
         user_id = _get_user_id(email)

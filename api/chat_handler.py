@@ -44,7 +44,7 @@ except Exception:
     get_plan = None
     get_usage = None
 
-from security_log_utils import log_security_event
+from utils.security_log_utils import log_security_event
 
 # Optional city tools (safe fallbacks if missing)
 try:

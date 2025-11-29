@@ -10,7 +10,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 from core.config import CONFIG
 
-from security_log_utils import log_security_event
+from utils.security_log_utils import log_security_event
 
 # -------- Config --------
 BREVO_API_KEY = CONFIG.email.brevo_api_key
