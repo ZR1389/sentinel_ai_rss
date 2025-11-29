@@ -1107,14 +1107,18 @@ def summarize_single_alert(alert: dict) -> dict:
         logger.warning(f"[THREAT_ENGINE] Keyword weight analysis failed: {e}")
         alert["keyword_weight"] = None
 
-    # Quick LLM summary (now routed & tracked)
-    messages = [
-    {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
-    {"role": "user", "content": full_text},
-    ]
-    g_summary, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts, task_type="enrichment")
-    alert["gpt_summary"] = g_summary or alert.get("gpt_summary") or ""
-    alert["model_used"] = model_used  # <-- explicit auditability
+    # LLM summary DISABLED to save tokens - use existing summary field
+    # messages = [
+    # {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
+    # {"role": "user", "content": full_text},
+    # ]
+    # g_summary, model_used = route_llm(messages, temperature=TEMPERATURE, usage_counts=_model_usage_counts, task_type="enrichment")
+    # alert["gpt_summary"] = g_summary or alert.get("gpt_summary") or ""
+    # alert["model_used"] = model_used  # <-- explicit auditability
+    
+    # Use existing summary instead of expensive LLM generation
+    alert["gpt_summary"] = alert.get("summary") or alert.get("en_snippet") or ""
+    alert["model_used"] = "disabled_to_save_tokens"
 
     # Category/subcategory (fallbacks if missing)
     if not alert.get("category") or not alert.get("category_confidence"):

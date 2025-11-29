@@ -628,6 +628,26 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     if not alerts:
         logger.info("No enriched alerts to write.")
         return 0
+    
+    # VALIDATION: Reject alerts without proper country (prevents wrong location data)
+    valid_alerts = []
+    rejected_count = 0
+    for alert in alerts:
+        country = alert.get("country")
+        if not country or not country.strip():
+            rejected_count += 1
+            logger.warning(f"Rejected alert without country: {alert.get('title', 'NO_TITLE')[:50]} (city={alert.get('city')})")
+            continue
+        valid_alerts.append(alert)
+    
+    if rejected_count > 0:
+        logger.warning(f"Rejected {rejected_count}/{len(alerts)} alerts due to missing country field")
+    
+    if not valid_alerts:
+        logger.info("No valid alerts to write after country validation.")
+        return 0
+    
+    alerts = valid_alerts  # Use only validated alerts
 
     columns = [
         "uuid","title","summary","en_snippet","gpt_summary","link","source","published",
@@ -672,25 +692,6 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
                 tags = [str(tags)]
         elif not isinstance(tags, list):
             tags = [str(tags)]
-
-        # Persist GDELT source metadata into tags for future auditability (no schema change needed)
-        src_val = str(a.get("source") or "").lower()
-        if src_val == "gdelt":
-            # Collect known GDELT metrics if present on the alert payload
-            meta_candidates = {}
-            meta_source = a.get("metadata") if isinstance(a.get("metadata"), dict) else {}
-            for key in ["goldstein", "mentions", "tone", "event_code", "quad_class"]:
-                v = (a.get(key) or a.get(f"gdelt_{key}") or meta_source.get(key))
-                if v is not None:
-                    meta_candidates[key] = v
-            # Flatten into prefixed tag entries: gdelt_key=value
-            for k, v in meta_candidates.items():
-                tag_line = f"gdelt_{k}={v}"
-                if tag_line not in tags:
-                    tags.append(tag_line)
-            if meta_candidates and not any(t.startswith("gdelt_meta=") for t in tags):
-                compact = ",".join([f"{k}:{meta_candidates[k]}" for k in sorted(meta_candidates)])
-                tags.append(f"gdelt_meta={compact}")
 
         ewi     = a.get("early_warning_indicators") or []
         domains = a.get("domains") or []

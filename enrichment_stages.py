@@ -209,28 +209,28 @@ class RiskAnalysisStage(EnrichmentStage):
         return alert
 
 class LLMSummaryStage(EnrichmentStage):
-    """Generate LLM summary with model routing and tracking."""
+    \"\"\"LLM summary DISABLED to save tokens - uses existing summary instead.\"\"\"
     
     def __init__(self):
-        super().__init__("llm_summary")
+        super().__init__(\"llm_summary\")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import route_llm, THREAT_SUMMARIZE_SYSTEM_PROMPT, TEMPERATURE, _model_usage_counts
+        # DISABLED: Expensive LLM call for every alert
+        # from threat_engine import route_llm, THREAT_SUMMARIZE_SYSTEM_PROMPT, TEMPERATURE, _model_usage_counts
+        # messages = [
+        #     {\"role\": \"system\", \"content\": THREAT_SUMMARIZE_SYSTEM_PROMPT},
+        #     {\"role\": \"user\", \"content\": context.full_text},
+        # ]
+        # g_summary, model_used = route_llm(
+        #     messages, 
+        #     temperature=TEMPERATURE, 
+        #     usage_counts=_model_usage_counts, 
+        #     task_type=\"enrichment\"
+        # )
         
-        messages = [
-            {"role": "system", "content": THREAT_SUMMARIZE_SYSTEM_PROMPT},
-            {"role": "user", "content": context.full_text},
-        ]
-        
-        g_summary, model_used = route_llm(
-            messages, 
-            temperature=TEMPERATURE, 
-            usage_counts=_model_usage_counts, 
-            task_type="enrichment"
-        )
-        
-        alert["gpt_summary"] = g_summary or alert.get("gpt_summary") or ""
-        alert["model_used"] = model_used  # explicit auditability
+        # Use existing summary instead of expensive LLM generation
+        alert[\"gpt_summary\"] = alert.get(\"summary\") or alert.get(\"en_snippet\") or \"\"
+        alert[\"model_used\"] = \"disabled_to_save_tokens\"
         
         return alert
 

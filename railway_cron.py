@@ -3,7 +3,7 @@
 Railway Cron Job Script
 - Environment bootstrapping for Railway cron one-off tasks
 - Maintenance: retention cleanup and vacuum
-- Ingestion/Enrichment runners: RSS, Threat Engine, GDELT enrichment, ACLED
+- Ingestion/Enrichment runners: RSS, Threat Engine only
 """
 
 import os
@@ -252,13 +252,9 @@ def run_acled_collect():
         logger.info("Starting ACLED collection", extra={"countries": countries or 'default', "days_back": days_back})
         result = run_acled_collector(countries=countries, days_back=days_back)
         ok = bool(result.get("success"))
-        logger.info("ACLED collection completed", extra=result)
-        return ok
-    except Exception as e:
-        logger.error(f"ACLED collection failed: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
+
+# GDELT and ACLED functions removed - no longer used in the system
 
 def run_proximity_check():
     """Check all travelers for nearby threats"""
@@ -438,10 +434,7 @@ if __name__ == "__main__":
             success = run_rss_ingest()
         elif operation == "engine":
             success = run_engine_enrich()
-        elif operation in ("gdelt_enrich", "gdelt-enrich", "gdelt"):
-            success = run_gdelt_enrich_once()
-        elif operation == "acled":
-            success = run_acled_collect()
+        # GDELT and ACLED removed - no longer used
         elif operation == "proximity":
             success = run_proximity_check()
         elif operation == "geocode":
