@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import limiter for rate limiting
 try:
-    from main import limiter, SOCMINT_INSTAGRAM_RATE, SOCMINT_FACEBOOK_RATE
+    from core.main import limiter, SOCMINT_INSTAGRAM_RATE, SOCMINT_FACEBOOK_RATE
 except ImportError:
     limiter = None
     SOCMINT_INSTAGRAM_RATE = "30 per minute"

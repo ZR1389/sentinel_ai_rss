@@ -7,7 +7,7 @@ from typing import Optional
 from rq import get_current_job, Queue
 
 # Reuse existing service logic and caching
-from geocoding_service import geocode, _normalize_location, _get_redis, enqueue_geocode, get_quota_status
+from services.geocoding_service import geocode, _normalize_location, _get_redis, enqueue_geocode, get_quota_status
 
 logger = logging.getLogger("geocode_worker")
 

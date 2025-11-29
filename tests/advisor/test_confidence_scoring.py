@@ -17,7 +17,7 @@ sys.path.insert(0, project_root)
 
 # Import the function we're testing
 try:
-    from threat_engine import compute_confidence
+    from services.threat_engine import compute_confidence
     print("✓ Successfully imported compute_confidence from threat_engine")
 except ImportError as e:
     print(f"✗ Failed to import compute_confidence: {e}")

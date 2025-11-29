@@ -1,5 +1,5 @@
 import unittest
-from threat_engine import calculate_socmint_score, is_recent
+from services.threat_engine import calculate_socmint_score, is_recent
 from datetime import datetime, timedelta
 
 class TestCalculateSocmintScore(unittest.TestCase):

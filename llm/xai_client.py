@@ -5,8 +5,8 @@ import threading
 from contextlib import contextmanager
 from xai_sdk import Client
 from xai_sdk.chat import user, system
-from llm_rate_limiter import rate_limited
-from config import CONFIG
+from monitoring.llm_rate_limiter import rate_limited
+from core.config import CONFIG
 
 logger = logging.getLogger("xai_client")
 

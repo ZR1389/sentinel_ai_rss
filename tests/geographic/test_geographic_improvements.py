@@ -22,7 +22,7 @@ logging.basicConfig(
 
 # Import the enhanced function
 try:
-    from location_service_consolidated import enhance_geographic_query
+    from services.location_service_consolidated import enhance_geographic_query
 except ImportError:
     print("⚠️  location_service_consolidated not found, skipping test")
     sys.exit(0)

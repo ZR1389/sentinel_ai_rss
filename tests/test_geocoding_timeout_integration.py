@@ -51,7 +51,7 @@ class TestGeocodingTimeoutIntegration:
             mock_timeout_mgr.geocode_with_timeout.return_value = (37.7749, -122.4194)
             
             # Import and test
-            from rss_processor import get_city_coords
+            from services.rss_processor import get_city_coords
             
             lat, lon = get_city_coords("San Francisco", "United States")
             
@@ -76,7 +76,7 @@ class TestGeocodingTimeoutIntegration:
              patch('rss_processor._geo_db_store') as mock_store:
             
             # Import and test
-            from rss_processor import get_city_coords
+            from services.rss_processor import get_city_coords
             
             lat, lon = get_city_coords("New York", "United States")
             

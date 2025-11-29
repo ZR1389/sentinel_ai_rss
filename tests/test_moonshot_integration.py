@@ -8,7 +8,7 @@ import sys
 sys.path.append('/Users/zikarakita/Documents/sentinel_ai_rss')
 
 from moonshot_client import test_moonshot_connection
-from llm_router import route_llm
+from monitoring.llm_router import route_llm
 
 def test_integration():
     """Test the full LLM router integration with Moonshot"""

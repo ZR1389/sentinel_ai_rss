@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
-from llm_router import route_llm
+from monitoring.llm_router import route_llm
 
 # -------- LLM clients / prompts (soft imports so advisor always loads) --------
 # Specialized: Grok (x.ai)
@@ -98,7 +98,7 @@ if not os.getenv('RAILWAY_ENVIRONMENT'):
     else:
         load_dotenv()
 
-from config import CONFIG
+from core.config import CONFIG
 
 OPENAI_API_KEY = CONFIG.llm.openai_api_key  # kept for compatibility elsewhere
 logger = logging.getLogger(__name__)

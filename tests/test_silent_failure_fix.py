@@ -27,7 +27,7 @@ def test_threat_engine_analytics_logging():
         with patch('risk_shared.run_forecast', side_effect=Exception("Simulated forecast error")):
             with patch('risk_shared.run_legal_risk', side_effect=Exception("Simulated legal risk error")):
                 try:
-                    from threat_engine import create_alert
+                    from services.threat_engine import create_alert
                     
                     # Create a test alert that would trigger analytics
                     test_entry = {
@@ -76,7 +76,7 @@ def test_geocoding_failure_logging():
     logger.setLevel(logging.WARNING)
     
     try:
-        from rss_processor import get_city_coords
+        from services.rss_processor import get_city_coords
         
         # Mock the geocoding function to fail
         with patch('rss_processor._cu_get_city_coords', side_effect=Exception("Simulated geocoding error")):
@@ -109,7 +109,7 @@ def test_database_failure_logging():
     logger.setLevel(logging.WARNING)
     
     try:
-        from rss_processor import _db_fetch_one, _db_execute
+        from services.rss_processor import _db_fetch_one, _db_execute
         
         # Mock database functions to fail
         with patch('rss_processor.fetch_one', side_effect=Exception("Simulated DB error")):

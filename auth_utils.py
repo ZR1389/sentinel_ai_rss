@@ -14,7 +14,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from security_log_utils import log_security_event
-from config import CONFIG
+from core.config import CONFIG
 
 # INJECT: Password strength check
 from password_strength_utils import is_strong_password

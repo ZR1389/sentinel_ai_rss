@@ -38,7 +38,7 @@ def get_database_url() -> str:
         return db_url
 
     try:
-        from config import CONFIG  # type: ignore
+        from core.config import CONFIG  # type: ignore
         if getattr(CONFIG, "database", None) and getattr(CONFIG.database, "url", None):
             return CONFIG.database.url
     except Exception:

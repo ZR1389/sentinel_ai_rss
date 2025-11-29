@@ -8,8 +8,8 @@ import json
 import logging
 import httpx
 from typing import List, Dict, Any, Optional
-from llm_rate_limiter import rate_limited
-from config import CONFIG
+from monitoring.llm_rate_limiter import rate_limited
+from core.config import CONFIG
 
 # Load environment variables
 try:

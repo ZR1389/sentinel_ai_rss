@@ -139,7 +139,7 @@ def main():
         print()
     
     print("🔧 Migration Steps:")
-    print("1. Import CONFIG: from config import CONFIG")
+    print("1. Import CONFIG: from core.config import CONFIG")
     print("2. Replace os.getenv() calls with CONFIG attributes")
     print("3. Add missing variables to config.py if needed")
     print("4. Test the application to ensure all configs work")

@@ -4,7 +4,7 @@ Test the enhanced Moonshot batching with better location service and async proce
 """
 import asyncio
 import httpx
-from rss_processor import (
+from services.rss_processor import (
     _build_alert_from_entry, _LOCATION_BATCH_BUFFER, _LOCATION_BATCH_LOCK,
     _should_use_moonshot_for_location, _process_location_batch,
     _apply_moonshot_locations

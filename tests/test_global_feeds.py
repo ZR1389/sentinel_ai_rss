@@ -19,7 +19,7 @@ def test_feed_priority():
     print("TEST 1: Feed Priority Ordering")
     print("="*70)
     
-    from rss_processor import _coalesce_all_feed_specs, GLOBAL_PRIORITY, NATIVE_PRIORITY
+    from services.rss_processor import _coalesce_all_feed_specs, GLOBAL_PRIORITY, NATIVE_PRIORITY
     
     specs = _coalesce_all_feed_specs()
     
@@ -47,7 +47,7 @@ def test_keyword_matching():
     print("TEST 2: Keyword Matching")
     print("="*70)
     
-    from rss_processor import _kw_decide
+    from services.rss_processor import _kw_decide
     
     test_cases = [
         {
@@ -117,7 +117,7 @@ def test_location_extraction():
     print("="*70)
     
     try:
-        from location_service_consolidated import detect_location
+        from services.location_service_consolidated import detect_location
     except ImportError:
         print("⚠ location_service_consolidated not available, trying city_utils...")
         try:
@@ -236,7 +236,7 @@ def test_language_detection():
     print("TEST 5: Language Detection")
     print("="*70)
     
-    from rss_processor import _safe_lang
+    from services.rss_processor import _safe_lang
     
     test_cases = [
         {"text": "Cyberattack hits major hospital in New York", "expected": "en"},

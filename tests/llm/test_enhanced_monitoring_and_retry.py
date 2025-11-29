@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 # Add the project root to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from llm_rate_limiter import (
+from monitoring.llm_rate_limiter import (
     # Core classes and functions
     TokenBucket, EnhancedCircuitBreaker, RetryErrorType,
     retry_with_backoff, classify_error_for_retry, calculate_backoff_delay,

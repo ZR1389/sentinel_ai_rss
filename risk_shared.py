@@ -284,7 +284,7 @@ def extract_location(text: str) -> Tuple[Optional[str], Optional[str]]:
     
     try:
         # Use consolidated location service
-        from location_service_consolidated import detect_location
+        from services.location_service_consolidated import detect_location
         result = detect_location(text or "")
         return result.city, result.country
     except Exception:
@@ -516,7 +516,7 @@ class EmbeddingManager:
         else:
             self.tokenizer = None
             
-        from config import CONFIG
+        from core.config import CONFIG
         self.quota = QuotaMetrics()
         self.daily_limit = CONFIG.app.embedding_quota_daily
         self.request_limit = CONFIG.app.embedding_requests_daily

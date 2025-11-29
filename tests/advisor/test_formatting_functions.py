@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
-from advisor import clean_auto_sections, strip_excessive_blank_lines
+from api.advisor import clean_auto_sections, strip_excessive_blank_lines
 
 def test_formatting_functions():
     """Test the enhanced formatting functions"""

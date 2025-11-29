@@ -18,7 +18,7 @@ def test_batch_integration():
     print("🧪 Testing Moonshot batch integration...")
     
     try:
-        from rss_processor import _build_alert_from_entry, _should_use_moonshot_for_location
+        from services.rss_processor import _build_alert_from_entry, _should_use_moonshot_for_location
         import httpx
         
         # Test heuristic function

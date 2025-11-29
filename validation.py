@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 import uuid as _uuid
 from datetime import datetime
 import re
-from logging_config import get_logger
+from core.logging_config import get_logger
 
 logger = get_logger("validation")
 

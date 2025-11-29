@@ -10,7 +10,7 @@ import asyncio
 import threading
 import time
 import unittest.mock
-from rss_processor import (
+from services.rss_processor import (
     _LOCATION_BATCH_BUFFER, _LOCATION_BATCH_LOCK,
     _PENDING_BATCH_RESULTS, _PENDING_BATCH_RESULTS_LOCK,
     _process_location_batch_sync
@@ -145,7 +145,7 @@ def test_no_function_attribute_pollution():
     print("\n=== Testing No Function Attribute Pollution ===\n")
     
     # Import the function
-    from rss_processor import _build_alert_from_entry
+    from services.rss_processor import _build_alert_from_entry
     
     # Check that the function doesn't have the problematic attribute
     has_pending_results = hasattr(_build_alert_from_entry, '_pending_batch_results')

@@ -71,7 +71,7 @@ def populate_embeddings(
     openai_client = None
     try:
         from openai import OpenAI
-        from config import CONFIG
+        from core.config import CONFIG
         api_key = CONFIG.llm.openai_api_key
         if api_key:
             openai_client = OpenAI(api_key=api_key)

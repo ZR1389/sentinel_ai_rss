@@ -10,7 +10,7 @@ Run:
 import time
 from typing import List, Dict, Any
 
-from coverage_monitor import CoverageMonitor, _coverage_monitor  # type: ignore
+from monitoring.coverage_monitor import CoverageMonitor, _coverage_monitor  # type: ignore
 from real_time_fallback import RealTimeFallbackManager
 
 

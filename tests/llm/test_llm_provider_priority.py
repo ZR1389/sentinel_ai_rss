@@ -15,7 +15,7 @@ load_dotenv()
 # Add parent directories to path for imports  
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from llm_router import route_llm
+from monitoring.llm_router import route_llm
 
 def test_provider_priority():
     """Test the LLM provider priority order"""

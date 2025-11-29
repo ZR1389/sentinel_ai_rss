@@ -109,7 +109,7 @@ def test_moonshot_batch_with_circuit_breaker():
             mock_client.return_value = mock_instance
             
             # Import after patching
-            from rss_processor import _process_location_batch
+            from services.rss_processor import _process_location_batch
             import httpx
             
             # Test multiple batch attempts

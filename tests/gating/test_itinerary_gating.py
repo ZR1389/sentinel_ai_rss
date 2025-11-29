@@ -9,7 +9,7 @@ import json
 import datetime
 import types
 from unittest.mock import patch
-from config import CONFIG
+from core.config import CONFIG
 
 JWT_SECRET = CONFIG.security.jwt_secret or 'testsecret'
 

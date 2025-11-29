@@ -12,7 +12,7 @@ This test ensures that:
 import asyncio
 import unittest.mock
 import httpx
-from rss_processor import _process_location_batch, ingest_feeds
+from services.rss_processor import _process_location_batch, ingest_feeds
 from batch_state_manager import get_batch_state_manager, BatchEntry
 
 def test_async_only_batch_processing():
@@ -114,7 +114,7 @@ def test_verify_sync_function_removed():
     print("\n=== Testing Sync Function Removal ===")
     
     try:
-        from rss_processor import _process_location_batch_sync
+        from services.rss_processor import _process_location_batch_sync
         print("❌ ERROR: Sync fallback function still exists!")
         return False
     except ImportError:

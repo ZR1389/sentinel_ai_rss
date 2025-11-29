@@ -1,10 +1,10 @@
 import os
 import logging
-from deepseek_client import deepseek_chat
-from openai_client_wrapper import openai_chat
-from xai_client import grok_chat
-from moonshot_client import moonshot_chat
-from llm_rate_limiter import rate_limited
+from llm.deepseek_client import deepseek_chat
+from llm.openai_client_wrapper import openai_chat
+from llm.xai_client import grok_chat
+from llm.moonshot_client import moonshot_chat
+from monitoring.llm_rate_limiter import rate_limited
 
 logger = logging.getLogger("llm_router")
 

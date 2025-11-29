@@ -3,7 +3,7 @@ import json
 from flask import g
 
 # Import application
-import main
+import core.main as main
 
 # Snapshot originals we will monkeypatch
 _original_fetch_one = getattr(main, 'fetch_one', None)

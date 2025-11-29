@@ -140,7 +140,7 @@ def run_rss_ingest():
     logger.info("=" * 60)
     
     try:
-        from rss_processor import ingest_all_feeds_to_db
+        from services.rss_processor import ingest_all_feeds_to_db
     except Exception as e:
         logger.error(f"Import error (rss_processor): {e}")
         return False
@@ -185,7 +185,7 @@ def run_engine_enrich():
     """Run Threat Engine to enrich raw_alerts into alerts"""
     logger = logging.getLogger('railway_cron')
     try:
-        from threat_engine import enrich_and_store_alerts
+        from services.threat_engine import enrich_and_store_alerts
     except Exception as e:
         logger.error(f"Import error (threat_engine): {e}")
         return False
@@ -289,7 +289,7 @@ def run_geocode_backfill():
     logger = logging.getLogger('railway_cron')
     
     try:
-        from geocoding_service import geocode_and_update_table
+        from services.geocoding_service import geocode_and_update_table
         from geocoding_monitor import check_and_notify
         
         # Geocode raw_alerts first (most recent data)

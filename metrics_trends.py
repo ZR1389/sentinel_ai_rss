@@ -14,7 +14,7 @@ import threading
 from typing import Dict, Any, List
 from datetime import datetime
 
-from coverage_monitor import get_coverage_monitor
+from monitoring.coverage_monitor import get_coverage_monitor
 
 try:
     from db_utils import execute, fetch_all

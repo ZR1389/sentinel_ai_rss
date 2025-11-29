@@ -6,7 +6,7 @@ import logging
 import json
 from email.mime.text import MIMEText
 from typing import Optional, List, Dict
-from config import CONFIG
+from core.config import CONFIG
 
 logger = logging.getLogger("email_dispatcher")
 logging.basicConfig(level=CONFIG.security.log_level)

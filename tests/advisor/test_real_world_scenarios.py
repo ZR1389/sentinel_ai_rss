@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
-from advisor import _validate_location_match
+from api.advisor import _validate_location_match
 
 def test_real_world_scenarios():
     """Test real-world advisor scenarios with enhanced location processing"""

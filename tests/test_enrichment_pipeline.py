@@ -116,7 +116,7 @@ def test_legacy_compatibility():
     
     try:
         # Test the threat_engine function (should use new pipeline internally)
-        from threat_engine import summarize_single_alert
+        from services.threat_engine import summarize_single_alert
         
         enriched_alert = summarize_single_alert(test_alert)
         

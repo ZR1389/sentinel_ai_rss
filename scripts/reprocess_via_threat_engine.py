@@ -28,8 +28,8 @@ from typing import List, Dict
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import db_utils
-from threat_engine import summarize_single_alert
-from rss_processor import _clean_html_content
+from services.threat_engine import summarize_single_alert
+from services.rss_processor import _clean_html_content
 
 # Configure logging
 logging.basicConfig(

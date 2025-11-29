@@ -52,7 +52,7 @@ def geocode_with_production_stack(title: str, summary: str, gpt_summary: str, en
     """
     try:
         # Step 1: Extract location using production NLP service
-        from location_service_consolidated import detect_location
+        from services.location_service_consolidated import detect_location
         
         text = f"{title or ''}\n{summary or ''}"
         location_result = detect_location(text)
@@ -69,7 +69,7 @@ def geocode_with_production_stack(title: str, summary: str, gpt_summary: str, en
             location_string = location_result.country
         
         # Step 2: Geocode using production service (Redis -> Postgres -> Nominatim -> OpenCage)
-        from geocoding_service import geocode
+        from services.geocoding_service import geocode
         
         geo_result = geocode(location_string)
         
@@ -124,8 +124,8 @@ def process_alerts(cur, limit: Optional[int], dry_run: bool, min_confidence: int
     
     # Check infrastructure
     try:
-        from location_service_consolidated import detect_location
-        from geocoding_service import geocode, _redis_opencage_get_usage
+        from services.location_service_consolidated import detect_location
+        from services.geocoding_service import geocode, _redis_opencage_get_usage
         print("✓ location_service_consolidated loaded")
         print("✓ geocoding_service loaded")
         

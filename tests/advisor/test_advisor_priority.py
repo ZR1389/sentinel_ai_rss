@@ -14,7 +14,7 @@ load_dotenv()
 # Add parent directories to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from advisor import render_advisory, get_llm_routing_stats
+from api.advisor import render_advisory, get_llm_routing_stats
 
 def test_advisor_with_new_priority():
     """Test that the advisor uses the new LLM provider priority"""

@@ -17,7 +17,7 @@ from psycopg2.extras import RealDictCursor
 import os
 
 try:
-    from config import CONFIG
+    from core.config import CONFIG
     DATABASE_URL = CONFIG.database.url
 except Exception:
     DATABASE_URL = os.environ.get('DATABASE_PUBLIC_URL')

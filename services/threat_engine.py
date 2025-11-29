@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from decimal import Decimal  # <-- for safe JSON default
 
 # Structured logging setup
-from logging_config import get_logger, get_metrics_logger
+from core.logging_config import get_logger, get_metrics_logger
 logger = get_logger("threat_engine")
 metrics = get_metrics_logger("threat_engine")
 
@@ -90,7 +90,7 @@ from db_utils import (
     save_region_trend,
 )
 
-from threat_scorer import (
+from services.threat_scorer import (
     assess_threat_level,
     compute_trend_direction,
     compute_future_risk_probability,
@@ -99,7 +99,7 @@ from threat_scorer import (
     early_warning_indicators,
 )
 
-from llm_router import route_llm, route_llm_search
+from monitoring.llm_router import route_llm, route_llm_search
 
 # -------- Centralized Confidence Scoring --------
 

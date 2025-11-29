@@ -26,7 +26,7 @@ from db_utils import (
 )
 
 # Geographic intelligence system
-from location_service_consolidated import enhance_geographic_query
+from services.location_service_consolidated import enhance_geographic_query
 
 # Optional single-value fetch for verification fallback
 try:
@@ -35,7 +35,7 @@ except Exception:
     fetch_one = None  # best-effort fallback
 
 # Advisor entrypoint (LLM)
-from advisor import generate_advice
+from api.advisor import generate_advice
 
 # Plan/usage are INFO-only here (no gating / no metering)
 try:

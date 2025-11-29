@@ -16,7 +16,7 @@ def test_refactored_enrich_and_store():
     print("Testing refactored enrich_and_store_alerts()...")
     
     try:
-        from threat_engine import enrich_and_store_alerts
+        from services.threat_engine import enrich_and_store_alerts
         
         # Test with a small limit and no actual DB writes for safety
         start_time = datetime.now()
@@ -59,7 +59,7 @@ def test_circuit_breaker():
     print("\nTesting circuit breaker functionality...")
     
     try:
-        from threat_engine import _check_circuit_breaker, _record_circuit_failure, _record_circuit_success
+        from services.threat_engine import _check_circuit_breaker, _record_circuit_failure, _record_circuit_success
         
         # Test initial state
         assert _check_circuit_breaker() == True, "Circuit breaker should initially be CLOSED"
@@ -90,7 +90,7 @@ def test_atomic_operations():
     print("\nTesting atomic JSON operations...")
     
     try:
-        from threat_engine import _atomic_read_json, _atomic_write_json
+        from services.threat_engine import _atomic_read_json, _atomic_write_json
         import tempfile
         
         # Create a temporary file for testing

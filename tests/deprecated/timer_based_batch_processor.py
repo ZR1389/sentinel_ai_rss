@@ -85,7 +85,7 @@ class TimerBasedBatchProcessor:
         self._batch_in_progress = True
         try:
             # Import the actual batch processing function
-            from rss_processor import _process_location_batch
+            from services.rss_processor import _process_location_batch
             
             logger.info("Timer-triggered batch processing starting...")
             results = await _process_location_batch(self._current_client)

@@ -19,7 +19,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from config import CONFIG
+    from core.config import CONFIG
     DATABASE_URL = CONFIG.database.url
 except Exception:
     DATABASE_URL = None

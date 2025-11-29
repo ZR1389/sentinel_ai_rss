@@ -5,7 +5,7 @@ import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
-from config import CONFIG
+from core.config import CONFIG
 
 from db_utils import save_raw_alerts_to_db
 

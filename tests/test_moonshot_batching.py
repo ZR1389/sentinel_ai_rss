@@ -10,7 +10,7 @@ sys.path.append('.')
 from dotenv import load_dotenv
 load_dotenv()
 
-from rss_processor import (
+from services.rss_processor import (
     _LOCATION_BATCH_BUFFER, 
     _LOCATION_BATCH_LOCK,
     _should_use_moonshot_for_location,

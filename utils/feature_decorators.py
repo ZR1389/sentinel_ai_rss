@@ -55,7 +55,7 @@ def _track_feature_usage(feature_name: str, user_id: Optional[int] = None, incre
     except Exception as e:
         # Non-critical: log but don't fail the request
         try:
-            from logging_config import get_logger
+            from core.logging_config import get_logger
             logger = get_logger("feature_decorators")
             logger.warning(f"Failed to track feature usage for {feature_name}: {e}")
         except Exception:

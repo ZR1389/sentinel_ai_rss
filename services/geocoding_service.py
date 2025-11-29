@@ -26,7 +26,7 @@ class _NullMetrics:
         pass
 
 try:
-    from logging_config import get_metrics_logger
+    from core.logging_config import get_metrics_logger
     metrics = get_metrics_logger("geocoding")
 except Exception:
     metrics = _NullMetrics()

@@ -129,7 +129,7 @@ def test_config_integration():
     try:
         # Test importing config
         print("\n1. Testing config import...")
-        from config import RSSConfig
+        from core.config import RSSConfig
         config = RSSConfig()
         print("✅ Config module imported successfully")
         

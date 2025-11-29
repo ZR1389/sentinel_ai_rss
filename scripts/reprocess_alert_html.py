@@ -26,7 +26,7 @@ from typing import List, Tuple
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import db_utils
-from rss_processor import _clean_html_content
+from services.rss_processor import _clean_html_content
 
 # Configure logging
 logging.basicConfig(

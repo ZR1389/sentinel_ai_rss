@@ -26,7 +26,7 @@ def test_function_attribute_anti_pattern_fixed():
     
     try:
         # Import the refactored modules
-        from rss_processor import _build_alert_from_entry
+        from services.rss_processor import _build_alert_from_entry
         from batch_state_manager import get_batch_state_manager, reset_batch_state_manager
         
         # Reset state to ensure clean test

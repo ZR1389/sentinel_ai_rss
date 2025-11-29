@@ -43,7 +43,7 @@ from db_utils import execute
 
 # Structured logging setup with fallback
 try:
-    from logging_config import setup_logging, get_logger, get_metrics_logger
+    from core.logging_config import setup_logging, get_logger, get_metrics_logger
     setup_logging("retention-worker")
     logger = get_logger("retention_worker")
     metrics = get_metrics_logger("retention_worker")

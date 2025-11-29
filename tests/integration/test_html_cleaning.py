@@ -16,7 +16,7 @@ def test_html_cleaning():
     """Test the HTML content cleaning functionality"""
     print("🧪 Testing HTML Content Cleaning...")
     
-    from rss_processor import _clean_html_content
+    from services.rss_processor import _clean_html_content
     
     # Test case 1: Your actual problematic content
     dirty_content = """<p>Baghdad (IraqiNews.com) — The US-led Combined Joint Task Force &#8211; Operation Inherent Resolve (CJTF-OIR) has certified that Iraq&#8217;s security forces can officially conduct full combat-strike operations self-sufficiently, marking a significant step [&#8230;]</p> <p>The post <a href="https://www.iraqinews.com/iraq/u-s-led-coalition-certifies-iraqs-combat-strike-readiness/">U.S.-led coalition certifies Iraq's combat strike readiness</a> appeared first on <a href="https://www.iraqinews.com">Iraqi News</a>.</p>"""
@@ -90,7 +90,7 @@ def test_rss_entry_processing():
     }
     
     try:
-        from rss_processor import _clean_html_content
+        from services.rss_processor import _clean_html_content
         
         clean_title = _clean_html_content(mock_entry["title"])
         clean_summary = _clean_html_content(mock_entry["summary"])

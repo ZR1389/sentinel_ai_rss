@@ -12,7 +12,7 @@ import psycopg2.extras
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
-from geocoding_service import batch_geocode, _normalize_location
+from services.geocoding_service import batch_geocode, _normalize_location
 
 
 def fetch_alert_backlog(conn, limit: int) -> List[Dict]:

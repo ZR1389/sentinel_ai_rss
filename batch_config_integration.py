@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Callable
 
 try:
-    from config import CONFIG
+    from core.config import CONFIG
     from batch_state_manager import (
         BatchStateManager, 
         BatchFlushConfig, 

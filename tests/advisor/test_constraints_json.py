@@ -8,7 +8,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
 import json
-from advisor import _build_trend_citation_line, _build_input_payload
+from api.advisor import _build_trend_citation_line, _build_input_payload
 
 def test_llm_constraints_in_json():
     """Test that llm_constraints appear in the JSON that gets sent to the LLM"""

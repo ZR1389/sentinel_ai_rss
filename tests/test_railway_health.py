@@ -52,7 +52,7 @@ def test_health_components():
     # Test 3: Main app integration
     print("3. Testing main.py health integration...")
     try:
-        from main import app as main_app
+        from core.main import app as main_app
         with main_app.test_client() as client:
             response = client.get('/health/quick')
             print(f"   ✅ Main app /health/quick: {response.status_code}")

@@ -1,7 +1,7 @@
 # deepseek_client.py — DeepSeek API wrapper
 import os, requests, logging
-from llm_rate_limiter import rate_limited
-from config import CONFIG
+from monitoring.llm_rate_limiter import rate_limited
+from core.config import CONFIG
 
 logger = logging.getLogger("deepseek_client")
 

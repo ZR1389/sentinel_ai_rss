@@ -1,21 +1,57 @@
-# Documentation
+# Sentinel AI RSS - Organized Structure
 
-This directory contains documentation for the RSS processor enhancements and features.
+## 🚀 Quick Start
 
-## Contents
+This project has been organized into a clean directory structure. Here's how to work with it:
 
-- **`buffer_cleanup_summary.md`** - Summary of the Moonshot location batching buffer cleanup enhancement
-- **`MOONSHOT_BATCHING_SUMMARY.md`** - Overview of Moonshot location batching implementation  
-- **`MOONSHOT_INTEGRATION.md`** - Integration details for Moonshot location services
+### Running Tests
+```bash
+# Run all organized tests
+python run_tests.py
 
-## Buffer Cleanup Enhancement
+# Run specific test categories
+python -m pytest tests/advisor/     # Advisor tests
+python -m pytest tests/llm/        # LLM routing tests  
+python -m pytest tests/geographic/ # Geographic processing
+python -m pytest tests/performance/ # Performance tests
+```
 
-The buffer cleanup enhancement was implemented to ensure that the `_LOCATION_BATCH_BUFFER` is always cleared after ingestion, even when errors occur. This prevents memory leaks and maintains consistent state between RSS processing runs.
+### Key Files
+- **Main Application**: `main.py`
+- **Core Logic**: `advisor.py`, `threat_engine.py`, `llm_router.py`
+- **Configuration**: `.env` (active), `config/` (backups, examples)
+- **Tests**: All organized under `tests/` with subdirectories
+- **Documentation**: `docs/DIRECTORY_STRUCTURE.md`
 
-### Key Benefits
-- Memory safety through guaranteed buffer cleanup
-- Error resilience with cleanup in finally blocks  
-- Thread-safe operations using existing locks
-- Comprehensive test coverage
+### LLM Provider Priority (Updated Nov 2025)
+```
+🥇 Grok (Primary)    - Fastest paid provider
+🥈 OpenAI (Secondary) - Reliable paid provider  
+🥉 Moonshot (Tertiary) - Slower paid provider
+🆓 DeepSeek (Fallback) - Free provider (last resort)
+```
 
-See `buffer_cleanup_summary.md` for detailed implementation information.
+### Directory Organization
+- `tests/advisor/` - Advisory generation tests
+- `tests/llm/` - LLM provider routing tests
+- `tests/geographic/` - Location processing tests
+- `tests/performance/` - Load and optimization tests
+- `config/` - Configuration files and backups
+- `data/` - Database schemas and data files
+- `docs/` - Documentation and summaries
+
+## 📁 What Was Organized
+
+### Moved from Root:
+- ✅ All `test_*.py` files → `tests/` subdirectories  
+- ✅ `*.json` configs → `config/`
+- ✅ `*.sql` schemas → `data/`
+- ✅ `*.md` docs → `docs/`
+- ✅ Performance files → `tests/performance/`
+
+### Clean Root Directory:
+- Only essential application files remain
+- Clear separation of concerns
+- Easy navigation and development
+
+See `docs/DIRECTORY_STRUCTURE.md` for complete details.

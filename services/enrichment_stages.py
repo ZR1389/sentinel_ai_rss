@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from risk_shared import likely_sports_context
 
 # Structured logging setup
-from logging_config import get_logger, get_metrics_logger
+from core.logging_config import get_logger, get_metrics_logger
 logger = get_logger("enrichment_stages")
 metrics = get_metrics_logger("enrichment_stages")
 
@@ -231,6 +231,65 @@ class LLMSummaryStage(EnrichmentStage):
         # Use existing summary instead of expensive LLM generation
         alert[\"gpt_summary\"] = alert.get(\"summary\") or alert.get(\"en_snippet\") or \"\"
         alert[\"model_used\"] = \"disabled_to_save_tokens\"
+        
+        return alert
+
+class LocationValidationStage(EnrichmentStage):
+    """Validate location quality with 1% OpenCage sampling."""
+    
+    def __init__(self):
+        super().__init__("location_validation")
+        self._validation_enabled = True
+        try:
+            from location_quality_monitor import (
+                should_validate_with_opencage,
+                validate_alert_with_opencage,
+                log_validation_result
+            )
+            self._should_validate = should_validate_with_opencage
+            self._validate = validate_alert_with_opencage
+            self._log_result = log_validation_result
+        except ImportError as e:
+            self.logger.warning(f"location_quality_monitor not available: {e}")
+            self._validation_enabled = False
+    
+    def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
+        if not self._validation_enabled:
+            return alert
+        
+        try:
+            # Check if this alert should be validated (1% sample + anomalies)
+            if self._should_validate(alert):
+                self.logger.info("opencage_validation_triggered",
+                               alert_id=alert.get('id'),
+                               method=alert.get('location_method'))
+                
+                validation_result = self._validate(alert)
+                
+                if validation_result:
+                    # Store validation metadata (don't overwrite existing location)
+                    alert['_opencage_validation'] = validation_result
+                    
+                    # Log to database for tracking
+                    if alert.get('id'):
+                        self._log_result(alert['id'], validation_result)
+                    
+                    # Flag if correction needed
+                    if validation_result.get('needs_correction'):
+                        self.logger.warning("location_correction_needed",
+                                          alert_id=alert.get('id'),
+                                          distance_km=validation_result.get('distance_km'),
+                                          original=f"{alert.get('city')}, {alert.get('country')}",
+                                          opencage_confidence=validation_result.get('opencage_confidence'))
+                        alert['_location_flagged'] = True
+                    
+                    metrics.increment("enrichment.location_validation.success")
+                else:
+                    metrics.increment("enrichment.location_validation.failed")
+        
+        except Exception as e:
+            self.logger.error("location_validation_error", error=str(e))
+            metrics.increment("enrichment.location_validation.error")
         
         return alert
 
@@ -531,6 +590,7 @@ class EnrichmentPipeline:
         """Get the default enrichment stages in processing order."""
         return [
             LocationEnhancementStage(),
+            LocationValidationStage(),  # 1% OpenCage sampling + anomaly detection
             RelevanceFilterStage(),
             SocmintEnrichmentStage(),  # Extract and enrich social media IOCs
             ThreatScoringStage(),

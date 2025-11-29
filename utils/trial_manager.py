@@ -17,7 +17,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 try:
-    from config import CONFIG
+    from core.config import CONFIG
     DATABASE_URL = CONFIG.database.url
 except Exception:
     DATABASE_URL = None

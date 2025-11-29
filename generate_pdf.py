@@ -4,7 +4,7 @@ import os
 import logging
 from typing import Optional
 from datetime import datetime
-from config import CONFIG
+from core.config import CONFIG
 
 logger = logging.getLogger("generate_pdf")
 logging.basicConfig(level=CONFIG.security.log_level)

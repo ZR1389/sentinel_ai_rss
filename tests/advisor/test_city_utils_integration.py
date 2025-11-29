@@ -9,7 +9,7 @@ import os
 # Add the root directory to the path so we can import advisor
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
-from advisor import _validate_location_match
+from api.advisor import _validate_location_match
 
 def test_enhanced_location_matching():
     """Test the enhanced location matching functionality"""

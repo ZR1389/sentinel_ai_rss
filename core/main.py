@@ -57,15 +57,15 @@ except Exception:
     get_remote_address = None
 
 
-from map_api import map_api
-from webpush_endpoints import webpush_bp
+from api.map_api import map_api
+from api.webpush_endpoints import webpush_bp
 try:
     from app.routes.socmint_routes import socmint_bp, set_socmint_limiter
 except ImportError:
-    from socmint_routes import socmint_bp, set_socmint_limiter
+    from api.socmint_routes import socmint_bp, set_socmint_limiter
 
 # Initialize logging early (before any logger usage)
-from logging_config import get_logger, get_metrics_logger, setup_logging
+from core.logging_config import get_logger, get_metrics_logger, setup_logging
 setup_logging("sentinel-api")
 logger = get_logger("sentinel.main")
 metrics = get_metrics_logger("sentinel.main")
@@ -148,7 +148,7 @@ else:
 if os.getenv('RSS_ENABLED', 'true').lower() in ('1','true','yes','y'):
     try:
         import threading, asyncio
-        from rss_processor import ingest_all_feeds_to_db
+        from services.rss_processor import ingest_all_feeds_to_db
 
         _RSS_INTERVAL_SEC = int(os.getenv('RSS_INTERVAL_SEC', '900'))  # default 15 minutes
 
@@ -205,7 +205,7 @@ from validation import validate_alert_batch, validate_enrichment_data
 
 # ---------- CORS (more restrictive default) ----------
 # Import centralized configuration
-from config import CONFIG
+from core.config import CONFIG
 
 # Default: production frontends only — override with comma-separated env var if needed
 ALLOWED_ORIGINS = [o.strip() for o in CONFIG.app.allowed_origins.split(",") if o.strip()]
@@ -1065,13 +1065,13 @@ except Exception as e:
 
 # RSS & Threat Engine
 try:
-    from rss_processor import ingest_all_feeds_to_db
+    from services.rss_processor import ingest_all_feeds_to_db
 except Exception as e:
     logger.error("rss_processor import failed: %s", e)
     ingest_all_feeds_to_db = None
 
 try:
-    from threat_engine import enrich_and_store_alerts
+    from services.threat_engine import enrich_and_store_alerts
 except Exception as e:
     logger.error("threat_engine import failed: %s", e)
     enrich_and_store_alerts = None
@@ -4323,7 +4323,7 @@ def batch_enrich_alerts():
 @app.route("/api/monitoring/coverage", methods=["GET"])  # lightweight, no auth for now
 def get_coverage_report():
     try:
-        from coverage_monitor import get_coverage_monitor
+        from monitoring.coverage_monitor import get_coverage_monitor
         monitor = get_coverage_monitor()
         report = monitor.get_comprehensive_report()
         return _build_cors_response(jsonify(report))
@@ -4335,7 +4335,7 @@ def get_coverage_report():
 @app.route("/api/monitoring/gaps", methods=["GET"])  # lightweight, no auth for now
 def get_coverage_gaps_endpoint():
     try:
-        from coverage_monitor import get_coverage_monitor
+        from monitoring.coverage_monitor import get_coverage_monitor
         monitor = get_coverage_monitor()
         min_alerts = int(request.args.get("min_alerts_7d", 5))
         max_age = int(request.args.get("max_age_hours", 24))
@@ -4353,7 +4353,7 @@ def get_coverage_gaps_endpoint():
 @app.route("/api/monitoring/stats", methods=["GET"])  # lightweight, no auth for now
 def get_monitoring_stats():
     try:
-        from coverage_monitor import get_coverage_monitor
+        from monitoring.coverage_monitor import get_coverage_monitor
         monitor = get_coverage_monitor()
         return _build_cors_response(jsonify({
             "location_extraction": monitor.get_location_extraction_stats(),
@@ -4370,7 +4370,7 @@ def monitoring_dashboard_summary():
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
     try:
-        from coverage_monitor import get_coverage_monitor
+        from monitoring.coverage_monitor import get_coverage_monitor
         mon = get_coverage_monitor()
         report = mon.get_comprehensive_report()
         geo = report.get("geographic_coverage", {})
@@ -4394,7 +4394,7 @@ def monitoring_dashboard_top_gaps():
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
     try:
-        from coverage_monitor import get_coverage_monitor
+        from monitoring.coverage_monitor import get_coverage_monitor
         mon = get_coverage_monitor()
         limit = max(1, min(int(request.args.get("limit", 5)), 50))
         gaps = mon.get_coverage_gaps(
@@ -4423,7 +4423,7 @@ def monitoring_dashboard_top_covered():
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
     try:
-        from coverage_monitor import get_coverage_monitor
+        from monitoring.coverage_monitor import get_coverage_monitor
         mon = get_coverage_monitor()
         limit = max(1, min(int(request.args.get("limit", 5)), 50))
         items = mon.get_covered_locations()[:limit]
@@ -4763,7 +4763,7 @@ def geocode_backfill():
     
     try:
         from db_utils import _get_db_connection
-        from geocoding_service import geocode
+        from services.geocoding_service import geocode
         
         batch_size = int(request.args.get("batch_size", 100))
         
@@ -4942,7 +4942,7 @@ def geocoding_queue_status():
         return _build_cors_response(make_response("", 204))
 
     try:
-        from geocoding_service import get_quota_status, _get_redis
+        from services.geocoding_service import get_quota_status, _get_redis
         from rq import Queue
         from rq.registry import StartedJobRegistry, FailedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry
 
@@ -4998,7 +4998,7 @@ def geocoding_dashboard():
             coverage = get_geocoding_status(conn)
 
         # Queue + quota
-        from geocoding_service import get_quota_status, _get_redis
+        from services.geocoding_service import get_quota_status, _get_redis
         from rq import Queue
         from rq.registry import StartedJobRegistry, FailedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry
 
@@ -5046,7 +5046,7 @@ def geocoding_dashboard_view():
             coverage = get_geocoding_status(conn)
 
         # Queue + quota
-        from geocoding_service import get_quota_status, _get_redis
+        from services.geocoding_service import get_quota_status, _get_redis
         from rq import Queue
         from rq.registry import StartedJobRegistry, FailedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry
 
@@ -5082,6 +5082,101 @@ def geocoding_dashboard_view():
     except Exception as e:
         logger.error(f"/admin/geocoding/dashboard/view error: {e}")
         return make_response(f"Dashboard error: {e}", 500)
+
+@app.route("/admin/location/quality", methods=["GET", "OPTIONS"])
+def location_quality_report():
+    """Get location quality report with anomaly detection"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from location_quality_monitor import get_location_quality_report
+        
+        # Get days parameter (default 7)
+        days = request.args.get('days', 7, type=int)
+        days = max(1, min(days, 90))  # Limit between 1-90 days
+        
+        report = get_location_quality_report(days)
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            **report
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/location/quality error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
+
+@app.route("/admin/location/validations", methods=["GET", "OPTIONS"])
+def location_validations_list():
+    """Get recent OpenCage validations with correction flags"""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        from db_utils import fetch_all
+        
+        # Get pagination parameters
+        limit = request.args.get('limit', 50, type=int)
+        limit = max(1, min(limit, 500))  # Limit between 1-500
+        
+        only_corrections = request.args.get('corrections', 'false').lower() == 'true'
+        
+        # Build query
+        where_clause = "WHERE needs_correction = TRUE" if only_corrections else ""
+        
+        validations = fetch_all(
+            f"""
+            SELECT 
+                v.id,
+                v.alert_id,
+                a.title,
+                a.city,
+                a.country,
+                a.latitude as original_lat,
+                a.longitude as original_lon,
+                v.opencage_lat,
+                v.opencage_lon,
+                v.distance_km,
+                v.opencage_confidence,
+                v.needs_correction,
+                v.validated_at
+            FROM location_validations v
+            JOIN alerts a ON a.id = v.alert_id
+            {where_clause}
+            ORDER BY v.validated_at DESC
+            LIMIT %s
+            """,
+            (limit,)
+        )
+        
+        results = [
+            {
+                'id': row[0],
+                'alert_id': row[1],
+                'title': row[2],
+                'city': row[3],
+                'country': row[4],
+                'original_coords': [row[5], row[6]] if row[5] else None,
+                'opencage_coords': [row[7], row[8]],
+                'distance_km': float(row[9]) if row[9] else None,
+                'opencage_confidence': row[10],
+                'needs_correction': row[11],
+                'validated_at': row[12].isoformat() if row[12] else None
+            }
+            for row in validations
+        ]
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "validations": results,
+            "count": len(results),
+            "showing_corrections_only": only_corrections
+        }))
+        
+    except Exception as e:
+        logger.error(f"/admin/location/validations error: {e}")
+        return _build_cors_response(make_response(jsonify({"error": str(e)}), 500))
 
 @app.route("/admin/gdelt/reprocess", methods=["POST", "OPTIONS"])
 def gdelt_reprocess_coords():
@@ -5984,7 +6079,7 @@ def geocode_location():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from geocoding_service import geocode as geocode_svc
+        from services.geocoding_service import geocode as geocode_svc
         
         data = request.json
         location = data.get('location')
@@ -6026,7 +6121,7 @@ def batch_geocode_locations():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from geocoding_service import batch_geocode, get_quota_status
+        from services.geocoding_service import batch_geocode, get_quota_status
         
         data = request.json
         locations = data.get('locations', [])
@@ -6061,7 +6156,7 @@ def geocoding_quota():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from geocoding_service import get_quota_status
+        from services.geocoding_service import get_quota_status
         return _build_cors_response(jsonify(get_quota_status()))
     except Exception as e:
         logger.error(f"[quota] Error: {e}")
@@ -6241,7 +6336,7 @@ def admin_geocode_backfill():
         if not expected_key or api_key != expected_key:
             return jsonify({"error": "Unauthorized - valid API key required"}), 401
         
-        from geocoding_service import geocode_and_update_table
+        from services.geocoding_service import geocode_and_update_table
         
         data = request.json
         
@@ -6288,7 +6383,7 @@ def batch_geocode_smart_endpoint():
         if not expected_key or api_key != expected_key:
             return jsonify({"error": "Unauthorized - valid API key required"}), 401
         
-        from geocoding_service import batch_geocode
+        from services.geocoding_service import batch_geocode
         from db_utils import _get_db_connection
         
         data = request.json or {}

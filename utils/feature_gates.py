@@ -12,7 +12,7 @@ from typing import Callable
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from config import CONFIG
+from core.config import CONFIG
 from config_data.plans import get_plan_feature, has_feature, get_feature_limit
 
 DATABASE_URL = CONFIG.database.url

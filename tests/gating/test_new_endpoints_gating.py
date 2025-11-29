@@ -12,7 +12,7 @@ import json
 import datetime
 import uuid
 from unittest.mock import patch, MagicMock
-from config import CONFIG
+from core.config import CONFIG
 
 JWT_SECRET = CONFIG.security.jwt_secret or 'testsecret'
 

@@ -5,7 +5,7 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
-from advisor import _fallback_advisory
+from api.advisor import _fallback_advisory
 
 def test_confidence_floor():
     """Test that confidence is properly floored based on location and data quality"""

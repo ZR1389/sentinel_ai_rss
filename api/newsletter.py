@@ -8,7 +8,7 @@ import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
-from config import CONFIG
+from core.config import CONFIG
 
 from security_log_utils import log_security_event
 

@@ -65,7 +65,7 @@ async def test_full_rss_integration():
     print("🧪 Testing full RSS integration with Moonshot batching...")
     
     try:
-        from rss_processor import _build_alert_from_entry, _should_use_moonshot_for_location
+        from services.rss_processor import _build_alert_from_entry, _should_use_moonshot_for_location
         import httpx
         
         # Test entries that should trigger different batch behaviors

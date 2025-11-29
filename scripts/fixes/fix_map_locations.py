@@ -23,7 +23,7 @@ def fix_alert_locations(dry_run=True):
     
     # Import location service
     try:
-        from location_service_consolidated import detect_location
+        from services.location_service_consolidated import detect_location
     except ImportError:
         print("✗ location_service_consolidated not available")
         return 1

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import logging
 from typing import Optional
-from config import CONFIG
+from core.config import CONFIG
 
 logger = logging.getLogger("telegram_dispatcher")
 logging.basicConfig(level=CONFIG.security.log_level)

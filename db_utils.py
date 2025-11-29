@@ -31,7 +31,7 @@ def get_connection_pool():
     if _connection_pool is None:
         # Try centralized config first, fallback to direct env for cron jobs
         try:
-            from config import CONFIG
+            from core.config import CONFIG
             database_url = CONFIG.database.url
             min_size = CONFIG.database.pool_min_size
             max_size = CONFIG.database.pool_max_size
@@ -615,7 +615,7 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     """
     # Try centralized config first, fallback to direct env for cron jobs
     try:
-        from config import CONFIG
+        from core.config import CONFIG
         database_url = CONFIG.database.url
     except (ImportError, AttributeError):
         # Fallback for Railway cron jobs

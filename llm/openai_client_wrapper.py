@@ -1,8 +1,8 @@
 # openai_client_wrapper.py — Sentinel unified OpenAI client
 import os, logging
 from openai import OpenAI
-from llm_rate_limiter import rate_limited
-from config import CONFIG
+from monitoring.llm_rate_limiter import rate_limited
+from core.config import CONFIG
 
 logger = logging.getLogger("openai_client_wrapper")
 

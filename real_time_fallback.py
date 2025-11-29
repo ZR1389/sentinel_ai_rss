@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 try:
-    from coverage_monitor import get_coverage_monitor
+    from monitoring.coverage_monitor import get_coverage_monitor
 except Exception as e:  # pragma: no cover
     logger.error("Coverage monitor unavailable: %s", e)
     def get_coverage_monitor():  # type: ignore

@@ -14,7 +14,7 @@ from typing import List, Dict, Any
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from vector_dedup import VectorDeduplicator
-from threat_engine import deduplicate_alerts
+from services.threat_engine import deduplicate_alerts
 from risk_shared import embedding_manager
 
 # Configure logging

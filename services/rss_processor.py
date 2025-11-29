@@ -69,7 +69,7 @@ except ImportError:
 
 # Centralized configuration
 try:
-    from config import RSSConfig
+    from core.config import RSSConfig
     config = RSSConfig()
 except ImportError:
     # Fallback to environment variables if config module not available
@@ -85,7 +85,7 @@ except ImportError:
     config = FallbackConfig()
 
 # Structured logging setup
-from logging_config import get_logger, get_metrics_logger
+from core.logging_config import get_logger, get_metrics_logger
 logger = get_logger("rss_processor") 
 metrics = get_metrics_logger("rss_processor")
 

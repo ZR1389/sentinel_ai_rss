@@ -11,7 +11,7 @@ import asyncio
 import threading
 import time
 import unittest.mock
-from rss_processor import (
+from services.rss_processor import (
     ingest_all_feeds_to_db, _LOCATION_BATCH_BUFFER, _LOCATION_BATCH_LOCK
 )
 

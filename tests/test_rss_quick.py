@@ -13,7 +13,7 @@ os.environ['RSS_ALLOWED_LANGS'] = ''  # Allow all languages
 print("=== RSS Quick Test ===\n")
 
 # Import after setting env
-from rss_processor import ingest_all_feeds_to_db, _coalesce_all_feed_specs
+from services.rss_processor import ingest_all_feeds_to_db, _coalesce_all_feed_specs
 
 async def main():
     # Check feeds first
