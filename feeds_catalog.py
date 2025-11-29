@@ -134,7 +134,6 @@ CITY_TO_COUNTRY = {
 # Only keeping major English-language city feeds
 LOCAL_FEEDS = {
     "hong kong": ["https://www.scmp.com/rss/2/feed/"],
-    "hong kong": ["https://www.scmp.com/rss/2/feed/"],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
     "los angeles": [
         "https://www.latimes.com/local/rss2.0.xml",
@@ -223,95 +222,213 @@ LOCAL_FEEDS = {
 # ---------------------- Country-level feeds (ENGLISH ONLY) ----------------------
 # Only English-language country feeds or international sections
 COUNTRY_FEEDS = {
-    "angola": ["https://globalvoices.org/-/world/sub-saharan-africa/angola/"],
-    "united kingdom": ["https://feeds.bbci.co.uk/news/uk/rss.xml"],
-    "turkey": ["https://globalvoices.org/-/world/middle-east-north-africa/turkey/"],
-    "germany": ["https://globalvoices.org/-/world/western-europe/germany/"],
-    "united states": ["https://rss.nytimes.com/services/xml/rss/nyt/US.xml"],
-    "canada": ["https://www.cbc.ca/cmlink/rss-canada"],
-    "australia": ["https://www.abc.net.au/news/feed/51120/rss.xml"],
+    "angola": ["https://globalvoices.org/-/world/sub-saharan-africa/angola/feed/"],
+    "austria": ["https://globalvoices.org/-/world/western-europe/austria/feed/"],
+    "argentina": ["https://globalvoices.org/-/world/latin-america/argentina/feed/"],
+    "cyprus": ["https://globalvoices.org/-/world/western-europe/cyprus/feed/"],
+    "san marino": ["https://globalvoices.org/-/world/western-europe/san-marino/feed/"],
+    "vatican city": ["https://globalvoices.org/-/world/western-europe/vatican-city/feed/"],
+    "russia": ["https://globalvoices.org/-/world/eastern-central-europe/russia/feed/"],
+    "new zealand": ["https://globalvoices.org/-/world/oceania/new-zealand/feed/"],
+    "papua new guinea": ["https://globalvoices.org/-/world/oceania/papua-new-guinea/feed/"],
+    "united kingdom": [
+        "https://feeds.bbci.co.uk/news/uk/rss.xml",
+        "https://globalvoices.org/-/world/western-europe/united-kingdom/feed/"
+        ],
+    "turkey": ["https://globalvoices.org/-/world/middle-east-north-africa/turkey/feed/"],
+    "germany": ["https://globalvoices.org/-/world/western-europe/germany/feed/"],
+    "united states": [
+        "https://rss.nytimes.com/services/xml/rss/nyt/US.xml",
+        "https://globalvoices.org/-/world/north-america/usa/feed/"
+        ],
+    "canada": [
+        "https://www.cbc.ca/cmlink/rss-canada",
+        "https://globalvoices.org/-/world/north-america/canada/feed/"
+        ],
+    "australia": [
+        "https://www.abc.net.au/news/feed/51120/rss.xml",
+        "https://globalvoices.org/-/world/oceania/australia/feed/"
+        ],
     "india": ["https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"],
-    "south africa": ["https://www.news24.com/news24/rss"],
-    "namibia" :["https://globalvoices.org/-/world/sub-saharan-africa/namibia/"],
+    "south africa": [
+        "https://www.news24.com/news24/rss",
+        "https://globalvoices.org/-/world/sub-saharan-africa/south-africa/feed/"
+                     ],
+    "namibia" :["https://globalvoices.org/-/world/sub-saharan-africa/namibia/feed/"],
     "pakistan": ["https://www.dawn.com/feeds/home"],
     "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
     "philippines": ["https://www.philstar.com/rss/nation"],
     "malaysia": [
         "https://www.nst.com.my/rss",
-        "https://globalvoices.org/-/world/east-asia/malaysia/"
+        "https://globalvoices.org/-/world/east-asia/malaysia/feed/"
                  ],
     "thailand": ["https://www.bangkokpost.com/rss/data/topstories.xml"],
     "vietnam": ["https://vietnamnews.vn/rss"],
     "indonesia": [
         "https://www.thejakartapost.com/rss",
-        "https://globalvoices.org/-/world/east-asia/indonesia/"
+        "https://globalvoices.org/-/world/east-asia/indonesia/feed/"
         ],   
     "kenya": [
         "https://www.nation.co.ke/rss.xml", 
-        "https://globalvoices.org/-/world/sub-saharan-africa/kenya/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/kenya/feed/"
         ],
-    "rwanda": ["https://globalvoices.org/-/world/sub-saharan-africa/rwanda/"],
-    "south sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/south-sudan/"],
-    "sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/sudan/"],
-    "mali": ["https://globalvoices.org/-/world/sub-saharan-africa/mali/"],
-    "republic of congo": ["https://globalvoices.org/-/world/sub-saharan-africa/republic-of-congo/"],    
+    "rwanda": ["https://globalvoices.org/-/world/sub-saharan-africa/rwanda/feed/"],
+    "south sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/south-sudan/feed/"],
+    "sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/sudan/feed/"],
+    "mali": ["https://globalvoices.org/-/world/sub-saharan-africa/mali/feed/"],
+    "republic of congo": ["https://globalvoices.org/-/world/sub-saharan-africa/republic-of-congo/feed/"],    
     "nigeria": [
         "https://thenationonlineng.net/feed/",
         "https://newsblenda.com/feed/",
-        "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/feed/"
     ],
-    "niger": ["https://globalvoices.org/-/world/sub-saharan-africa/niger/"],
+    "egypt": ["https://globalvoices.org/-/world/middle-east-north-africa/egypt/feed/"],
+    "niger": ["https://globalvoices.org/-/world/sub-saharan-africa/niger/feed/"],
     "ghana": [
         "https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss",
-        "https://globalvoices.org/-/world/sub-saharan-africa/ghana/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/ghana/feed/"
         ],
-    "sierra leone": ["https://globalvoices.org/-/world/sub-saharan-africa/sierra-leone/"],
-    "senegal": ["https://globalvoices.org/-/world/sub-saharan-africa/senegal/"],    
+    "sierra leone": ["https://globalvoices.org/-/world/sub-saharan-africa/sierra-leone/feed/"],
+    "senegal": ["https://globalvoices.org/-/world/sub-saharan-africa/senegal/feed/"],    
     "ethiopia": [
         "https://addisstandard.com/feed/",
-        "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/feed/"
         ],
     "uganda": [
         "https://www.watchdoguganda.com/feed",
-        "https://globalvoices.org/-/world/sub-saharan-africa/uganda/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/uganda/feed/"
         ],
-    "tanzania": ["https://globalvoices.org/-/world/sub-saharan-africa/tanzania/"],    
+    "tanzania": ["https://globalvoices.org/-/world/sub-saharan-africa/tanzania/feed/"],    
     "zimbabwe": ["https://3-mob.com/feed/"],
-    "somalia": ["https://globalvoices.org/-/world/sub-saharan-africa/somalia/"],
-    "somaliland": ["https://globalvoices.org/-/world/sub-saharan-africa/somaliland/"],
-    "mozambique": ["https://globalvoices.org/-/world/sub-saharan-africa/mozambique/"],
+    "somalia": ["https://globalvoices.org/-/world/sub-saharan-africa/somalia/feed/"],
+    "somaliland": ["https://globalvoices.org/-/world/sub-saharan-africa/somaliland/feed/"],
+    "mozambique": ["https://globalvoices.org/-/world/sub-saharan-africa/mozambique/feed/"],
     "morocco": [
         "https://www.moroccoworldnews.com/feed",
-        "https://www.moroccoworldnews.com/international/feed/"
+        "https://www.moroccoworldnews.com/international/feed/",
+        "https://globalvoices.org/-/world/middle-east-north-africa/morocco/feed/"
     ],
-    "israel": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
-    "iraq": ["https://www.iraqinews.com/feed/"],
-    "uae": ["https://gulfnews.com/rss/1.454509"],
-    "qatar": ["https://www.gulf-times.com/rss"],
-    "kuwait": ["https://www.arabtimesonline.com/news/rss/"],
-    "saudi arabia": ["https://english.alarabiya.net/tools/rss"],
-    "belgium": ["https://www.brusselstimes.com/feed"],
-    "netherlands": ["https://www.dutchnews.nl/feed/"],
-    "sweden": ["https://www.thelocal.se/rss"],
-    "czech republic": ["https://english.radio.cz/rss"],
-    "hungary": ["https://dailynewshungary.com/feed/"],
-    "poland": ["https://www.thefirstnews.com/rss"],
-    "romania": ["https://www.romania-insider.com/rss"],
-    "greece": ["https://www.ekathimerini.com/rss"],
-    "ukraine": ["https://www.kyivpost.com/feed"],
-    "serbia": ["https://balkaninsight.com/category/bi/serbia/"],
-    "montenegro": ["https://balkaninsight.com/category/bi/montenegro/"],
-    "bosnia and herzegovina": ["https://balkaninsight.com/category/bi/bosnia-and-herzegovina/"],
-    "kosovo": ["https://balkaninsight.com/category/bi/kosovo/"],
-    "north macedonia": ["https://balkaninsight.com/category/bi/macedonia/"],
-    "croatia": ["https://balkaninsight.com/category/bi/croatia/"],
-    "albania": ["https://balkaninsight.com/category/bi/albania/"],
-    "bulgaria": ["https://balkaninsight.com/category/bi/bulgaria/"],
-    "moldova": ["https://balkaninsight.com/category/bi/moldova/"],
-    "uruguay": ["https://globalvoices.org/-/world/latin-america/uruguay/"],
-    "colombia": ["https://globalvoices.org/-/world/latin-america/colombia/"],
-    "venezuela": ["https://globalvoices.org/-/world/latin-america/venezuela/"],
-    "yemen": ["https://globalvoices.org/-/world/middle-east-north-africa/yemen/"],
+    "libya": ["https://globalvoices.org/-/world/middle-east-north-africa/libya/feed/"],
+    "iran": ["https://globalvoices.org/-/world/middle-east-north-africa/iran/feed/"],
+    "jordan": ["https://globalvoices.org/-/world/middle-east-north-africa/jordan/feed/"],
+    "lebanon": ["https://globalvoices.org/-/world/middle-east-north-africa/lebanon/feed/"],
+    "israel": [
+        "https://www.jpost.com/rss/rssfeedsfrontpage.aspx",
+        "https://globalvoices.org/-/world/middle-east-north-africa/israel/feed/"
+        ],
+    "iraq": [
+        "https://www.iraqinews.com/feed/",
+        "https://globalvoices.org/-/world/middle-east-north-africa/iraq/feed/"
+        ],
+    "uae": [
+        "https://gulfnews.com/rss/1.454509",
+        "https://globalvoices.org/-/world/middle-east-north-africa/united-arab-emirates/feed/"
+        ],
+    "qatar": [
+        "https://www.gulf-times.com/rss",
+        "https://globalvoices.org/-/world/middle-east-north-africa/qatar/feed/"
+        ],
+    "kuwait": [
+        "https://www.arabtimesonline.com/news/rss/",
+        "https://globalvoices.org/-/world/middle-east-north-africa/kuwait/feed/"
+        ],
+    "oman": ["https://globalvoices.org/-/world/middle-east-north-africa/oman/feed/"],
+    "saudi arabia": [
+        "https://english.alarabiya.net/tools/rss",
+        "https://globalvoices.org/-/world/middle-east-north-africa/saudi-arabia/feed/"
+        ],
+    "belgium": [
+        "https://www.brusselstimes.com/feed",
+        "https://globalvoices.org/-/world/western-europe/belgium/feed/"
+        ],
+    "italy": ["https://globalvoices.org/-/world/western-europe/italy/feed/"],
+    "france": ["https://globalvoices.org/-/world/western-europe/france/feed/"],
+    "spain": ["https://globalvoices.org/-/world/western-europe/spain/feed/"],
+    "switzerland": ["https://globalvoices.org/-/world/western-europe/switzerland/feed/"],
+    "malta": ["https://globalvoices.org/-/world/western-europe/malta/feed/"],
+    "monaco": ["https://globalvoices.org/-/world/western-europe/monaco/feed/"],
+    "norway": ["https://globalvoices.org/-/world/western-europe/norway/feed/"],
+    "iceland": ["https://globalvoices.org/-/world/western-europe/iceland/feed/"],
+    "denmark": ["https://globalvoices.org/-/world/western-europe/denmark/feed/"],
+    "finland": ["https://globalvoices.org/-/world/western-europe/finland/feed/"],
+    "netherlands": [
+        "https://www.dutchnews.nl/feed/",
+        "https://globalvoices.org/-/world/western-europe/netherlands/feed/"
+        ],
+    "sweden": [
+        "https://www.thelocal.se/rss",
+        "https://globalvoices.org/-/world/western-europe/sweden/feed/"
+        ],
+    "czech republic": [
+        "https://english.radio.cz/rss",
+        "https://globalvoices.org/-/world/eastern-central-europe/czech-republic/feed/"
+        ],
+    "hungary": [
+        "https://dailynewshungary.com/feed/",
+        "https://globalvoices.org/-/world/eastern-central-europe/hungary/feed/"
+        ],
+    "poland": [
+        "https://www.thefirstnews.com/rss",
+        "https://globalvoices.org/-/world/eastern-central-europe/poland/feed/"
+        ],
+    "romania": [
+        "https://www.romania-insider.com/rss",
+        "https://globalvoices.org/-/world/eastern-central-europe/romania/feed/"
+        ],
+    "greece": [
+        "https://www.ekathimerini.com/rss",
+        "https://globalvoices.org/-/world/western-europe/greece/feed/"
+        ],
+    "ukraine": [
+        "https://www.kyivpost.com/feed",
+        "https://globalvoices.org/-/world/eastern-central-europe/ukraine/feed/"
+        ],
+    "serbia": [
+        "https://balkaninsight.com/category/bi/serbia/",
+        "https://globalvoices.org/-/world/eastern-central-europe/serbia/feed/"
+        ],
+    "slovakia": ["https://globalvoices.org/-/world/eastern-central-europe/slovakia/feed/"],    
+    "slovenia": ["https://globalvoices.org/-/world/eastern-central-europe/slovenia/feed/"],
+    "montenegro": [
+        "https://balkaninsight.com/category/bi/montenegro/",
+        "https://globalvoices.org/-/world/eastern-central-europe/montenegro/feed/"
+        ],
+    "bosnia and herzegovina": [
+        "https://balkaninsight.com/category/bi/bosnia-and-herzegovina/",
+        "https://globalvoices.org/-/world/eastern-central-europe/bosnia-herzegovina/feed/"
+        ],
+    "kosovo": [
+        "https://balkaninsight.com/category/bi/kosovo/",
+        "https://globalvoices.org/-/world/eastern-central-europe/kosovo/feed/"
+        ],
+    "western sahara": ["https://globalvoices.org/-/world/middle-east-north-africa/western-sahara/feed/"],    
+    "north macedonia": [
+        "https://balkaninsight.com/category/bi/macedonia/",
+        "https://globalvoices.org/-/world/eastern-central-europe/macedonia/feed/"
+        ],
+    "croatia": [
+        "https://balkaninsight.com/category/bi/croatia/",
+        "https://globalvoices.org/-/world/eastern-central-europe/croatia/feed/"
+        ],
+    "albania": [
+        "https://balkaninsight.com/category/bi/albania/",
+        "https://globalvoices.org/-/world/eastern-central-europe/albania/feed/"
+        ],
+    "bulgaria": [
+        "https://balkaninsight.com/category/bi/bulgaria/",
+        "https://globalvoices.org/-/world/eastern-central-europe/bulgaria/feed/"
+        ],
+    "moldova": [
+        "https://balkaninsight.com/category/bi/moldova/",
+        "https://globalvoices.org/-/world/eastern-central-europe/moldova/feed/"
+        ],
+    "portugal": ["https://globalvoices.org/-/world/western-europe/portugal/feed/"],
+    "ireland": ["https://globalvoices.org/-/world/western-europe/ireland/feed/"],    
+    "uruguay": ["https://globalvoices.org/-/world/latin-america/uruguay/feed/"],
+    "mexico": ["https://globalvoices.org/-/world/latin-america/mexico/feed/"],
+    "colombia": ["https://globalvoices.org/-/world/latin-america/colombia/feed/"],
+    "venezuela": ["https://globalvoices.org/-/world/latin-america/venezuela/feed/"],
+    "yemen": ["https://globalvoices.org/-/world/middle-east-north-africa/yemen/feed/"],
 }
 
 # ---------------------- Global feeds (PRIMARY SOURCE) ----------------------
