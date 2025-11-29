@@ -254,9 +254,18 @@ COUNTRY_FEEDS = {
         "https://newsblenda.com/feed/",
         "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/"
     ],
-    "ghana": ["https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss"],
-    "ethiopia": ["https://addisstandard.com/feed/"],
-    "uganda": ["https://www.watchdoguganda.com/feed"],
+    "ghana": [
+        "https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss",
+        "https://globalvoices.org/-/world/sub-saharan-africa/ghana/"
+        ],
+    "ethiopia": [
+        "https://addisstandard.com/feed/",
+        "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/"
+        ],
+    "uganda": [
+        "https://www.watchdoguganda.com/feed",
+        "https://globalvoices.org/-/world/sub-saharan-africa/uganda/"
+        ],
     "zimbabwe": ["https://3-mob.com/feed/"],
     "morocco": [
         "https://www.moroccoworldnews.com/feed",
