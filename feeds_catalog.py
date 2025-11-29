@@ -232,6 +232,7 @@ COUNTRY_FEEDS = {
     "australia": ["https://www.abc.net.au/news/feed/51120/rss.xml"],
     "india": ["https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"],
     "south africa": ["https://www.news24.com/news24/rss"],
+    "namibia" :["https://globalvoices.org/-/world/sub-saharan-africa/namibia/"],
     "pakistan": ["https://www.dawn.com/feeds/home"],
     "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
     "philippines": ["https://www.philstar.com/rss/nation"],
@@ -249,15 +250,23 @@ COUNTRY_FEEDS = {
         "https://www.nation.co.ke/rss.xml", 
         "https://globalvoices.org/-/world/sub-saharan-africa/kenya/"
         ],
+    "rwanda": ["https://globalvoices.org/-/world/sub-saharan-africa/rwanda/"],
+    "south sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/south-sudan/"],
+    "sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/sudan/"],
+    "mali": ["https://globalvoices.org/-/world/sub-saharan-africa/mali/"],
+    "republic of congo": ["https://globalvoices.org/-/world/sub-saharan-africa/republic-of-congo/"],    
     "nigeria": [
         "https://thenationonlineng.net/feed/",
         "https://newsblenda.com/feed/",
         "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/"
     ],
+    "niger": ["https://globalvoices.org/-/world/sub-saharan-africa/niger/"],
     "ghana": [
         "https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss",
         "https://globalvoices.org/-/world/sub-saharan-africa/ghana/"
         ],
+    "sierra leone": ["https://globalvoices.org/-/world/sub-saharan-africa/sierra-leone/"],
+    "senegal": ["https://globalvoices.org/-/world/sub-saharan-africa/senegal/"],    
     "ethiopia": [
         "https://addisstandard.com/feed/",
         "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/"
@@ -266,7 +275,11 @@ COUNTRY_FEEDS = {
         "https://www.watchdoguganda.com/feed",
         "https://globalvoices.org/-/world/sub-saharan-africa/uganda/"
         ],
+    "tanzania": ["https://globalvoices.org/-/world/sub-saharan-africa/tanzania/"],    
     "zimbabwe": ["https://3-mob.com/feed/"],
+    "somalia": ["https://globalvoices.org/-/world/sub-saharan-africa/somalia/"],
+    "somaliland": ["https://globalvoices.org/-/world/sub-saharan-africa/somaliland/"],
+    "mozambique": ["https://globalvoices.org/-/world/sub-saharan-africa/mozambique/"],
     "morocco": [
         "https://www.moroccoworldnews.com/feed",
         "https://www.moroccoworldnews.com/international/feed/"
