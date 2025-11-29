@@ -331,17 +331,16 @@ def run_geocode_backfill():
         return False
 
 def run_scheduler_notify():
-    """Send daily email PDF reports and Telegram alerts to eligible users"""
+    """Send daily email PDF reports to eligible users"""
     
     logger = logging.getLogger('railway_cron')
     
     try:
         from email_dispatcher import send_pdf_report
-        from telegram_dispatcher import send_alerts_to_telegram
         import psycopg2
         from psycopg2.extras import DictCursor
         
-        logger.info("Starting scheduler notify (email + Telegram)...")
+        logger.info("Starting scheduler notify (email PDF reports)...")
         
         # Get database connection
         db_url = os.getenv("DATABASE_URL")
@@ -378,32 +377,11 @@ def run_scheduler_notify():
                     logger.warning(f"PDF report error for {email}: {result.get('reason', '')}")
         except Exception as e:
             logger.error(f"Email job failed: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
         
-        # Telegram job: send alerts
-        try:
-            conn = psycopg2.connect(db_url, cursor_factory=DictCursor)
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT u.email, u.plan
-                FROM users u
-                JOIN plans p ON u.plan = p.name
-                WHERE p.telegram = TRUE
-                  AND u.is_active = TRUE
-            """)
-            telegram_users = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            logger.info(f"Found {len(telegram_users)} users eligible for Telegram alerts")
-            for user in telegram_users:
-                email = user["email"]
-                try:
-                    count = send_alerts_to_telegram(email=email)
-                    logger.info(f"Sent Telegram alert to {email} ({count} alerts)")
-                except Exception as e:
-                    logger.warning(f"Telegram alert failed for {email}: {e}")
-        except Exception as e:
-            logger.error(f"Telegram job failed: {e}")
+        # Telegram alerts removed - send_alerts_to_telegram function doesn't exist
+        # Telegram notifications should be triggered via proximity_alerts.py instead
         
         logger.info("Scheduler notify completed")
         return True
