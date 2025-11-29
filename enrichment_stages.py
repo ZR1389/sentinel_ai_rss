@@ -5,14 +5,20 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
+
+from risk_shared import likely_sports_context
 
 # Structured logging setup
 from logging_config import get_logger, get_metrics_logger
 logger = get_logger("enrichment_stages")
 metrics = get_metrics_logger("enrichment_stages")
+
+_SCORELINE_PATTERN = re.compile(r"\b\d{1,2}\s*[-–:]\s*\d{1,2}\b")
+_VERSUS_PATTERN = re.compile(r"\bvs\.?\b|\bversus\b", re.IGNORECASE)
 
 # Input validation
 from validation import validate_alert, validate_enrichment_data
@@ -307,12 +313,23 @@ class ContentFilterStage(EnrichmentStage):
         has_strong_sports = any(keyword in full_text_lower for keyword in strong_sports_indicators)
         has_strong_entertainment = any(keyword in full_text_lower for keyword in strong_entertainment_indicators)
         
+        # Additional signals from shared heuristics & scoreline patterns
+        from risk_shared import likely_sports_context
+        sports_flagged = "sports_context" in (alert.get("relevance_flags") or [])
+        sports_heuristic_hit = likely_sports_context(context.full_text)
+
+        has_scoreline = bool(_SCORELINE_PATTERN.search(full_text_lower))
+        has_versus = bool(_VERSUS_PATTERN.search(full_text_lower))
+        scoreline_indicates_sports = has_scoreline and (has_versus or sports_matches > 0 or has_strong_sports)
+
         should_filter = (
             is_sports_category or is_entertainment_category or
             (sports_matches >= 2 and not has_security_context) or
             (entertainment_matches >= 2 and not has_security_context) or
             (has_strong_sports and not has_security_context) or
-            (has_strong_entertainment and not has_security_context)
+            (has_strong_entertainment and not has_security_context) or
+            sports_flagged or sports_heuristic_hit or
+            (scoreline_indicates_sports and not has_security_context)
         )
         
         if should_filter:

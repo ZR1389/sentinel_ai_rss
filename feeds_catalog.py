@@ -116,12 +116,25 @@ CITY_TO_COUNTRY = {
     "trieste": "Italy",
 }
 
-# ---------------------- Local city feeds ----------------------
-# Major cities/local news feeds (100+ cities globally)
+# =====================================================================
+# ENGLISH-ONLY GLOBAL FEEDS STRATEGY
+# =====================================================================
+# Focus: Global English-language sources with location extraction
+# Location extraction happens via content analysis (city_utils/location_service)
+# No more relying on non-English local feeds that create noise
+# 
+# Benefits:
+# - Higher quality, accurate reporting
+# - No translation issues/keyword mismatches
+# - Proper city/country extraction from article content
+# - Reduced noise and false positives
+# =====================================================================
+
+# ---------------------- Local city feeds (ENGLISH ONLY) ----------------------
+# Only keeping major English-language city feeds
 LOCAL_FEEDS = {
-    "belgrade": ["https://www.novosti.rs/rss/beograd"],
     "hong kong": ["https://www.scmp.com/rss/2/feed/"],
-    "paris": ["https://www.lemonde.fr/rss/une.xml"],
+    "hong kong": ["https://www.scmp.com/rss/2/feed/"],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
     "los angeles": [
         "https://www.latimes.com/local/rss2.0.xml",
@@ -153,15 +166,8 @@ LOCAL_FEEDS = {
     "kansas city": ["https://feeds.kansascitypost.com/rss/cc264e50ceab3697"],
     "san diego": ["https://timesofsandiego.com/feed/"],
     "san francisco": ["https://el-observador.com/feed/"],
-    "mumbai": ["https://timesofindia.indiatimes.com/rssfeeds/-2128838597.cms"],
-    "moscow": ["https://www.themoscowtimes.com/rss/news"],
     "sydney": ["https://www.abc.net.au/news/feed/2942460/rss.xml"],
-    "rome": ["https://www.romatoday.it/rss"],
-    "delhi": ["https://timesofindia.indiatimes.com/rssfeeds/-2128839596.cms"],
-    "rio de janeiro": ["https://www.riotimesonline.com/feed/"],
     "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
-    "buenos aires": ["https://www.clarin.com/rss/lo-ultimo/"],
-    "karachi": ["https://www.dawn.com/feeds/home"],
     "manila": ["https://www.philstar.com/rss/nation"],
     "port moresby": ["https://feeds.feedburner.com/pngfacts/PcXZ"],
     "boston": ["https://www.boston.com/tag/local-news/feed/"],
@@ -169,76 +175,20 @@ LOCAL_FEEDS = {
         "https://wtop.com/local/feed/",
         "https://feeds.washingtonpost.com/rss/local?itid=sf_local"
     ],
-    "miami": ["https://www.local10.com/arc/outboundfeeds/rss/category/news/?outputType=xml&size=10"],
     "houston": ["https://www.click2houston.com/arc/outboundfeeds/rss/category/news/local/?outputType=xml&size=10"],
     "birmingham": ["https://feeds.birminghamstar.com/rss/0cd1f7701040892f"],
     "tuscaloosa": ["https://feeds.tuscaloosatimes.com/rss/7e50c85536b0a892"],
     "mountain brook": ["https://www.villagelivingonline.com/api/rss/content.rss"],
     "seldovia": ["https://www.seldovia.com/feed/"],
-    "amsterdam": ["https://www.parool.nl/amsterdam/rss.xml"],
-    "vienna": ["https://www.derstandard.at/rss/international"],
-    "zurich": ["https://www.nzz.ch/zuerich.rss"],
+    "amsterdam": ["https://www.dutchnews.nl/feed/"],
     "brussels": ["https://www.thebulletin.be/rss.xml"],
-    "stockholm": ["https://api.sr.se/api/rss/program/2054"],
-    "oslo": ["https://www.aftenposten.no/rss"],
-    "helsinki": ["https://www.hs.fi/rss/tuoreimmat.xml"],
-    "copenhagen": ["https://www.dr.dk/nyheder/service/feeds/allenyheder"],
-    "prague": ["https://english.radio.cz/rcz-rss/en"],
-    "budapest": ["https://dailynewshungary.com/feed/"],
-    "cluj": ["https://opiniatransilvana.ro/feed/"],
-    "arad": ["https://www.newsarad.ro/newsarad.ro/feed/"],
-    "bucharest": ["https://www.bursa.ro/_rss/?t=tzs"],
-    "sofia": ["https://stolica.bg/rss.xml"],
-    "plovdiv": ["https://www.plovdiv24.bg/novini/rss.html"],
-    "haskovo": ["https://haskovo.info/feed/"],
-    "athens": ["https://www.athensvoice.gr/rss/echobox/"],
-    "ankara": ["https://www.hurriyet.com.tr/rss/ankara"],
-    "berlin": ["https://www.rbb24.de/aktuell/index.xml/feed=rss.xml"],
-    "munich": ["https://rss.sueddeutsche.de/rss/Muenchen"],
-    "saint petersburg": ["https://spbdnevnik.ru/rss/all.rss"],
-    "kyiv": ["https://www.kyivpost.com/feed"],
-    "minsk": ["https://eng.belta.by/rss"],
-    "tel aviv": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
-    "dubai": ["https://www.wam.ae/en/rss/feed/g4xnlor4yz?slug=english-rss-viewnull&vsCode=avs-002-1jc73h1izx3w&type=rss"],
-    "riyadh": ["https://www.okaz.com.sa/rssFeed/1"],
-    "tehran": ["https://www.tehrantimes.com/rss"],
-    "baghdad": ["https://www.iraqinews.com/feed/"],
-    "beirut": ["https://www.lbcgroup.tv/Rss/News/ar/1/%D8%A3%D8%AE%D8%A8%D8%A7%D8%B1-%D9%84%D8%A8%D9%86%D8%A7%D9%86"],
-    "damascus": ["http://sana.sy/en/?feed=rss2"],
-    "cali": ["https://www.rcnradio.com/rss.xml"],
-    "lima": ["https://elcomercio.pe/feed/"],
-    "caracas": ["https://www.eluniversal.com/rss/rss.xml"],
-    "bogota": ["https://www.eltiempo.com/rss/bogota.xml"],
-    "nairobi": ["https://www.nation.co.ke/rss.xml"],
-    "casablanca": ["https://www.moroccoworldnews.com/feed"],
-    "algiers": ["https://www.aps.dz/en/rss"],
-    "addis ababa": ["https://addisstandard.com/feed/"],
-    "lagos": ["https://thenationonlineng.net/feed/"],
-    "accra": ["https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss"],
-    "abidjan": ["https://www.fratmat.info/rss.xml"],
-    "cotonou": ["https://beninwebtv.com/feed/"],
-    "kinshasa": ["https://www.radiookapi.net/rss.xml"],
-    "jeddah": ["https://english.alarabiya.net/tools/rss"],
-    "doha": ["https://www.gulf-times.com/rss"],
-    "kuwait city": ["https://www.arabtimesonline.com/news/rss/"],
-    "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
-    "kuala lumpur": ["https://www.nst.com.my/rss"],
-    "bangkok": ["https://www.bangkokpost.com/rss/data/topstories.xml"],
-    "hanoi": ["https://vietnamnews.vn/rss"],
-    "jakarta": ["https://www.thejakartapost.com/rss"],
-    "manila": ["https://www.philstar.com/rss/nation"],
-    "melbourne": ["https://www.abc.net.au/news/feed/2942460/rss.xml"],
-    "auckland": ["https://www.nzherald.co.nz/news/rss.xml"],
-    "perth": ["https://thewest.com.au/feed"],
-    "sydney": ["https://www.abc.net.au/news/feed/2942460/rss.xml"],
-    "brisbane": ["https://www.brisbanetimes.com.au/rss/feed.xml"],
+    "stockholm": ["https://www.thelocal.se/rss"],
     "montreal": ["https://montrealgazette.com/feed/"],
     "vancouver": ["https://vancouversun.com/feed/"],
     "calgary": ["https://calgaryherald.com/feed/"],
     "ottawa": ["https://ottawacitizen.com/feed/"],
     "toronto": ["https://www.cp24.com/rss/cp24-news-rss-1.5859135"],
     "edmonton": ["https://edmontonjournal.com/feed/"],
-    "quebec city": ["https://www.quebechebdo.com/feed/"],
     "winnipeg": ["https://winnipegsun.com/feed/"],
     "halifax": ["https://globalnews.ca/halifax/feed/"],
     "st johns": ["https://www.cbc.ca/cmlink/rss-canada-newfoundlandandlabrador"],
@@ -246,101 +196,108 @@ LOCAL_FEEDS = {
         "https://www.sowetanlive.co.za/rss/?publication=sowetan-live&section=news", 
         "https://www.iol.co.za/cmlink/1.640"
     ],
-    "novi sad": ["https://www.021.rs/rss/all"],
-    "nis": ["https://niskevesti.rs/feed/"],
-    "sankt petersburg": ["https://rssexport.rbc.ru/rbcnews/news/30/full.rss"],
-    "tallinn": ["https://www.ohtuleht.ee/rss"],
+    "melbourne": ["https://www.abc.net.au/news/feed/2942460/rss.xml"],
+    "auckland": ["https://www.nzherald.co.nz/news/rss.xml"],
+    "perth": ["https://thewest.com.au/feed"],
+    "brisbane": ["https://www.brisbanetimes.com.au/rss/feed.xml"],
+    "mumbai": ["https://timesofindia.indiatimes.com/rssfeeds/-2128838597.cms"],
+    "delhi": ["https://timesofindia.indiatimes.com/rssfeeds/-2128839596.cms"],
+    "karachi": ["https://www.dawn.com/feeds/home"],
+    "bangkok": ["https://www.bangkokpost.com/rss/data/topstories.xml"],
+    "hanoi": ["https://vietnamnews.vn/rss"],
+    "jakarta": ["https://www.thejakartapost.com/rss"],
+    "kuala lumpur": ["https://www.nst.com.my/rss"],
+    "tel aviv": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
+    "dubai": ["https://www.wam.ae/en/rss/feed/g4xnlor4yz?slug=english-rss-viewnull&vsCode=avs-002-1jc73h1izx3w&type=rss"],
+    "nairobi": ["https://www.nation.co.ke/rss.xml"],
+    "addis ababa": ["https://addisstandard.com/feed/"],
+    "lagos": ["https://thenationonlineng.net/feed/"],
+    "accra": ["https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss"],
+    "riyadh": ["https://www.okaz.com.sa/rssFeed/1"],
+    "baghdad": ["https://www.iraqinews.com/feed/"],
+    "jeddah": ["https://english.alarabiya.net/tools/rss"],
+    "doha": ["https://www.gulf-times.com/rss"],
+    "kuwait city": ["https://www.arabtimesonline.com/news/rss/"],
 }
-# ---------------------- Country-level feeds ----------------------
-# Country-level news feeds for fallback
+
+# ---------------------- Country-level feeds (ENGLISH ONLY) ----------------------
+# Only English-language country feeds or international sections
 COUNTRY_FEEDS = {
+    "angola": ["https://globalvoices.org/-/world/sub-saharan-africa/angola/"],
     "united kingdom": ["https://feeds.bbci.co.uk/news/uk/rss.xml"],
-    "france": ["https://www.france24.com/en/rss"],
+    "turkey": ["https://globalvoices.org/-/world/middle-east-north-africa/turkey/"],
+    "germany": ["https://globalvoices.org/-/world/western-europe/germany/"],
     "united states": ["https://rss.nytimes.com/services/xml/rss/nyt/US.xml"],
     "canada": ["https://www.cbc.ca/cmlink/rss-canada"],
     "australia": ["https://www.abc.net.au/news/feed/51120/rss.xml"],
-    "japan": ["https://www3.nhk.or.jp/nhkworld/en/news/feeds/rss.xml"],
-    "china": ["http://www.chinadaily.com.cn/rss/china_rss.xml"],
     "india": ["https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"],
-    "brazil": ["https://g1.globo.com/rss/g1/"],
     "south africa": ["https://www.news24.com/news24/rss"],
-    "russia": ["https://www.themoscowtimes.com/rss/news"],
-    "mexico": ["https://www.eluniversal.com.mx/rss/nacion.xml"],
-    "argentina": ["https://www.clarin.com/rss/lo-ultimo/"],
-    "turkey": ["https://www.hurriyet.com.tr/rss/gundem"],
-    "spain": [
-        "https://elpais.com/rss/elpais/portada.xml",
-        "https://feeds.thelocal.com/rss/es"
-    ],
-    "italy": ["https://www.ansa.it/sito/ansait_rss.xml"],
-    "egypt": ["https://english.ahram.org.eg/NewsRSS.aspx?CategoryID=3"],
+    "pakistan": ["https://www.dawn.com/feeds/home"],
+    "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
+    "philippines": ["https://www.philstar.com/rss/nation"],
+    "malaysia": [
+        "https://www.nst.com.my/rss",
+        "https://globalvoices.org/-/world/east-asia/malaysia/"
+                 ],
+    "thailand": ["https://www.bangkokpost.com/rss/data/topstories.xml"],
+    "vietnam": ["https://vietnamnews.vn/rss"],
+    "indonesia": [
+        "https://www.thejakartapost.com/rss",
+        "https://globalvoices.org/-/world/east-asia/indonesia/"
+        ],   
+    "kenya": [
+        "https://www.nation.co.ke/rss.xml", 
+        "https://globalvoices.org/-/world/sub-saharan-africa/kenya/"
+        ],
     "nigeria": [
         "https://thenationonlineng.net/feed/",
-        "https://newsblenda.com/feed/"
+        "https://newsblenda.com/feed/",
+        "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/"
     ],
-    "kenya": ["https://www.nation.co.ke/rss.xml"],
-    "indonesia": ["https://www.thejakartapost.com/rss"],
-    "thailand": ["https://www.bangkokpost.com/rss/data/topstories.xml"],
-    "philippines": ["https://www.philstar.com/rss/nation"],
-    "south korea": ["https://koreajoongangdaily.joins.com/newslist/rss.aspx"],
-    "pakistan": ["https://www.dawn.com/feeds/home"],
-    "colombia": ["https://www.eltiempo.com/rss/colombia.xml"],
-    "peru": ["https://elcomercio.pe/feed/"],
-    "chile": ["https://www.latercera.com/rss/feed/"],
-    "vietnam": ["https://vietnamnews.vn/rss"],
-    "malaysia": ["https://www.nst.com.my/rss"],
-    "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
-    "saudi arabia": ["https://english.alarabiya.net/tools/rss"],
-    "iran": ["https://www.tehrantimes.com/rss"],
-    "iraq": ["https://www.iraqinews.com/feed/"],
-    "syria": ["http://sana.sy/en/?feed=rss2"],
-    "serbia": ["https://www.danas.rs/feed/"],
-    "montenegro": ["https://www.novosti.rs/rss/crna-gora"],
-    "republika srpska": ["https://www.novosti.rs/rss/republika-srpska"],
-    "bosnia and herzegovina": ["https://www.kurir.rs/rss/region/bosna-i-hercegovina"],
-    "kosovo": ["https://www.kurir.rs/rss/vesti/srbi-na-kim"],
-    "north macedonia": ["https://www.kurir.rs/rss/region/severna-makedonija"],
-    "croatia": ["https://www.kurir.rs/rss/region/hrvatska"],
-    "lebanon": ["https://www.dailystar.com.lb/RSS.aspx?id=1"],
-    "israel": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
-    "uae": ["https://gulfnews.com/rss/1.454509"],
-    "qatar": ["https://www.gulf-times.com/rss"],
-    "kuwait": ["https://www.arabtimesonline.com/news/rss/"],
+    "ghana": ["https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss"],
+    "ethiopia": ["https://addisstandard.com/feed/"],
+    "uganda": ["https://www.watchdoguganda.com/feed"],
+    "zimbabwe": ["https://3-mob.com/feed/"],
     "morocco": [
         "https://www.moroccoworldnews.com/feed",
         "https://www.moroccoworldnews.com/international/feed/"
     ],
-    "algeria": ["https://www.aps.dz/en/rss"],
-    "ethiopia": ["https://addisstandard.com/feed/"],
-    "ghana": ["https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss"],
-    "uganda": ["https://www.watchdoguganda.com/feed"],
-    "zimbabwe": ["https://3-mob.com/feed/"],
-    "ivory coast": ["https://www.fratmat.info/rss.xml"],
-    "benin": ["https://beninwebtv.com/feed/"],
-    "dr congo": ["https://www.radiookapi.net/rss.xml"],
+    "israel": ["https://www.jpost.com/rss/rssfeedsfrontpage.aspx"],
+    "iraq": ["https://www.iraqinews.com/feed/"],
+    "uae": ["https://gulfnews.com/rss/1.454509"],
+    "qatar": ["https://www.gulf-times.com/rss"],
+    "kuwait": ["https://www.arabtimesonline.com/news/rss/"],
+    "saudi arabia": ["https://english.alarabiya.net/tools/rss"],
     "belgium": ["https://www.brusselstimes.com/feed"],
     "netherlands": ["https://www.dutchnews.nl/feed/"],
     "sweden": ["https://www.thelocal.se/rss"],
-    "norway": ["https://www.aftenposten.no/rss"],
-    "denmark": ["https://www.dr.dk/nyheder/service/feeds/allenyheder"],
-    "finland": ["https://www.hs.fi/rss/tuoreimmat.xml"],
-    "estonia": ["https://www.aripaev.ee/rss"],
-    "switzerland": ["https://www.nzz.ch/rss"],
-    "austria": ["https://www.derstandard.at/rss/international"],
     "czech republic": ["https://english.radio.cz/rss"],
-    "slovakia": ["https://www.sme.sk/rss-title"],
     "hungary": ["https://dailynewshungary.com/feed/"],
     "poland": ["https://www.thefirstnews.com/rss"],
     "romania": ["https://www.romania-insider.com/rss"],
-    "moldovia": ["https://timpul.md/feed"],
-    "bulgaria": ["https://www.novinite.com/rss.php"],
     "greece": ["https://www.ekathimerini.com/rss"],
     "ukraine": ["https://www.kyivpost.com/feed"],
-    "belarus": ["https://eng.belta.by/rss_en"],
+    "serbia": ["https://balkaninsight.com/category/bi/serbia/"],
+    "montenegro": ["https://balkaninsight.com/category/bi/montenegro/"],
+    "bosnia and herzegovina": ["https://balkaninsight.com/category/bi/bosnia-and-herzegovina/"],
+    "kosovo": ["https://balkaninsight.com/category/bi/kosovo/"],
+    "north macedonia": ["https://balkaninsight.com/category/bi/macedonia/"],
+    "croatia": ["https://balkaninsight.com/category/bi/croatia/"],
+    "albania": ["https://balkaninsight.com/category/bi/albania/"],
+    "bulgaria": ["https://balkaninsight.com/category/bi/bulgaria/"],
+    "moldova": ["https://balkaninsight.com/category/bi/moldova/"],
+    "uruguay": ["https://globalvoices.org/-/world/latin-america/uruguay/"],
+    "colombia": ["https://globalvoices.org/-/world/latin-america/colombia/"],
+    "venezuela": ["https://globalvoices.org/-/world/latin-america/venezuela/"],
+    "yemen": ["https://globalvoices.org/-/world/middle-east-north-africa/yemen/"],
 }
-# ---------------------- Global feeds ----------------------
-# Global advisories, cyber alerts, international agencies, etc. for fallback
+
+# ---------------------- Global feeds (PRIMARY SOURCE) ----------------------
+# These are now your PRIMARY intelligence source - not fallback
+# Global English feeds with keyword + location extraction
+# Location detection happens via content analysis
 GLOBAL_FEEDS = [
+    # Cyber security & infrastructure (critical for threat intel)
     "https://www.cisa.gov/news.xml",
     "https://www.darkreading.com/rss.xml",
     "https://krebsonsecurity.com/feed/",
@@ -349,7 +306,8 @@ GLOBAL_FEEDS = [
     "https://feeds.feedburner.com/TheHackersNews",
     "https://www.csoonline.com/feed/",
     "https://intel471.com/blog/feed",
-    # New York Times global/region desks
+    
+    # Major global news networks (comprehensive coverage)
     "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Africa.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Americas.xml",

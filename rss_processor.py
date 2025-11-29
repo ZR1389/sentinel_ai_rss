@@ -783,23 +783,53 @@ try:
 except Exception:
     LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS = {}, {}, []
 
-NATIVE_PRIORITY   = 10
-FALLBACK_PRIORITY = 30
-KIND_PRIORITY = {"native": NATIVE_PRIORITY, "env": NATIVE_PRIORITY, "fallback": FALLBACK_PRIORITY, "unknown": 999}
+# =====================================================================
+# FEED PRIORITY STRATEGY (UPDATED: Global-first approach)
+# =====================================================================
+# NEW STRATEGY:
+# 1. GLOBAL feeds are PRIMARY (not fallback) - highest priority
+#    - Comprehensive English coverage with keyword matching
+#    - Location extraction via content analysis (city_utils/location_service)
+#    - Best signal-to-noise ratio
+#
+# 2. LOCAL/COUNTRY feeds are SUPPLEMENTARY (lower priority)
+#    - Only English-language feeds retained
+#    - Provide localized context when available
+#    - Used for additional coverage depth
+#
+# Benefits of global-first approach:
+# - No translation issues or non-English noise
+# - Consistent quality and formatting
+# - Proper location extraction from article content
+# - Reduced false positives from local sports/entertainment
+# =====================================================================
+
+GLOBAL_PRIORITY   = 5   # Highest priority - primary intelligence source
+NATIVE_PRIORITY   = 10  # Local/country feeds - supplementary coverage
+FALLBACK_PRIORITY = 30  # Core fallback if others fail
+KIND_PRIORITY = {"global": GLOBAL_PRIORITY, "native": NATIVE_PRIORITY, "env": NATIVE_PRIORITY, "fallback": FALLBACK_PRIORITY, "unknown": 999}
 
 def _wrap_spec(url: str, priority: int, kind: str, tag: str = "") -> Dict[str, Any]:
     return {"url": url.strip(), "priority": priority, "kind": kind, "tag": tag}
 
 def _build_native_specs() -> List[Dict[str, Any]]:
+    """Build feed specs with GLOBAL feeds as highest priority."""
     specs: List[Dict[str, Any]] = []
+    
+    # GLOBAL feeds FIRST (primary intelligence source)
+    for u in (GLOBAL_FEEDS or []):
+        specs.append(_wrap_spec(u, GLOBAL_PRIORITY, "global", "global"))
+    
+    # Local city feeds (supplementary English coverage)
     for city, urls in (LOCAL_FEEDS or {}).items():
         for u in (urls or []):
             specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"local:{city}"))
+    
+    # Country feeds (supplementary English coverage)
     for country, urls in (COUNTRY_FEEDS or {}).items():
         for u in (urls or []):
             specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"country:{country}"))
-    for u in (GLOBAL_FEEDS or []):
-        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", "global"))
+    
     return specs
 
 def _load_env_feeds() -> List[str]:
