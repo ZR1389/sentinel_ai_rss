@@ -1953,7 +1953,7 @@ def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
     
     try:
         # Use base keywords from JSON ONLY (most selective for RSS filtering)
-        from keywords_loader import KEYWORD_DATA
+        from utils.keywords_loader import KEYWORD_DATA
         
         # Get base keywords from threat_keywords.json
         base_keywords = KEYWORD_DATA.get("keywords", [])
@@ -1988,7 +1988,7 @@ def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
         logger.debug(f"Keyword loader failed: {e}")
         # Load static threat keywords file
         try:
-            path = os.path.join(os.path.dirname(__file__), "config", "threat_keywords.json")
+            path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "threat_keywords.json")
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for category_vals in data.values():

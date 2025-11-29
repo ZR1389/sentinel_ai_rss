@@ -133,7 +133,10 @@ CITY_TO_COUNTRY = {
 # ---------------------- Local city feeds (ENGLISH ONLY) ----------------------
 # Only keeping major English-language city feeds
 LOCAL_FEEDS = {
-    "hong kong": ["https://www.scmp.com/rss/2/feed/"],
+    "hong kong": [
+        "https://www.scmp.com/rss/2/feed/",
+        "https://globalvoices.org/-/world/east-asia/hong-kong-china/feed/"
+        ],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
     "los angeles": [
         "https://www.latimes.com/local/rss2.0.xml",
@@ -222,13 +225,22 @@ LOCAL_FEEDS = {
 # ---------------------- Country-level feeds (ENGLISH ONLY) ----------------------
 # Only English-language country feeds or international sections
 COUNTRY_FEEDS = {
-    "angola": ["https://globalvoices.org/-/world/sub-saharan-africa/angola/feed/"],
+    "angola": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/angola/feed/",
+        "https://allafrica.com/tools/headlines/rdf/angola/headlines.rdf"
+        ],
+    "algeria": [
+        "https://allafrica.com/tools/headlines/rdf/algeria/headlines.rdf",
+        "https://globalvoices.org/-/world/middle-east-north-africa/algeria/feed/"
+        ],    
     "austria": ["https://globalvoices.org/-/world/western-europe/austria/feed/"],
     "argentina": ["https://globalvoices.org/-/world/latin-america/argentina/feed/"],
+    "afghanistan": ["https://globalvoices.org/-/world/central-asia-caucasus/afghanistan/feed/"],
     "cyprus": ["https://globalvoices.org/-/world/western-europe/cyprus/feed/"],
     "san marino": ["https://globalvoices.org/-/world/western-europe/san-marino/feed/"],
     "vatican city": ["https://globalvoices.org/-/world/western-europe/vatican-city/feed/"],
     "russia": ["https://globalvoices.org/-/world/eastern-central-europe/russia/feed/"],
+    "china": ["https://globalvoices.org/-/world/east-asia/china/feed/"],
     "new zealand": ["https://globalvoices.org/-/world/oceania/new-zealand/feed/"],
     "papua new guinea": ["https://globalvoices.org/-/world/oceania/papua-new-guinea/feed/"],
     "united kingdom": [
@@ -249,13 +261,20 @@ COUNTRY_FEEDS = {
         "https://www.abc.net.au/news/feed/51120/rss.xml",
         "https://globalvoices.org/-/world/oceania/australia/feed/"
         ],
-    "india": ["https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms"],
+    "fiji": ["https://globalvoices.org/-/world/oceania/fiji/feed/"],
+    "india": [
+        "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms",
+        "https://globalvoices.org/-/world/south-asia/india/feed/"
+        ],
     "south africa": [
         "https://www.news24.com/news24/rss",
         "https://globalvoices.org/-/world/sub-saharan-africa/south-africa/feed/"
                      ],
     "namibia" :["https://globalvoices.org/-/world/sub-saharan-africa/namibia/feed/"],
-    "pakistan": ["https://www.dawn.com/feeds/home"],
+    "pakistan": [
+        "https://www.dawn.com/feeds/home",
+        "https://globalvoices.org/-/world/south-asia/pakistan/feed/"
+        ],
     "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
     "philippines": ["https://www.philstar.com/rss/nation"],
     "malaysia": [
@@ -282,8 +301,20 @@ COUNTRY_FEEDS = {
         "https://newsblenda.com/feed/",
         "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/feed/"
     ],
+    "haiti": ["https://globalvoices.org/-/world/caribbean/haiti/feed/"],
+    "panama": ["https://globalvoices.org/-/world/latin-america/panama/feed/"],
+    "jamaica": ["https://globalvoices.org/-/world/caribbean/jamaica/feed/"],
+    "suriname": ["https://globalvoices.org/-/world/caribbean/suriname/feed/"],
     "egypt": ["https://globalvoices.org/-/world/middle-east-north-africa/egypt/feed/"],
     "niger": ["https://globalvoices.org/-/world/sub-saharan-africa/niger/feed/"],
+    "benin": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/benin/feed/",
+        "https://allafrica.com/tools/headlines/rdf/benin/headlines.rdf"
+        ],
+    "botswana": ["https://globalvoices.org/-/world/sub-saharan-africa/botswana/feed/"],
+    "cameroon": ["https://globalvoices.org/-/world/sub-saharan-africa/cameroon/feed/"],
+    "chad": ["https://globalvoices.org/-/world/sub-saharan-africa/chad/feed/"],
+    "central african republic": ["https://globalvoices.org/-/world/sub-saharan-africa/central-african-republic/feed/"],
     "ghana": [
         "https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss",
         "https://globalvoices.org/-/world/sub-saharan-africa/ghana/feed/"
@@ -294,10 +325,18 @@ COUNTRY_FEEDS = {
         "https://addisstandard.com/feed/",
         "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/feed/"
         ],
+    "gabon": ["https://globalvoices.org/-/world/sub-saharan-africa/gabon/feed/"],
+    "gambia": ["https://globalvoices.org/-/world/sub-saharan-africa/gambia/feed/"],
+    "ivory coast": ["https://globalvoices.org/-/world/sub-saharan-africa/cote-divoire/feed/"],
     "uganda": [
         "https://www.watchdoguganda.com/feed",
         "https://globalvoices.org/-/world/sub-saharan-africa/uganda/feed/"
         ],
+    "guinea": ["https://globalvoices.org/-/world/sub-saharan-africa/guinea/feed/"],
+    "guniea-bissau": ["https://globalvoices.org/-/world/sub-saharan-africa/guinea-bissau/feed/"],
+    "equatorial guinea": ["https://globalvoices.org/-/world/sub-saharan-africa/equatorial-guinea/feed/"],
+    "burkina faso": ["https://globalvoices.org/-/world/sub-saharan-africa/burkina-faso/feed/"],
+    "burundi": ["https://globalvoices.org/-/world/sub-saharan-africa/burundi/feed/"],
     "tanzania": ["https://globalvoices.org/-/world/sub-saharan-africa/tanzania/feed/"],    
     "zimbabwe": ["https://3-mob.com/feed/"],
     "somalia": ["https://globalvoices.org/-/world/sub-saharan-africa/somalia/feed/"],
@@ -425,10 +464,12 @@ COUNTRY_FEEDS = {
     "portugal": ["https://globalvoices.org/-/world/western-europe/portugal/feed/"],
     "ireland": ["https://globalvoices.org/-/world/western-europe/ireland/feed/"],    
     "uruguay": ["https://globalvoices.org/-/world/latin-america/uruguay/feed/"],
+    "paraguay": ["https://globalvoices.org/-/world/latin-america/paraguay/feed/"],
     "mexico": ["https://globalvoices.org/-/world/latin-america/mexico/feed/"],
     "colombia": ["https://globalvoices.org/-/world/latin-america/colombia/feed/"],
     "venezuela": ["https://globalvoices.org/-/world/latin-america/venezuela/feed/"],
     "yemen": ["https://globalvoices.org/-/world/middle-east-north-africa/yemen/feed/"],
+    "japan": ["https://globalvoices.org/-/world/east-asia/japan/feed/"],
 }
 
 # ---------------------- Global feeds (PRIMARY SOURCE) ----------------------
