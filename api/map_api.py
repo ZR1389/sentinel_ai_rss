@@ -8,6 +8,7 @@ import json
 import os
 import unicodedata
 import logging
+from cachetools import TTLCache
 
 try:
     # Preferred helper that returns list[dict]
@@ -19,6 +20,10 @@ map_api = Blueprint("map_api", __name__, static_folder="web")
 
 # Initialize logger
 logger = logging.getLogger("map_api")
+
+# Cache for map responses (100 entries, 2-minute TTL)
+_MAP_ALERTS_CACHE = TTLCache(maxsize=100, ttl=120)
+_COUNTRY_RISKS_CACHE = TTLCache(maxsize=10, ttl=300)
 
 # Resolve absolute static dir
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -323,6 +328,7 @@ def map_alerts():
     Returns a FeatureCollection of recent alerts that have latitude/longitude.
     Output keys match your frontend expectations: risk_level, risk_color, risk_radius.
     Query params: ?bbox=minLon,minLat,maxLon,maxLat (optional spatial filter)
+    FIXED: Dynamic limit based on bbox size to prevent zoom-in disappearing alerts
     """
     try:
         current_app.logger.info("[map_alerts] START - endpoint called")
@@ -333,6 +339,16 @@ def map_alerts():
     bbox_param = request.args.get('bbox', '').strip()
     bbox_filter = ""
     bbox_values = []
+    min_lon = min_lat = max_lon = max_lat = None
+    
+    # Check cache first
+    cache_key = f"map_alerts:{bbox_param}:{request.args.get('limit', '')}"  
+    try:
+        if cache_key in _MAP_ALERTS_CACHE:
+            current_app.logger.info("[map_alerts] Cache HIT")
+            return jsonify(_MAP_ALERTS_CACHE[cache_key])
+    except Exception:
+        pass
     
     if bbox_param:
         try:
@@ -343,6 +359,20 @@ def map_alerts():
                 bbox_values = [min_lon, max_lon, min_lat, max_lat]
         except (ValueError, IndexError):
             pass  # Invalid bbox, ignore filter
+    
+    # Calculate dynamic limit based on bbox size (prevents zoom-in empty results)
+    limit = 500  # Default for global view
+    if min_lon is not None and min_lat is not None and max_lon is not None and max_lat is not None:
+        bbox_area = abs((max_lon - min_lon) * (max_lat - min_lat))
+        if bbox_area > 1000:  # Very zoomed out (continent)
+            limit = 500
+        elif bbox_area > 100:  # Country level
+            limit = 1000
+        elif bbox_area > 10:  # Region level
+            limit = 1500
+        else:  # City level (most zoomed in)
+            limit = 2000
+        current_app.logger.info(f"[map_alerts] bbox_area={bbox_area:.2f}, limit={limit}")
     
     q = f"""
         SELECT
@@ -356,7 +386,7 @@ def map_alerts():
           AND longitude BETWEEN -180 AND 180
         {bbox_filter}
         ORDER BY published DESC NULLS LAST
-        LIMIT 500
+        LIMIT {limit}
     """
     try:
         current_app.logger.info(f"[map_alerts] Query: {q[:200]}")
@@ -449,7 +479,16 @@ def map_alerts():
     except Exception:
         pass
 
-    response = jsonify({"type": "FeatureCollection", "features": features})
+    response_data = {"type": "FeatureCollection", "features": features}
+    
+    # Cache the response
+    try:
+        _MAP_ALERTS_CACHE[cache_key] = response_data
+        current_app.logger.info(f"[map_alerts] Cached {len(features)} features")
+    except Exception as e:
+        current_app.logger.warning(f"[map_alerts] Cache set failed: {e}")
+    
+    response = jsonify(response_data)
     
     # Add CORS headers
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -481,13 +520,28 @@ def country_risks():
     Uses MAX severity across alerts for each country (critical > high > moderate > low).
     If alerts.country is NULL/empty, we derive the country from latitude/longitude using
     web/countries.geojson (pure-Python point-in-polygon).
+    OPTIMIZED: Added caching and increased time window
     """
+    # Check cache first
+    cache_key = "country_risks"
+    try:
+        if cache_key in _COUNTRY_RISKS_CACHE:
+            logger.info("[country_risks] Cache HIT")
+            response = jsonify(_COUNTRY_RISKS_CACHE[cache_key])
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            return response
+    except Exception:
+        pass
+    
     q = """
         SELECT country, threat_level, latitude, longitude
         FROM alerts
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        WHERE latitude IS NOT NULL 
+          AND longitude IS NOT NULL
+          AND published >= NOW() - INTERVAL '90 days'
         ORDER BY published DESC NULLS LAST
-        LIMIT 4000
     """
 
     rows: List[Dict[str, Any]] = []
@@ -538,7 +592,16 @@ def country_risks():
     inv = {4: "critical", 3: "high", 2: "moderate", 1: "low"}
     by_country: Dict[str, str] = {name: inv.get(sev_val, "low") for name, sev_val in by_country_sev.items()}
 
-    response = jsonify({"by_country": by_country})
+    response_data = {"by_country": by_country}
+    
+    # Cache the response
+    try:
+        _COUNTRY_RISKS_CACHE[cache_key] = response_data
+        logger.info(f"[country_risks] Cached {len(by_country)} countries")
+    except Exception as e:
+        logger.warning(f"[country_risks] Cache set failed: {e}")
+    
+    response = jsonify(response_data)
     
     # Add CORS headers
     response.headers["Access-Control-Allow-Origin"] = "*"
