@@ -141,47 +141,74 @@ LOCAL_FEEDS = {
         ],
     "jerusalem": ["https://www.jpost.com/rss/rssfeedsjerusalem.aspx"],
     "istanbul": ["https://www.dailysabah.com/rss/turkiye/istanbul"],
-    "new york": ["https://nypost.com/tag/new-york-city/feed/"],
+    "new york": [
+        "https://nypost.com/tag/new-york-city/feed/",
+        "https://www.fbi.gov/feeds/newyork-news/RSS"
+    ],
     "los angeles": [
         "https://www.latimes.com/local/rss2.0.xml",
-        "https://feeds.feedburner.com/breitbart"
+        "https://feeds.feedburner.com/breitbart",
+        "https://www.fbi.gov/feeds/losangeles-news/RSS"
     ],
-    "denver": ["https://feeds.denversun.com/rss/73aa4032e9682bab"],
+    "denver": [
+        "https://feeds.denversun.com/rss/73aa4032e9682bab",
+        "https://www.fbi.gov/feeds/denver-news/RSS"
+    ],
     "durango": [
         "https://durangodowntown.com/feed/",
         "https://www.durangoherald.com/rss-feeds/"
     ],
-    "phoenix": ["https://feeds.phoenixherald.com/rss/caf48823f1822eb3"],
+    "phoenix": [
+        "https://feeds.phoenixherald.com/rss/caf48823f1822eb3",
+        "https://www.fbi.gov/feeds/phoenix-news/RSS"
+    ],
     "tucson": ["https://feeds.tucsonpost.com/rss/a548abef580c2494"],
     "new london": ["https://theday.com/live-content/rss/"],
-    "miami": ["https://feeds.miamimirror.com/rss/9406bbb67f053bb2"],
+    "miami": [
+        "https://feeds.miamimirror.com/rss/9406bbb67f053bb2",
+        "https://www.fbi.gov/feeds/miami-news/RSS"
+    ],
     "atlanta": [
         "https://feeds.atlantaleader.com/rss/ffe56b8f30c50146",
-        "https://theatlantavoice.com/feed/"
+        "https://theatlantavoice.com/feed/",
+        "https://www.fbi.gov/feeds/atlanta-news/RSS"
     ],
     "honolulu": [
         "https://www.civilbeat.org/feed/",
         "https://feeds.hawaiitelegraph.com/rss/6b17ec7a35065289",
         "https://www.hawaiifreepress.com/DesktopModules/DnnForge%20-%20NewsArticles/RSS.aspx?TabID=56&ModuleID=380&MaxCount=25"
     ],
-    "chicago": ["https://feeds.chicagochronicle.com/rss/c8ac3000ee01c7aa"],
+    "chicago": [
+        "https://feeds.chicagochronicle.com/rss/c8ac3000ee01c7aa",
+        "https://www.fbi.gov/feeds/chicago-news/RSS"
+    ],
     "indianapolis": [
         "https://thedepauw.com/feed/",
         "https://feeds.indianapolispost.com/rss/43a9fd3724cda141"
     ],
     "kansas city": ["https://feeds.kansascitypost.com/rss/cc264e50ceab3697"],
     "san diego": ["https://timesofsandiego.com/feed/"],
-    "san francisco": ["https://el-observador.com/feed/"],
+    "san francisco": [
+        "https://el-observador.com/feed/",
+        "https://www.fbi.gov/feeds/sanfrancisco-news/RSS"
+    ],
     "sydney": ["https://www.abc.net.au/news/feed/2942460/rss.xml"],
     "singapore": ["https://www.straitstimes.com/news/singapore/rss.xml"],
     "manila": ["https://www.philstar.com/rss/nation"],
     "port moresby": ["https://feeds.feedburner.com/pngfacts/PcXZ"],
-    "boston": ["https://www.boston.com/tag/local-news/feed/"],
+    "boston": [
+        "https://www.boston.com/tag/local-news/feed/",
+        "https://www.fbi.gov/feeds/boston-news/RSS"
+    ],
     "washington": [
         "https://wtop.com/local/feed/",
-        "https://feeds.washingtonpost.com/rss/local?itid=sf_local"
+        "https://feeds.washingtonpost.com/rss/local?itid=sf_local",
+        "https://www.fbi.gov/feeds/washington-news/RSS"
     ],
-    "houston": ["https://www.click2houston.com/arc/outboundfeeds/rss/category/news/local/?outputType=xml&size=10"],
+    "houston": [
+        "https://www.click2houston.com/arc/outboundfeeds/rss/category/news/local/?outputType=xml&size=10",
+        "https://www.fbi.gov/feeds/houston-news/RSS"
+    ],
     "birmingham": ["https://feeds.birminghamstar.com/rss/0cd1f7701040892f"],
     "tuscaloosa": ["https://feeds.tuscaloosatimes.com/rss/7e50c85536b0a892"],
     "mountain brook": ["https://www.villagelivingonline.com/api/rss/content.rss"],

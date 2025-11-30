@@ -1951,6 +1951,18 @@ def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
     # Use word boundary regex for accurate matching
     import re
     
+    # FBI high-value keywords for filtering press releases
+    FBI_HIGH_VALUE_KEYWORDS = [
+        "extremist", "terrorist", "terrorism", "extremist network",
+        "laser incident", "airport", "critical infrastructure",
+        "human trafficking", "child exploitation", "violent gang",
+        "ransomware", "cyberattack", "data breach", "crypto scam",
+        "bribery", "insider threat", "corruption",
+        "active shooter", "mass casualty", "bomb threat",
+        "north korea", "iran", "china", "russia", "foreign intelligence",
+        "organized crime", "cartel", "drug trafficking ring"
+    ]
+    
     try:
         # Use base keywords from JSON ONLY (most selective for RSS filtering)
         from utils.keywords_loader import KEYWORD_DATA
@@ -1983,6 +1995,23 @@ def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
                     match_type = "base"  # Direct base keyword match (highest quality)
                 else:
                     match_type = "translated"  # Translated keyword match
+                
+                # For FBI sources, apply high-value filter to reduce noise
+                # FBI press releases are verbose; we only want critical incidents
+                if "fbi.gov" in text_lower or "sentenced to" in text_lower:
+                    # Check if this matches FBI high-value criteria
+                    is_high_value = any(
+                        hv_kw in text_lower for hv_kw in FBI_HIGH_VALUE_KEYWORDS
+                    )
+                    # Exclude routine sentencing unless high-value case
+                    if "sentenced to" in text_lower and not is_high_value:
+                        # Skip routine sentencing press releases
+                        continue
+                    # Exclude batch immigration charges (weekly routine)
+                    if "charges" in text_lower and "individuals" in text_lower and "immigration" in text_lower:
+                        # Skip "District of Arizona charges 180 individuals for immigration"
+                        continue
+                
                 break
     except Exception as e:
         logger.debug(f"Keyword loader failed: {e}")
