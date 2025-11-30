@@ -58,6 +58,14 @@
     "GPS jamming", "GNSS spoofing",
     "internet shutdown", "telecom outage", "nationwide outage", "power blackout", "blackout",
 
+    "zero-day", "zero day", "supply chain attack", "supply chain compromise",
+    "critical infrastructure attack", "advanced persistent threat", "APT",
+    "insider threat", "SCADA attack", "power grid attack", "grid attack", "infrastructure attack",
+
+    "active shooting", "workplace violence", "mass casualty", "active threat",
+
+    "biological weapon", "chemical weapon", "radiological weapon", "nuclear threat", "dirty bomb", "WMD", "CBRN",
+
     "online scam", "digital kidnapping", "virtual kidnapping", "cyber kidnapping", "hacking attack",
 
     "cyber fraud", "crypto fraud", "financial scam", "organized crime", "travel scam",

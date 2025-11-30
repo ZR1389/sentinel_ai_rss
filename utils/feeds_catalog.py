@@ -58,6 +58,7 @@ CITY_TO_COUNTRY = {
     "haskovo": "Bulgaria",
     "athens": "Greece",
     "ankara": "Turkey",
+    "istanbul": "Turkey",
     "berlin": "Germany",
     "munich": "Germany",
     "saint petersburg": "Russia",
@@ -114,6 +115,7 @@ CITY_TO_COUNTRY = {
     "sankt petersburg": "Russia",
     "tallinn": "Estonia",
     "trieste": "Italy",
+    "jerusalem": "Israel",
 }
 
 # =====================================================================
@@ -137,6 +139,8 @@ LOCAL_FEEDS = {
         "https://www.scmp.com/rss/2/feed/",
         "https://globalvoices.org/-/world/east-asia/hong-kong-china/feed/"
         ],
+    "jerusalem": ["https://www.jpost.com/rss/rssfeedsjerusalem.aspx"],
+    "istanbul": ["https://www.dailysabah.com/rss/turkiye/istanbul"],
     "new york": ["https://nypost.com/tag/new-york-city/feed/"],
     "los angeles": [
         "https://www.latimes.com/local/rss2.0.xml",
@@ -247,7 +251,11 @@ COUNTRY_FEEDS = {
         "https://feeds.bbci.co.uk/news/uk/rss.xml",
         "https://globalvoices.org/-/world/western-europe/united-kingdom/feed/"
         ],
-    "turkey": ["https://globalvoices.org/-/world/middle-east-north-africa/turkey/feed/"],
+    "turkey": [
+        "https://globalvoices.org/-/world/middle-east-north-africa/turkey/feed/",
+        "https://en.yenisafak.com/rss-feeds?category=turkiye",
+        "https://www.mfa.gov.tr/en.rss.mfa?7342a8d1-3117-42aa-8ddd-01adb5653889"
+        ],
     "germany": ["https://globalvoices.org/-/world/western-europe/germany/feed/"],
     "united states": [
         "https://rss.nytimes.com/services/xml/rss/nyt/US.xml",
@@ -268,9 +276,13 @@ COUNTRY_FEEDS = {
         ],
     "south africa": [
         "https://www.news24.com/news24/rss",
+        "https://allafrica.com/tools/headlines/rdf/southafrica/headlines.rdf",
         "https://globalvoices.org/-/world/sub-saharan-africa/south-africa/feed/"
                      ],
-    "namibia" :["https://globalvoices.org/-/world/sub-saharan-africa/namibia/feed/"],
+    "namibia" :[
+        "https://globalvoices.org/-/world/sub-saharan-africa/namibia/feed/",
+        "https://allafrica.com/tools/headlines/rdf/namibia/headlines.rdf"
+        ],
     "pakistan": [
         "https://www.dawn.com/feeds/home",
         "https://globalvoices.org/-/world/south-asia/pakistan/feed/"
@@ -289,70 +301,183 @@ COUNTRY_FEEDS = {
         ],   
     "kenya": [
         "https://www.nation.co.ke/rss.xml", 
-        "https://globalvoices.org/-/world/sub-saharan-africa/kenya/feed/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/kenya/feed/",
+        "https://allafrica.com/tools/headlines/rdf/kenya/headlines.rdf"
         ],
-    "rwanda": ["https://globalvoices.org/-/world/sub-saharan-africa/rwanda/feed/"],
-    "south sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/south-sudan/feed/"],
-    "sudan": ["https://globalvoices.org/-/world/sub-saharan-africa/sudan/feed/"],
-    "mali": ["https://globalvoices.org/-/world/sub-saharan-africa/mali/feed/"],
+    "rwanda": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/rwanda/feed/",
+        "https://allafrica.com/tools/headlines/rdf/rwanda/headlines.rdf"
+        ],
+    "south sudan": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/south-sudan/feed/",
+        "https://allafrica.com/tools/headlines/rdf/southsudan/headlines.rdf"
+        ],
+    "sudan": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/sudan/feed/",
+        "https://allafrica.com/tools/headlines/rdf/sudan/headlines.rdf"
+        ],
+    "mali": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/mali/feed/",
+        "https://allafrica.com/tools/headlines/rdf/mali/headlines.rdf"
+        ],
     "republic of congo": ["https://globalvoices.org/-/world/sub-saharan-africa/republic-of-congo/feed/"],    
+    "tunisia": [
+        "https://allafrica.com/tools/headlines/rdf/tunisia/headlines.rdf",
+        "https://globalvoices.org/-/world/middle-east-north-africa/tunisia/feed/"
+        ],
     "nigeria": [
         "https://thenationonlineng.net/feed/",
         "https://newsblenda.com/feed/",
-        "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/feed/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/nigeria/feed/",
+        "https://allafrica.com/tools/headlines/rdf/nigeria/headlines.rdf"
     ],
     "haiti": ["https://globalvoices.org/-/world/caribbean/haiti/feed/"],
     "panama": ["https://globalvoices.org/-/world/latin-america/panama/feed/"],
     "jamaica": ["https://globalvoices.org/-/world/caribbean/jamaica/feed/"],
     "suriname": ["https://globalvoices.org/-/world/caribbean/suriname/feed/"],
-    "egypt": ["https://globalvoices.org/-/world/middle-east-north-africa/egypt/feed/"],
-    "niger": ["https://globalvoices.org/-/world/sub-saharan-africa/niger/feed/"],
+    "egypt": [
+        "https://globalvoices.org/-/world/middle-east-north-africa/egypt/feed/",
+        "https://allafrica.com/tools/headlines/rdf/egypt/headlines.rdf"
+        ],
+    "niger": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/niger/feed/",
+        "https://allafrica.com/tools/headlines/rdf/niger/headlines.rdf"
+        ],
     "benin": [
         "https://globalvoices.org/-/world/sub-saharan-africa/benin/feed/",
         "https://allafrica.com/tools/headlines/rdf/benin/headlines.rdf"
         ],
-    "botswana": ["https://globalvoices.org/-/world/sub-saharan-africa/botswana/feed/"],
-    "cameroon": ["https://globalvoices.org/-/world/sub-saharan-africa/cameroon/feed/"],
-    "chad": ["https://globalvoices.org/-/world/sub-saharan-africa/chad/feed/"],
-    "central african republic": ["https://globalvoices.org/-/world/sub-saharan-africa/central-african-republic/feed/"],
+    "botswana": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/botswana/feed/",
+        "https://allafrica.com/tools/headlines/rdf/botswana/headlines.rdf"
+        ],
+    "cameroon": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/cameroon/feed/",
+        "https://allafrica.com/tools/headlines/rdf/cameroon/headlines.rdf"
+        ],
+    "chad": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/chad/feed/",
+        "https://allafrica.com/tools/headlines/rdf/chad/headlines.rdf"
+        ],
+    "central african republic": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/central-african-republic/feed/",
+        "https://allafrica.com/tools/headlines/rdf/centralafricanrepublic/headlines.rdf"
+        ],
     "ghana": [
         "https://www.ghanaweb.com/GhanaHomePage/NewsArchive/rss",
-        "https://globalvoices.org/-/world/sub-saharan-africa/ghana/feed/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/ghana/feed/",
+        "https://allafrica.com/tools/headlines/rdf/ghana/headlines.rdf"
         ],
-    "sierra leone": ["https://globalvoices.org/-/world/sub-saharan-africa/sierra-leone/feed/"],
-    "senegal": ["https://globalvoices.org/-/world/sub-saharan-africa/senegal/feed/"],    
+    "sierra leone": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/sierra-leone/feed/",
+        "https://allafrica.com/tools/headlines/rdf/sierraleone/headlines.rdf"
+        ],
+    "senegal": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/senegal/feed/",
+        "https://allafrica.com/tools/headlines/rdf/senegal/headlines.rdf"
+        ],    
     "ethiopia": [
         "https://addisstandard.com/feed/",
-        "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/feed/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/ethiopia/feed/",
+        "https://allafrica.com/tools/headlines/rdf/ethiopia/headlines.rdf"
         ],
-    "gabon": ["https://globalvoices.org/-/world/sub-saharan-africa/gabon/feed/"],
-    "gambia": ["https://globalvoices.org/-/world/sub-saharan-africa/gambia/feed/"],
-    "ivory coast": ["https://globalvoices.org/-/world/sub-saharan-africa/cote-divoire/feed/"],
+    "eritrea": [
+        "https://allafrica.com/tools/headlines/rdf/eritrea/headlines.rdf",
+        "https://globalvoices.org/-/world/sub-saharan-africa/eritrea/feed/"
+        ],
+    "gabon": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/gabon/feed/",
+        "https://allafrica.com/tools/headlines/rdf/gabon/headlines.rdf"
+        ],
+    "gambia": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/gambia/feed/",
+        "https://allafrica.com/tools/headlines/rdf/gambia/headlines.rdf"
+        ],
+    "ivory coast": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/cote-divoire/feed/",
+        "https://allafrica.com/tools/headlines/rdf/cotedivoire/headlines.rdf"
+        ],
     "uganda": [
         "https://www.watchdoguganda.com/feed",
-        "https://globalvoices.org/-/world/sub-saharan-africa/uganda/feed/"
+        "https://globalvoices.org/-/world/sub-saharan-africa/uganda/feed/",
+        "https://allafrica.com/tools/headlines/rdf/uganda/headlines.rdf"
         ],
-    "guinea": ["https://globalvoices.org/-/world/sub-saharan-africa/guinea/feed/"],
-    "guniea-bissau": ["https://globalvoices.org/-/world/sub-saharan-africa/guinea-bissau/feed/"],
-    "equatorial guinea": ["https://globalvoices.org/-/world/sub-saharan-africa/equatorial-guinea/feed/"],
-    "burkina faso": ["https://globalvoices.org/-/world/sub-saharan-africa/burkina-faso/feed/"],
-    "burundi": ["https://globalvoices.org/-/world/sub-saharan-africa/burundi/feed/"],
-    "tanzania": ["https://globalvoices.org/-/world/sub-saharan-africa/tanzania/feed/"],    
-    "zimbabwe": ["https://3-mob.com/feed/"],
-    "somalia": ["https://globalvoices.org/-/world/sub-saharan-africa/somalia/feed/"],
+    "djibouti": [
+        "https://allafrica.com/tools/headlines/rdf/djibouti/headlines.rdf",
+        "https://globalvoices.org/-/world/sub-saharan-africa/djibouti/feed/"
+        ],
+    "guinea": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/guinea/feed/",
+        "https://allafrica.com/tools/headlines/rdf/guinea/headlines.rdf"
+        ],
+    "guniea-bissau": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/guinea-bissau/feed/",
+        "https://allafrica.com/tools/headlines/rdf/guineabissau/headlines.rdf"
+        ],
+    "equatorial guinea": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/equatorial-guinea/feed/",
+        "https://allafrica.com/tools/headlines/rdf/equatorialguinea/headlines.rdf"
+        ],
+    "burkina faso": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/burkina-faso/feed/",
+        "https://allafrica.com/tools/headlines/rdf/burkinafaso/headlines.rdf"
+        ],
+    "burundi": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/burundi/feed/",
+        "https://allafrica.com/tools/headlines/rdf/burundi/headlines.rdf"
+        ],
+    "tanzania": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/tanzania/feed/",
+        "https://allafrica.com/tools/headlines/rdf/tanzania/headlines.rdf"
+        ],    
+    "liberia": [
+        "https://allafrica.com/tools/headlines/rdf/liberia/headlines.rdf",
+        "https://globalvoices.org/-/world/sub-saharan-africa/liberia/feed/"
+        ],
+    "zambia": [
+        "https://allafrica.com/tools/headlines/rdf/zambia/headlines.rdf",
+        "https://globalvoices.org/-/world/sub-saharan-africa/zambia/feed/"
+    ],
+    "zimbabwe": [
+        "https://3-mob.com/feed/",
+        "https://globalvoices.org/-/world/sub-saharan-africa/zimbabwe/feed/",
+        "https://allafrica.com/tools/headlines/rdf/zimbabwe/headlines.rdf"
+        ],
+    "somalia": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/somalia/feed/",
+        "https://allafrica.com/tools/headlines/rdf/somalia/headlines.rdf"
+        ],
     "somaliland": ["https://globalvoices.org/-/world/sub-saharan-africa/somaliland/feed/"],
-    "mozambique": ["https://globalvoices.org/-/world/sub-saharan-africa/mozambique/feed/"],
+    "madagascar": [
+        "https://allafrica.com/tools/headlines/rdf/madagascar/headlines.rdf",
+        "https://globalvoices.org/-/world/sub-saharan-africa/madagascar/feed/"
+        ],
+    "mozambique": [
+        "https://globalvoices.org/-/world/sub-saharan-africa/mozambique/feed/",
+        "https://allafrica.com/tools/headlines/rdf/mozambique/headlines.rdf"
+        ],
+    "mauritania": [
+        "https://allafrica.com/tools/headlines/rdf/mauritania/headlines.rdf",
+        "https://globalvoices.org/-/world/sub-saharan-africa/mauritania/feed/"
+        ],    
     "morocco": [
         "https://www.moroccoworldnews.com/feed",
         "https://www.moroccoworldnews.com/international/feed/",
+        "https://allafrica.com/tools/headlines/rdf/morocco/headlines.rdf",
         "https://globalvoices.org/-/world/middle-east-north-africa/morocco/feed/"
     ],
-    "libya": ["https://globalvoices.org/-/world/middle-east-north-africa/libya/feed/"],
-    "iran": ["https://globalvoices.org/-/world/middle-east-north-africa/iran/feed/"],
+    "libya": [
+        "https://globalvoices.org/-/world/middle-east-north-africa/libya/feed/",
+        "https://allafrica.com/tools/headlines/rdf/libya/headlines.rdf"
+        ],
+    "iran": [
+        "https://globalvoices.org/-/world/middle-east-north-africa/iran/feed/",
+        "https://www.jpost.com/rss/rssfeedsiran"
+        ],
     "jordan": ["https://globalvoices.org/-/world/middle-east-north-africa/jordan/feed/"],
     "lebanon": ["https://globalvoices.org/-/world/middle-east-north-africa/lebanon/feed/"],
     "israel": [
-        "https://www.jpost.com/rss/rssfeedsfrontpage.aspx",
+        "https://www.jpost.com/rss/rssfeedsisraelnews.aspx",
         "https://globalvoices.org/-/world/middle-east-north-africa/israel/feed/"
         ],
     "iraq": [
@@ -373,7 +498,7 @@ COUNTRY_FEEDS = {
         ],
     "oman": ["https://globalvoices.org/-/world/middle-east-north-africa/oman/feed/"],
     "saudi arabia": [
-        "https://english.alarabiya.net/tools/rss",
+        "https://english.alarabiya.net/feed/rss2/en/in-translation.xml",
         "https://globalvoices.org/-/world/middle-east-north-africa/saudi-arabia/feed/"
         ],
     "belgium": [
@@ -440,7 +565,10 @@ COUNTRY_FEEDS = {
         "https://balkaninsight.com/category/bi/kosovo/",
         "https://globalvoices.org/-/world/eastern-central-europe/kosovo/feed/"
         ],
-    "western sahara": ["https://globalvoices.org/-/world/middle-east-north-africa/western-sahara/feed/"],    
+    "western sahara": [
+        "https://globalvoices.org/-/world/middle-east-north-africa/western-sahara/feed/",
+        "https://allafrica.com/tools/headlines/rdf/westernsahara/headlines.rdf"
+        ],    
     "north macedonia": [
         "https://balkaninsight.com/category/bi/macedonia/",
         "https://globalvoices.org/-/world/eastern-central-europe/macedonia/feed/"
@@ -490,6 +618,7 @@ GLOBAL_FEEDS = [
     # Major global news networks (comprehensive coverage)
     "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Africa.xml",
+    "https://allafrica.com/tools/headlines/rdf/africa/headlines.rdf",
     "https://rss.nytimes.com/services/xml/rss/nyt/Americas.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/AsiaPacific.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/Europe.xml",
@@ -538,17 +667,31 @@ GLOBAL_FEEDS = [
     "https://www.chicagotribune.com/news/world/feed/",
     "https://news.google.com/atom/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRGx1YlY4U0JXVnVMVWRDR2dKSlRpZ0FQAQ?hl=en-IN&gl=IN&ceid=IN:en&oc=11",
     "https://asiatimes.com/category/world/feed/",
+    "https://www.jpost.com/rss/rssfeedsheadlines.aspx",
     "https://asiatimes.com/feed/",
     # Security, defense, geopolitical intelligence
     "https://www.thecipherbrief.com/feeds/feed.rss",
     "https://warontherocks.com/feed/",
+    "https://www.jpost.com/rss/israel-hamas-war",
+    "https://www.jpost.com/rss/rssfeedsislamicterrorism",
+    "https://allafrica.com/tools/headlines/rdf/corruption/headlines.rdf",
+    "https://allafrica.com/tools/headlines/rdf/ebola/headlines.rdf",
+    "https://allafrica.com/tools/headlines/rdf/terrorism/headlines.rdf",
+    "https://allafrica.com/tools/headlines/rdf/conflict/headlines.rdf",
+    "https://allafrica.com/tools/headlines/rdf/health/headlines.rdf",
+    "https://allafrica.com/tools/headlines/rdf/aids/headlines.rdf",
     "https://defence-blog.com/feed/",
+    "https://www.dailysabah.com/rss/world/syrian-crisis",
+    "https://www.dailysabah.com/rss/world/islamophobia",
+    "https://www.dailysabah.com/rss/politics/war-on-terror",
     "https://www.rand.org/topics/international-affairs.xml/feed",
     "https://feeds.feedburner.com/WarNewsUpdates",
     "https://asiandefencenewschannel.blogspot.com/feeds/posts/default",
     # Independent/underreported regions
     "https://globalpressjournal.com/feed/",
     "https://www.usnn.news/feed/",
+    "https://www.jpost.com/rss/rssfeedsgaza.aspx",
+    "https://www.jpost.com/rss/rssfeedsarabisraeliconflict.aspx",
     "https://worldunitednews.blogspot.com/feeds/posts/default",
     "https://ifpnews.com/feed/",
     "https://easternherald.com/feed/",

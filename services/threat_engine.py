@@ -1141,12 +1141,14 @@ def summarize_single_alert(alert: dict) -> dict:
         "football", "soccer", "basketball", "tennis", "cricket", "rugby", "hockey",
         "champion", "trophy", "tournament", "league", "match", "goal", "score",
         "player", "team", "coach", "stadium", "fifa", "uefa", "olympics",
-        "hat-trick", "galatasaray", "ajax", "super lig", "award", "transfer"
+        "hat-trick", "galatasaray", "ajax", "super lig", "award", "transfer",
+        "championship", "playoff", "playoffs", "season finale", "victory", "defeated", "won the"
     ]
     
     entertainment_keywords = [
         "movie", "film", "actor", "actress", "celebrity", "concert", "music",
-        "album", "song", "artist", "entertainment", "show", "tv", "series"
+        "album", "song", "artist", "entertainment", "show", "tv", "series",
+        "tour", "premiere", "box office", "album release", "concert tour"
     ]
     
     is_sports = (
@@ -1187,6 +1189,12 @@ def summarize_single_alert(alert: dict) -> dict:
     if zero_incidents and not is_intel:
         logger.info(f"Skipping alert with zero incidents: {alert.get('title', '')[:80]}")
         return None  # Don't enrich zero-incident alerts from non-intel sources
+
+    # Minimum score threshold - filter ultra-low-score noise
+    MIN_THREAT_SCORE = 15  # Configurable threshold
+    if alert.get("score", 0) < MIN_THREAT_SCORE:
+        logger.info(f"Filtering low-score alert: {alert.get('title', '')[:80]} (score={alert.get('score', 0):.1f}, threshold={MIN_THREAT_SCORE})")
+        return None  # Skip ultra-low-score alerts
 
     # Early warnings
     ewi = early_warning_indicators(historical_incidents) or []
