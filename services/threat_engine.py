@@ -1190,11 +1190,12 @@ def summarize_single_alert(alert: dict) -> dict:
         logger.info(f"Skipping alert with zero incidents: {alert.get('title', '')[:80]}")
         return None  # Don't enrich zero-incident alerts from non-intel sources
 
-    # Minimum score threshold - filter ultra-low-score noise
-    MIN_THREAT_SCORE = 15  # Configurable threshold
+    # Minimum score threshold - filter low-score noise (raised from 15 to 35)
+    # Filters out sports, entertainment, routine politics that slip through
+    MIN_THREAT_SCORE = 35  # Moderate threshold - only Moderate/High/Critical alerts pass
     if alert.get("score", 0) < MIN_THREAT_SCORE:
         logger.info(f"Filtering low-score alert: {alert.get('title', '')[:80]} (score={alert.get('score', 0):.1f}, threshold={MIN_THREAT_SCORE})")
-        return None  # Skip ultra-low-score alerts
+        return None  # Skip low-score alerts
 
     # Early warnings
     ewi = early_warning_indicators(historical_incidents) or []

@@ -164,6 +164,90 @@ except ImportError:
         "substation","grid","pipeline","telecom","fiber","power outage","blackout","water plant","dam","subsea cable","transformer","refinery","substation fire","transformer fire"
     ]
 
+# --------------------------- noise detection ---------------------------
+
+# Low-quality content patterns that should be filtered out
+SPORTS_TERMS = [
+    "win", "wins", "won", "beat", "beats", "score", "scored", "scores", "goal", "goals",
+    "match", "game", "championship", "tournament", "league", "cup", "trophy",
+    "football", "soccer", "basketball", "baseball", "cricket", "tennis", "rugby",
+    "grand prix", "formula 1", "f1", "racing", "race", "nascar",
+    "world cup", "olympics", "olympic", "medal", "gold medal", "silver medal",
+    "team", "player", "coach", "season", "playoff", "playoffs", "final", "finals",
+    "vs ", "versus", "defeat", "defeated", "victory"
+]
+
+ENTERTAINMENT_TERMS = [
+    "movie", "film", "actor", "actress", "celebrity", "star", "music video",
+    "album", "song", "concert", "performance", "show", "series", "episode",
+    "grammy", "oscar", "emmy", "award", "nominee", "nomination",
+    "box office", "premiere", "streaming", "netflix", "disney", "hbo",
+    "band", "singer", "musician", "artist", "festival", "tour"
+]
+
+POLITICAL_ROUTINE_TERMS = [
+    "election", "vote", "voting", "ballot", "campaign", "candidate",
+    "minister appointed", "appointed as", "sworn in", "takes office",
+    "prime minister", "president elected", "wins election",
+    "cabinet reshuffle", "cabinet appointment", "ministry",
+    "parliament", "senate", "congress", "legislature",
+    "first to wed", "wedding", "married", "marriage", "ceremony",
+    "visit", "visits", "visited", "met with", "meeting with", "summit"
+]
+
+CULTURAL_RELIGIOUS_TERMS = [
+    "pope", "vatican", "mosque", "church", "temple", "cathedral",
+    "religious ceremony", "pilgrimage", "prayer", "blessing", "mass",
+    "festival", "celebration", "anniversary", "commemoration"
+]
+
+def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
+    """
+    Detect low-quality non-threat content (sports, entertainment, routine politics).
+    Returns (is_noise, reason).
+    
+    Examples to REJECT:
+    - "Flamengo beat Palmeiras to win Copa Libertadores" (sports)
+    - "Norris wins Brazil Grand Prix" (sports)
+    - "Australian prime minister becomes first to wed in office" (politics)
+    - "Pope visits Blue Mosque" (religious tourism)
+    - "Wiggles issue statement after appearing in Ecstasy music video" (entertainment)
+    - "BBC boss Tim Davie resigns" (media politics)
+    """
+    title_norm = _norm(title or "")
+    combined = f"{title_norm} {text_norm}"
+    
+    # Sports detection - strong indicators
+    sports_hits = sum(1 for term in SPORTS_TERMS if term in combined)
+    if sports_hits >= 2:
+        # Additional check: if it has threat keywords, might be sports violence (keep it)
+        threat_check = any(t in combined for t in ["attack", "shooting", "killed", "bomb", "explosion", "riot"])
+        if not threat_check:
+            return True, "sports"
+    
+    # Entertainment detection
+    entertainment_hits = sum(1 for term in ENTERTAINMENT_TERMS if term in combined)
+    if entertainment_hits >= 2:
+        return True, "entertainment"
+    
+    # Routine politics detection (elections, appointments, weddings, visits)
+    politics_hits = sum(1 for term in POLITICAL_ROUTINE_TERMS if term in combined)
+    if politics_hits >= 2:
+        # Check if it's actually a political threat (coup, assassination, etc.)
+        threat_check = any(t in combined for t in ["coup", "assassination", "killed", "attack", "riot", "bomb"])
+        if not threat_check:
+            return True, "politics"
+    
+    # Cultural/religious routine events (not threats)
+    cultural_hits = sum(1 for term in CULTURAL_RELIGIOUS_TERMS if term in combined)
+    if cultural_hits >= 2:
+        # Check if it's a religious attack
+        threat_check = any(t in combined for t in ["attack", "bomb", "shooting", "killed", "fire", "arson"])
+        if not threat_check:
+            return True, "cultural"
+    
+    return False, ""
+
 # --------------------------- scoring core ---------------------------
 
 def _kw_rule_bonus(rule: Optional[str]) -> float:
@@ -234,7 +318,8 @@ def _nudge_points(text_norm: str) -> float:
 def _score_components(
     text_norm: str,
     triggers: Optional[List[str]],
-    kw_match: Optional[Dict[str, Any]] = None
+    kw_match: Optional[Dict[str, Any]] = None,
+    title: str = ""
 ) -> Tuple[float, Dict[str, float]]:
     """
     Deterministic mapping of signals → points. Returns (total_points, breakdown).
@@ -263,10 +348,22 @@ def _score_components(
       Examples: suicide bomber+checkpoint (+5), CVE+ransomware (+5), curfew+checkpoint (+5).
       Capped at +10 to prevent excessive stacking.
     
+    - Noise penalty (-80): Heavy penalty for sports/entertainment/routine politics.
+      Examples: sports scores, election results, celebrity news, religious tourism.
+      Ensures non-threat content gets very low scores (below threshold).
+    
     TOTAL RANGE: 5-100 points (global clamp for safety)
     LABEL MAPPING: 85+ Critical, 65-84 High, 35-64 Moderate, 5-34 Low
     """
     breakdown: Dict[str, float] = {}
+
+    # Check for noise content first
+    is_noise, noise_type = _detect_noise_content(text_norm, title=title)
+    if is_noise:
+        breakdown["noise_penalty"] = -80.0  # Heavy penalty for sports/entertainment/politics
+        breakdown["noise_type"] = noise_type
+    else:
+        breakdown["noise_penalty"] = 0.0
 
     breakdown["keywords"] = _kw_salience_points(text_norm)
     breakdown["triggers"] = _trigger_points(triggers)
@@ -326,9 +423,10 @@ def assess_threat_level(
     """
     text = _norm(alert_text or "")
     kw_match = (source_alert or {}).get("kw_match") if source_alert else None
+    title = (source_alert or {}).get("title", "")
 
-    # Points
-    score, breakdown = _score_components(text, triggers, kw_match=kw_match)
+    # Points (with noise detection using title)
+    score, breakdown = _score_components(text, triggers, kw_match=kw_match, title=title)
 
     # Confidence: Signal quality (NOT score extremity)
     # Measures reliability of threat detection, not severity.
