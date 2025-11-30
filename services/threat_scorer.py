@@ -168,21 +168,48 @@ except ImportError:
 
 # Low-quality content patterns that should be filtered out
 SPORTS_TERMS = [
-    "win", "wins", "won", "beat", "beats", "score", "scored", "scores", "goal", "goals",
-    "match", "game", "championship", "tournament", "league", "cup", "trophy",
-    "football", "soccer", "basketball", "baseball", "cricket", "tennis", "rugby",
-    "grand prix", "formula 1", "f1", "racing", "race", "nascar",
-    "world cup", "olympics", "olympic", "medal", "gold medal", "silver medal",
-    "team", "player", "coach", "season", "playoff", "playoffs", "final", "finals",
-    "vs ", "versus", "defeat", "defeated", "victory"
+    "win", "wins", "won", "beat", "beats", "score", "scored", "scores", "scoring", "goal", "goals",
+    "match", "game", "championship", "tournament", "league", "cup", "trophy", "title",
+    "football", "soccer", "basketball", "baseball", "cricket", "tennis", "rugby", "hockey",
+    "grand prix", "formula 1", "f1", "f2", "f3", "racing", "race", "nascar", "motogp", "rally",
+    "world cup", "olympics", "olympic", "medal", "gold medal", "silver medal", "bronze medal",
+    "team", "teams", "player", "players", "coach", "coaches", "season", "playoff", "playoffs",
+    "final", "finals", "semifinal", "quarterfinal", "qualifier", "qualifiers",
+    "vs ", "versus", "v ", "defeat", "defeated", "victory", "victorious",
+    "penalty", "penalties", "referee", "umpire", "stadium", "arena",
+    "athlete", "athletes", "champion", "champions", "runner-up", "podium",
+    "innings", "pitch", "striker", "goalkeeper", "midfielder", "defender",
+    "batting", "bowling", "wicket", "wickets", "runs", "tries",
+    "lap", "laps", "pole position", "fastest lap", "pit stop",
+    "super bowl", "nba", "nfl", "mlb", "nhl", "uefa", "fifa", "ioc",
+    "premier league", "la liga", "serie a", "bundesliga", "champions league",
+    "test match", "odi", "twenty20", "t20", "ipl", "world series",
+    "knockout", "knockout stage", "group stage", "home run", "touchdown",
+    "hat trick", "hat-trick", "clean sheet", "shutout", "overtime",
+    "sporting", "sports news", "sports update", "game day", "matchday"
 ]
 
 ENTERTAINMENT_TERMS = [
-    "movie", "film", "actor", "actress", "celebrity", "star", "music video",
-    "album", "song", "concert", "performance", "show", "series", "episode",
-    "grammy", "oscar", "emmy", "award", "nominee", "nomination",
-    "box office", "premiere", "streaming", "netflix", "disney", "hbo",
-    "band", "singer", "musician", "artist", "festival", "tour"
+    "movie", "movies", "film", "films", "cinema", "actor", "actress", "celebrity", "celebrities",
+    "star", "stars", "superstar", "music video", "album", "albums", "song", "songs",
+    "concert", "concerts", "performance", "show", "shows", "series", "episode", "episodes",
+    "grammy", "grammys", "oscar", "oscars", "emmy", "emmys", "award", "awards",
+    "nominee", "nominees", "nomination", "nominations", "winner", "red carpet",
+    "box office", "premiere", "premieres", "screening", "streaming", "netflix", "disney",
+    "hbo", "amazon prime", "apple tv", "hulu", "paramount", "warner bros",
+    "band", "bands", "singer", "singers", "musician", "musicians", "artist", "artists",
+    "festival", "festivals", "tour", "tours", "touring", "on tour",
+    "director", "producer", "screenplay", "soundtrack", "trailer", "teaser",
+    "cast", "casting", "audition", "broadway", "west end", "theater", "theatre",
+    "comedian", "comedy show", "stand-up", "sitcom", "drama series", "reality show",
+    "talent show", "game show", "talk show", "late night", "variety show",
+    "blockbuster", "hit movie", "hit song", "chart", "charts", "top 10", "billboard",
+    "fashion week", "fashion show", "runway", "model", "models", "modeling",
+    "paparazzi", "tabloid", "gossip", "entertainment news", "showbiz", "hollywood",
+    "bollywood", "nollywood", "k-pop", "pop star", "rock star", "rap", "rapper",
+    "dj", "playlist", "spotify", "itunes", "youtube", "tiktok", "instagram influencer",
+    "influencer", "influencers", "vlogger", "youtuber", "content creator",
+    "viral video", "trending", "social media star", "internet celebrity"
 ]
 
 POLITICAL_ROUTINE_TERMS = [
@@ -201,14 +228,40 @@ CULTURAL_RELIGIOUS_TERMS = [
     "festival", "celebration", "anniversary", "commemoration"
 ]
 
+ECONOMY_BUSINESS_TERMS = [
+    "stock market", "stocks", "shares", "nasdaq", "dow jones", "s&p 500", "ftse",
+    "trading", "traders", "investor", "investors", "investment", "portfolio",
+    "earnings", "revenue", "profit", "profits", "loss", "losses", "quarterly results",
+    "ceo", "cfo", "coo", "executive", "board of directors", "shareholder", "shareholders",
+    "merger", "acquisition", "takeover", "buyout", "ipo", "initial public offering",
+    "dividend", "dividends", "bond", "bonds", "commodity", "commodities",
+    "gdp", "inflation", "deflation", "interest rate", "central bank", "federal reserve",
+    "unemployment", "job market", "employment rate", "hiring", "layoffs", "restructuring",
+    "startup", "startups", "unicorn", "venture capital", "funding round", "seed funding",
+    "cryptocurrency", "crypto", "bitcoin", "ethereum", "blockchain", "nft",
+    "forex", "currency", "exchange rate", "dollar", "euro", "yuan", "yen",
+    "oil price", "gas price", "crude oil", "barrel", "opec",
+    "real estate", "property market", "housing market", "mortgage", "foreclosure",
+    "retail sales", "consumer spending", "black friday", "cyber monday", "shopping",
+    "trade deal", "trade agreement", "tariff", "import", "export", "trade deficit",
+    "economic growth", "recession", "bull market", "bear market", "market rally",
+    "corporate", "corporation", "company", "business", "firm", "enterprise",
+    "bankruptcy", "insolvency", "debt", "credit rating", "downgrade", "upgrade",
+    "manufacturing", "production", "supply chain", "logistics", "warehouse",
+    "tech sector", "financial sector", "energy sector", "healthcare sector",
+    "wall street", "silicon valley", "fortune 500", "forbes", "bloomberg"
+]
+
 def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
     """
-    Detect low-quality non-threat content (sports, entertainment, routine politics).
+    Detect low-quality non-threat content (sports, entertainment, economy, routine politics).
     Returns (is_noise, reason).
     
     Examples to REJECT:
     - "Flamengo beat Palmeiras to win Copa Libertadores" (sports)
     - "Norris wins Brazil Grand Prix" (sports)
+    - "Stock market rallies on strong earnings" (economy)
+    - "Bitcoin hits new high" (economy)
     - "Australian prime minister becomes first to wed in office" (politics)
     - "Pope visits Blue Mosque" (religious tourism)
     - "Wiggles issue statement after appearing in Ecstasy music video" (entertainment)
@@ -221,20 +274,31 @@ def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
     sports_hits = sum(1 for term in SPORTS_TERMS if term in combined)
     if sports_hits >= 2:
         # Additional check: if it has threat keywords, might be sports violence (keep it)
-        threat_check = any(t in combined for t in ["attack", "shooting", "killed", "bomb", "explosion", "riot"])
+        threat_check = any(t in combined for t in ["attack", "shooting", "killed", "bomb", "explosion", "riot", "stabbing"])
         if not threat_check:
             return True, "sports"
     
     # Entertainment detection
     entertainment_hits = sum(1 for term in ENTERTAINMENT_TERMS if term in combined)
     if entertainment_hits >= 2:
+        # Additional check: exclude entertainment award ceremonies even if only 1 match with "award"
+        if "award" in combined or "awards" in combined:
+            return True, "entertainment"
         return True, "entertainment"
+    
+    # Economy/Business detection
+    economy_hits = sum(1 for term in ECONOMY_BUSINESS_TERMS if term in combined)
+    if economy_hits >= 2:
+        # Check if it's economic terrorism/sanctions (keep those)
+        threat_check = any(t in combined for t in ["sanctions", "embargo", "freeze", "seized", "confiscated", "financial crime"])
+        if not threat_check:
+            return True, "economy"
     
     # Routine politics detection (elections, appointments, weddings, visits)
     politics_hits = sum(1 for term in POLITICAL_ROUTINE_TERMS if term in combined)
     if politics_hits >= 2:
         # Check if it's actually a political threat (coup, assassination, etc.)
-        threat_check = any(t in combined for t in ["coup", "assassination", "killed", "attack", "riot", "bomb"])
+        threat_check = any(t in combined for t in ["coup", "assassination", "killed", "attack", "riot", "bomb", "shooting"])
         if not threat_check:
             return True, "politics"
     
