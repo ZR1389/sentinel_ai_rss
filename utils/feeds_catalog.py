@@ -117,6 +117,44 @@ CITY_TO_COUNTRY = {
     "tallinn": "Estonia",
     "trieste": "Italy",
     "jerusalem": "Israel",
+    "sacramento": "United States",
+    "mobile": "United States",
+    "little rock": "United States",
+    "new haven": "United States",
+    "jacksonville": "United States",
+    "jackson": "United States",
+    "tampa": "United States",
+    "lousville": "United States",
+    "new orleans": "United States",
+    "baltimore": "United States",
+    "minneapolis": "United States",
+    "milwaukee": "United States",
+    "detroit": "United States",
+    "st. louis": "United States",
+    "omaha": "United States",
+    "las vegas": "United States",
+    "newark": "United States",
+    "alburquerque": "United States",
+    "albany": "United States",
+    "buffalo": "United States",
+    "charlotte": "United States",
+    "cincinnati": "United States",
+    "cleveland": "United States",
+    "oklahoma city": "Unted States",
+    "portland": "United States",
+    "philadelphia": "United States",
+    "pittsburgh": "United States",
+    "san juan": "United States",
+    "columbia": "United States",
+    "nashville": "United States",
+    "memphis": "United States",
+    "dallas": "United States",
+    "el paso": "United States",
+    "san antonio": "United States",
+    "salt lake city": "United States",
+    "richmond": "United States",
+    "norfolk": "United States",
+    "seattle": "United States",
 }
 
 # =====================================================================
@@ -137,16 +175,52 @@ CITY_TO_COUNTRY = {
 # Only keeping major English-language city feeds
 LOCAL_FEEDS = {
     "anchorage": ["https://www.fbi.gov/feeds/anchorage-news/RSS"],
+    "albany": ["https://www.fbi.gov/feeds/albany-news/RSS"],
+    "alburquerque": ["https://www.fbi.gov/feeds/albuquerque-news/RSS"],
+    "buffalo": ["https://www.fbi.gov/feeds/buffalo-news/RSS"],
+    "dallas": ["https://www.fbi.gov/feeds/dallas-news/RSS"],
+    "el paso": ["https://www.fbi.gov/feeds/el-paso-news/RSS"],
+    "omaha": ["https://www.fbi.gov/feeds/omaha-news/RSS"],
+    "columbia": ["https://www.fbi.gov/feeds/columbia-news/RSS"],
+    "oklahoma city": ["https://www.fbi.gov/feeds/oklahoma-city-news/RSS"],
+    "sacramento": ["https://www.fbi.gov/feeds/sacramento-news/RSS"],
+    "san antonio": ["https://www.fbi.gov/feeds/san-antonio-news/RSS"],
+    "san juan": ["https://www.fbi.gov/feeds/san-juan-news/RSS"],
+    "seattle": ["https://www.fbi.gov/feeds/seattle-news/RSS"],
+    "st. louis": ["https://www.fbi.gov/feeds/st-louis-news/RSS"],
+    "salt lake city": ["https://www.fbi.gov/feeds/salt-lake-city-news/RSS"],
+    "mobile": ["https://www.fbi.gov/feeds/mobile-news/RSS"],
+    "memphis": ["https://www.fbi.gov/feeds/memphis-news/RSS"],
+    "milwaukee": ["https://www.fbi.gov/feeds/milwaukee-news/RSS"],
+    "nashville": ["https://www.fbi.gov/feeds/nashville-news/RSS"],
+    "tampa": ["https://www.fbi.gov/feeds/tampa-news/RSS"],
+    "detroit": ["https://www.fbi.gov/feeds/detroit-news/RSS"],
+    "little rock": ["https://www.fbi.gov/feeds/little-rock-news/RSS"],
+    "new haven": ["https://www.fbi.gov/feeds/new-haven-news/RSS"],
+    "norfolk": ["https://www.fbi.gov/feeds/norfolk-news/RSS"],
+    "newark": ["https://www.fbi.gov/feeds/newark-news/RSS"],
+    "charlotte": ["https://www.fbi.gov/feeds/charlotte-news/RSS"],
+    "cincinnati": ["https://www.fbi.gov/feeds/cincinnati-news/RSS"],
+    "cleveland": ["https://www.fbi.gov/feeds/cleveland-news/RSS"],
+    "las vegas": ["https://www.fbi.gov/feeds/las-vegas-news/RSS"],
+    "portland": ["https://www.fbi.gov/feeds/portland-news/RSS"],
+    "philadelphia": ["https://www.fbi.gov/feeds/philadelphia-news/RSS"],
+    "pittsburgh": ["https://www.fbi.gov/feeds/pittsburgh-news/RSS"],
+    "richmond": ["https://www.fbi.gov/feeds/richmond-news/RSS"],
     "hong kong": [
         "https://www.scmp.com/rss/2/feed/",
         "https://globalvoices.org/-/world/east-asia/hong-kong-china/feed/"
         ],
     "jerusalem": ["https://www.jpost.com/rss/rssfeedsjerusalem.aspx"],
+    "jacksonville": ["https://www.fbi.gov/feeds/jacksonville-news/RSS"],
+    "jackson": ["https://www.fbi.gov/feeds/jackson-news/RSS"],
     "istanbul": ["https://www.dailysabah.com/rss/turkiye/istanbul"],
     "new york": [
         "https://nypost.com/tag/new-york-city/feed/",
         "https://www.fbi.gov/feeds/newyork-news/RSS"
     ],
+    "baltimore": ["https://www.fbi.gov/feeds/baltimore-news/RSS"],
+    "new orleans": ["https://www.fbi.gov/feeds/new-orleans-news/RSS"],
     "los angeles": [
         "https://www.latimes.com/local/rss2.0.xml",
         "https://feeds.feedburner.com/breitbart",
@@ -178,7 +252,8 @@ LOCAL_FEEDS = {
     "honolulu": [
         "https://www.civilbeat.org/feed/",
         "https://feeds.hawaiitelegraph.com/rss/6b17ec7a35065289",
-        "https://www.hawaiifreepress.com/DesktopModules/DnnForge%20-%20NewsArticles/RSS.aspx?TabID=56&ModuleID=380&MaxCount=25"
+        "https://www.hawaiifreepress.com/DesktopModules/DnnForge%20-%20NewsArticles/RSS.aspx?TabID=56&ModuleID=380&MaxCount=25",
+        "https://www.fbi.gov/feeds/honolulu-news/RSS"
     ],
     "chicago": [
         "https://feeds.chicagochronicle.com/rss/c8ac3000ee01c7aa",
@@ -186,10 +261,18 @@ LOCAL_FEEDS = {
     ],
     "indianapolis": [
         "https://thedepauw.com/feed/",
-        "https://feeds.indianapolispost.com/rss/43a9fd3724cda141"
+        "https://feeds.indianapolispost.com/rss/43a9fd3724cda141",
+        "https://www.fbi.gov/feeds/indianapolis-news/RSS"
     ],
-    "kansas city": ["https://feeds.kansascitypost.com/rss/cc264e50ceab3697"],
-    "san diego": ["https://timesofsandiego.com/feed/"],
+    "kansas city": [
+        "https://feeds.kansascitypost.com/rss/cc264e50ceab3697",
+        "https://www.fbi.gov/feeds/kansas-city-news/RSS"
+        ],
+    "lousville": ["https://www.fbi.gov/feeds/louisville-news/RSS"],
+    "san diego": [
+        "https://timesofsandiego.com/feed/",
+        "https://www.fbi.gov/feeds/san-diego-news/RSS"
+        ],
     "san francisco": [
         "https://el-observador.com/feed/",
         "https://www.fbi.gov/feeds/sanfrancisco-news/RSS"
@@ -207,11 +290,15 @@ LOCAL_FEEDS = {
         "https://feeds.washingtonpost.com/rss/local?itid=sf_local",
         "https://www.fbi.gov/feeds/washington-news/RSS"
     ],
+    "minneapolis": ["https://www.fbi.gov/feeds/minneapolis-news/RSS"],
     "houston": [
         "https://www.click2houston.com/arc/outboundfeeds/rss/category/news/local/?outputType=xml&size=10",
         "https://www.fbi.gov/feeds/houston-news/RSS"
     ],
-    "birmingham": ["https://feeds.birminghamstar.com/rss/0cd1f7701040892f"],
+    "birmingham": [
+        "https://feeds.birminghamstar.com/rss/0cd1f7701040892f",
+        "https://www.fbi.gov/feeds/birmingham-news/RSS"
+        ],
     "tuscaloosa": ["https://feeds.tuscaloosatimes.com/rss/7e50c85536b0a892"],
     "mountain brook": ["https://www.villagelivingonline.com/api/rss/content.rss"],
     "seldovia": ["https://www.seldovia.com/feed/"],
@@ -643,6 +730,8 @@ GLOBAL_FEEDS = [
     "https://feeds.feedburner.com/TheHackersNews",
     "https://www.csoonline.com/feed/",
     "https://intel471.com/blog/feed",
+    "https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml",
+    "https://www.cshub.com/rss/categories/attacks",
     
     # Major global news networks (comprehensive coverage)
     "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
@@ -715,6 +804,7 @@ GLOBAL_FEEDS = [
     "https://www.dailysabah.com/rss/politics/war-on-terror",
     "https://www.rand.org/topics/international-affairs.xml/feed",
     "https://feeds.feedburner.com/WarNewsUpdates",
+    "https://www.war.gov/DesktopModules/ArticleCS/RSS.ashx?max=10&ContentType=1&Site=945",
     "https://asiandefencenewschannel.blogspot.com/feeds/posts/default",
     # Independent/underreported regions
     "https://globalpressjournal.com/feed/",
