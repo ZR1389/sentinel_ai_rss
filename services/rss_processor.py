@@ -784,51 +784,43 @@ except Exception:
     LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS = {}, {}, []
 
 # =====================================================================
-# FEED PRIORITY STRATEGY (UPDATED: Global-first approach)
+# FEED PRIORITY STRATEGY (UPDATED: Equal priority approach)
 # =====================================================================
-# NEW STRATEGY:
-# 1. GLOBAL feeds are PRIMARY (not fallback) - highest priority
-#    - Comprehensive English coverage with keyword matching
-#    - Location extraction via content analysis (city_utils/location_service)
-#    - Best signal-to-noise ratio
+# ALL FEEDS EQUAL PRIORITY:
+# - Feed priority doesn't determine alert quality - filters do that
+# - LOCAL feeds have source_tag="local:city" → GOOD location from tag
+# - COUNTRY feeds have source_tag="country:country" → GOOD location from tag  
+# - GLOBAL feeds have source_tag="global" → Must extract location from content
+# - Quality filtering happens via keywords + threat scoring, not feed priority
 #
-# 2. LOCAL/COUNTRY feeds are SUPPLEMENTARY (lower priority)
-#    - Only English-language feeds retained
-#    - Provide localized context when available
-#    - Used for additional coverage depth
-#
-# Benefits of global-first approach:
-# - No translation issues or non-English noise
-# - Consistent quality and formatting
-# - Proper location extraction from article content
-# - Reduced false positives from local sports/entertainment
+# Benefits of equal priority:
+# - Find ALL relevant alerts from any source
+# - Location accuracy comes from proper extraction + validation, not feed priority
+# - Filters remove low-quality content regardless of source
+# - Simpler logic, more predictable results
 # =====================================================================
 
-GLOBAL_PRIORITY   = 5   # Highest priority - primary intelligence source
-NATIVE_PRIORITY   = 10  # Local/country feeds - supplementary coverage
-FALLBACK_PRIORITY = 30  # Core fallback if others fail
-KIND_PRIORITY = {"global": GLOBAL_PRIORITY, "native": NATIVE_PRIORITY, "env": NATIVE_PRIORITY, "fallback": FALLBACK_PRIORITY, "unknown": 999}
+ALL_FEEDS_PRIORITY = 10  # All feeds equal - let filters determine quality
+KIND_PRIORITY = {"global": ALL_FEEDS_PRIORITY, "native": ALL_FEEDS_PRIORITY, "env": ALL_FEEDS_PRIORITY, "fallback": ALL_FEEDS_PRIORITY, "unknown": 999}
 
 def _wrap_spec(url: str, priority: int, kind: str, tag: str = "") -> Dict[str, Any]:
     return {"url": url.strip(), "priority": priority, "kind": kind, "tag": tag}
 
 def _build_native_specs() -> List[Dict[str, Any]]:
-    """Build feed specs with GLOBAL feeds as highest priority."""
+    """Build feed specs with equal priority for all feeds."""
     specs: List[Dict[str, Any]] = []
     
-    # GLOBAL feeds FIRST (primary intelligence source)
+    # All feeds equal priority - filters determine quality, not feed source
     for u in (GLOBAL_FEEDS or []):
-        specs.append(_wrap_spec(u, GLOBAL_PRIORITY, "global", "global"))
+        specs.append(_wrap_spec(u, ALL_FEEDS_PRIORITY, "global", "global"))
     
-    # Local city feeds (supplementary English coverage)
     for city, urls in (LOCAL_FEEDS or {}).items():
         for u in (urls or []):
-            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"local:{city}"))
+            specs.append(_wrap_spec(u, ALL_FEEDS_PRIORITY, "native", f"local:{city}"))
     
-    # Country feeds (supplementary English coverage)
     for country, urls in (COUNTRY_FEEDS or {}).items():
         for u in (urls or []):
-            specs.append(_wrap_spec(u, NATIVE_PRIORITY, "native", f"country:{country}"))
+            specs.append(_wrap_spec(u, ALL_FEEDS_PRIORITY, "native", f"country:{country}"))
     
     return specs
 
@@ -849,9 +841,9 @@ def _coalesce_all_feed_specs(group_names: Optional[Iterable[str]] = None) -> Lis
     specs: List[Dict[str, Any]] = []
     specs.extend(_build_native_specs())
     for u in _load_env_feeds():
-        specs.append(_wrap_spec(u, NATIVE_PRIORITY, "env", "env"))
+        specs.append(_wrap_spec(u, ALL_FEEDS_PRIORITY, "env", "env"))
     for u in _core_fallback_feeds():
-        specs.append(_wrap_spec(u, FALLBACK_PRIORITY, "fallback", "core"))
+        specs.append(_wrap_spec(u, ALL_FEEDS_PRIORITY, "fallback", "core"))
     specs.sort(key=lambda s: s.get("priority", 100))
     seen, out = set(), []
     for s in specs:
@@ -2047,6 +2039,27 @@ def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
         return True, match_info
     return False, {}
 
+def _validate_city_country_match(city: str, country: str) -> bool:
+    """Validate that city actually belongs to the specified country."""
+    if not city or not country:
+        return True  # Can't validate if either is missing
+    
+    try:
+        from feeds_catalog import CITY_TO_COUNTRY
+    except ImportError:
+        return True  # Can't validate without mapping
+    
+    city_lower = city.lower().strip()
+    canonical_country = CITY_TO_COUNTRY.get(city_lower)
+    
+    if canonical_country:
+        # We have a mapping - verify it matches
+        if canonical_country.lower() != country.lower():
+            logger.warning(f"[LocationValidation] REJECTED: '{city}' is in '{canonical_country}', not '{country}'")
+            return False
+    
+    return True
+
 def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> Dict[str, Any]:
     """Fallback location extraction without batch processing"""
     location_data = {
@@ -2106,6 +2119,23 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
                 'location_method': 'feed_tag',
                 'location_confidence': 'high'
             })
+    
+    # Validate city/country combination before accepting
+    if location_data['city'] and location_data['country']:
+        if not _validate_city_country_match(location_data['city'], location_data['country']):
+            # Invalid combination - reject this location data
+            logger.warning(f"[LocationValidation] Rejected invalid location: {location_data['city']}, {location_data['country']}")
+            location_data = {
+                'city': None,
+                'country': None,
+                'region': None,
+                'latitude': None,
+                'longitude': None,
+                'location_method': 'rejected_validation',
+                'location_confidence': 'none',
+                'location_sharing': False
+            }
+            return location_data
     
     # Try to add region if we have country
     if location_data['country']:
