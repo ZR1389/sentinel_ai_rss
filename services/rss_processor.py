@@ -1953,7 +1953,11 @@ def _passes_keyword_filter(text: str) -> tuple[bool, dict]:
         "bribery", "insider threat", "corruption",
         "active shooter", "mass casualty", "bomb threat",
         "north korea", "iran", "china", "russia", "foreign intelligence",
-        "organized crime", "cartel", "drug trafficking ring"
+        "organized crime", "cartel", "drug trafficking ring",
+        "national guard", "soldier", "military personnel", "service member",
+        "attack on", "killed", "wounded", "shooting", "stabbing",
+        "federal agent", "fbi agent", "police officer", "law enforcement",
+        "military facility", "government building", "federal building"
     ]
     
     try:
