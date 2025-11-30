@@ -867,7 +867,8 @@ def _sha(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
 def _uuid_for(source: str, title: str, link: str) -> str:
-    return _sha(f"{source}|{title}|{link}")
+    # Use only title and link for UUID to prevent duplicates from different sources
+    return _sha(f"{title}|{link}")
 
 def _safe_lang(text: str, default: str = "en") -> str:
     t = (text or "").strip()
@@ -2158,8 +2159,8 @@ def _extract_source(url: str) -> str:
         return "unknown"
 
 def _uuid_for(source: str, title: str, link: str) -> str:
-    """Generate UUID for alert"""
-    content = f"{source}:{title}:{link}"
+    """Generate UUID for alert - uses only title and link to prevent duplicates from different sources"""
+    content = f"{title}:{link}"
     return hashlib.md5(content.encode('utf-8')).hexdigest()
 
 def _now_utc():
