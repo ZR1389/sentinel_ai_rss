@@ -7,6 +7,7 @@ Used by rss_processor.py with native-first priority (local > country > global).
 # Canonical mapping from city names to their correct countries
 # Used to ensure proper location extraction from feed source_tags
 CITY_TO_COUNTRY = {
+    "anchorage": "United States",
     "belgrade": "Serbia",
     "hong kong": "Hong Kong",
     "paris": "France",
@@ -135,6 +136,7 @@ CITY_TO_COUNTRY = {
 # ---------------------- Local city feeds (ENGLISH ONLY) ----------------------
 # Only keeping major English-language city feeds
 LOCAL_FEEDS = {
+    "anchorage": ["https://www.fbi.gov/feeds/anchorage-news/RSS"],
     "hong kong": [
         "https://www.scmp.com/rss/2/feed/",
         "https://globalvoices.org/-/world/east-asia/hong-kong-china/feed/"
