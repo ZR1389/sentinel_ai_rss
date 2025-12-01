@@ -1922,11 +1922,14 @@ async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMI
 
     logger.info("Total processed alerts: %d (with %d batch results applied)", len(results_alerts), len(batch_results))
     
-    # Record metrics
-    processing_time = time.time() - start_time
-    metrics.record_feed_processing_time(processing_time)
-    metrics.increment_alert_count(len(results_alerts))
-    metrics.set_batch_size(len(batch_results))
+    # Record metrics (wrapped to avoid crashes)
+    try:
+        processing_time = time.time() - start_time
+        metrics.record_feed_processing_time(processing_time)
+        metrics.increment_alert_count(len(results_alerts))
+        metrics.set_batch_size(len(batch_results))
+    except Exception as e:
+        logger.debug(f"Metrics recording failed (non-critical): {e}")
     
     return _dedupe_batch(results_alerts)
 
