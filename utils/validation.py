@@ -39,9 +39,26 @@ def validate_alert(alert: Dict[str, Any]) -> Tuple[bool, str]:
                 return False, f"Field {field} must be string-convertible, got {type(alert[field])}"
     
     # Validate and fix UUID format
+    # Accept both UUID4 format and SHA1 hash format (40 hex chars)
+    uuid_val = alert.get("uuid", "")
+    is_valid_uuid = False
+    
+    # Check if it's a valid UUID4 format
     try:
-        _uuid.UUID(alert["uuid"])
+        _uuid.UUID(uuid_val)
+        is_valid_uuid = True
     except (ValueError, AttributeError, TypeError):
+        pass
+    
+    # Also accept SHA1 hash format (40 hex characters) used by RSS processor
+    if not is_valid_uuid and isinstance(uuid_val, str) and len(uuid_val) == 40:
+        try:
+            int(uuid_val, 16)  # Check if it's valid hex
+            is_valid_uuid = True
+        except (ValueError, TypeError):
+            pass
+    
+    if not is_valid_uuid:
         # Generate new UUID if invalid
         original_uuid = alert.get("uuid")
         alert["uuid"] = str(_uuid.uuid4())

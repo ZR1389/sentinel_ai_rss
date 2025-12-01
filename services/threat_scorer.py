@@ -223,9 +223,11 @@ POLITICAL_ROUTINE_TERMS = [
 ]
 
 CULTURAL_RELIGIOUS_TERMS = [
-    "pope", "vatican", "mosque", "church", "temple", "cathedral",
+    "pope", "vatican", "mosque visit", "church visit", "temple visit", "cathedral",
     "religious ceremony", "pilgrimage", "prayer", "blessing", "mass",
-    "festival", "celebration", "anniversary", "commemoration"
+    "festival", "celebration", "anniversary", "commemoration",
+    "message of hope", "message of peace", "papal visit", "holy see",
+    "religious leader", "spiritual leader", "interfaith", "ecumenical"
 ]
 
 ECONOMY_BUSINESS_TERMS = [
