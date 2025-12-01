@@ -377,9 +377,24 @@ def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
     - "Indira Gandhi refused Israel, India plan in 1980s" (historical)
     - "Sem florestas, as cidades ficam vulneráveis" (non-English)
     - "Evening news wrap: X; Y; Z & more" (news digest)
+    - "نقيب الأطباء في بيروت" (non-Latin script - Arabic)
     """
     title_norm = _norm(title or "")
     combined = f"{title_norm} {text_norm}"
+    
+    # Non-Latin script detection (Arabic, Hebrew, Cyrillic, Chinese, etc.)
+    # These should be filtered before reaching threat scoring, but catch stragglers
+    import re
+    # Arabic: \u0600-\u06FF, Hebrew: \u0590-\u05FF, Cyrillic: \u0400-\u04FF
+    # Chinese: \u4E00-\u9FFF, Japanese Hiragana/Katakana: \u3040-\u30FF
+    if re.search(r'[\u0600-\u06FF]', title or ""):  # Arabic in title
+        return True, "non_english_arabic"
+    if re.search(r'[\u0590-\u05FF]', title or ""):  # Hebrew in title  
+        return True, "non_english_hebrew"
+    if re.search(r'[\u0400-\u04FF]{3,}', title or ""):  # 3+ Cyrillic chars in title
+        return True, "non_english_cyrillic"
+    if re.search(r'[\u4E00-\u9FFF]', title or ""):  # Chinese in title
+        return True, "non_english_chinese"
     
     # News digest/roundup detection - aggregated content not suitable for single-incident tracking
     # Check title only - digests are identified by their title format

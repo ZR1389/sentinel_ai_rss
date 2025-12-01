@@ -571,17 +571,29 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         logger.error("DB insert to raw_alerts failed: %s", e)
         return 0
 
+# Allowed languages for processing (English and Arabic for Middle East coverage)
+ALLOWED_LANGUAGES = {'en', 'English', '', None}
+
 def fetch_raw_alerts_from_db(
     region: Optional[str] = None,
     country: Optional[str] = None,
     city: Optional[str] = None,
-    limit: int = 1000
+    limit: int = 1000,
+    english_only: bool = True
 ) -> List[Dict[str, Any]]:
     """
     Return recent raw alerts for enrichment.
+    
+    Args:
+        english_only: If True, filter to English content only (default True)
     """
     where = []
     params: List[Any] = []
+    
+    # Filter to English only by default
+    if english_only:
+        where.append("(language IS NULL OR language = '' OR language = 'en' OR language = 'English')")
+    
     if region:
         where.append("region = %s")
         params.append(region)
