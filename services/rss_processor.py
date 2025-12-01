@@ -1671,10 +1671,22 @@ async def _build_alert_from_entry(
         
         # Language filter: Only skip if EXPLICITLY set to filter AND detected language is NOT in allowed list
         # If RSS_ALLOWED_LANGS is empty/not set, allow all languages (permissive default)
+        #
+        # NOTE: langdetect is unreliable for short English text with foreign names (e.g., "Hezbollah" -> Danish)
+        # When "en" is in allowed langs, we also allow commonly misdetected European languages
+        # to avoid false filtering of English content. Use script-based detection in threat_scorer for accuracy.
         allowed_langs_env = os.getenv("RSS_ALLOWED_LANGS", "").strip()
         _rss_debug = os.getenv("RSS_DEBUG", "false").strip().lower() in ("1","true","yes","y")
         if allowed_langs_env:
             allowed_langs = [l.strip().lower() for l in allowed_langs_env.split(",") if l.strip()]
+            
+            # If "en" is allowed, also allow commonly misdetected European languages
+            # langdetect often mistakes short English security text for: da (Danish), no (Norwegian), 
+            # nl (Dutch), sv (Swedish), de (German), fr (French), it (Italian), es (Spanish), pt (Portuguese)
+            if "en" in allowed_langs:
+                misdetected_as_english = {"da", "no", "nl", "sv", "de", "fr", "it", "es", "pt", "ca", "ro", "af", "cy"}
+                allowed_langs = list(set(allowed_langs) | misdetected_as_english)
+            
             if allowed_langs and language.lower() not in allowed_langs:
                 if _rss_debug:
                     logger.info(f"[RSS_DEBUG] skip: language lang={language} allowed={allowed_langs} title='{title[:120]}'")
