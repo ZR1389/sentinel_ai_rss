@@ -488,12 +488,13 @@ class BaselineMetricsStage(EnrichmentStage):
                             original=original_recent_count)
         
         # After baseline metrics calculation - skip zero-incident alerts
-        if alert.get("incident_count_30d", 0) == 0 and alert.get("recent_count_7d", 0) == 0:
-            self.logger.info("filtering_zero_incident_alert",
-                           title=context.title[:80],
-                           incident_count_30d=alert.get("incident_count_30d"),
-                           recent_count_7d=alert.get("recent_count_7d"))
-            alert["_filtered"] = True
+        # TEMPORARILY DISABLED: Allow alerts with zero incidents to bootstrap database
+        # if alert.get("incident_count_30d", 0) == 0 and alert.get("recent_count_7d", 0) == 0:
+        #     self.logger.info("filtering_zero_incident_alert",
+        #                    title=context.title[:80],
+        #                    incident_count_30d=alert.get("incident_count_30d"),
+        #                    recent_count_7d=alert.get("recent_count_7d"))
+        #     alert["_filtered"] = True
         
         return alert
 
