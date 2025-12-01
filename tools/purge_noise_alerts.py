@@ -62,7 +62,7 @@ def main(argv: List[str]) -> int:
         root_dir = pathlib.Path(__file__).resolve().parent.parent
         if str(root_dir) not in sys.path:
             sys.path.append(str(root_dir))
-        from db_utils import fetch_one, fetch_all, execute
+        from utils.db_utils import fetch_one, fetch_all, execute
     except Exception as e:
         print(f"db_utils import failed: {e}", file=sys.stderr)
         return 2

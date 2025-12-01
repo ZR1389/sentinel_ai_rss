@@ -514,6 +514,8 @@ if __name__ == "__main__":
     if not setup_cron_environment():
         sys.exit(1)
     
+    logger = logging.getLogger('railway_cron')
+    
     # Determine what operation to run based on command line argument
     if len(sys.argv) > 1:
         operation = sys.argv[1]
