@@ -353,7 +353,7 @@ def run_geocode_backfill():
                 lat, lon = get_city_coords(city, country)
                 if lat is not None and lon is not None:
                     cur.execute('''
-                        UPDATE alerts SET latitude = %s, longitude = %s, location_sharing = true
+                        UPDATE alerts SET latitude = %s, longitude = %s, location_sharing = true, location_method = 'legacy_precise'
                         WHERE id = %s
                     ''', (lat, lon, alert_id))
                     updated += 1
@@ -384,7 +384,7 @@ def run_geocode_backfill():
                 if country_lower in COUNTRY_CAPITALS:
                     capital, lat, lon = COUNTRY_CAPITALS[country_lower]
                     cur.execute('''
-                        UPDATE alerts SET latitude = %s, longitude = %s, city = %s, location_sharing = true
+                        UPDATE alerts SET latitude = %s, longitude = %s, city = %s, location_sharing = true, location_method = 'country_centroid'
                         WHERE id = %s
                     ''', (lat, lon, capital, alert_id))
                     updated += 1
