@@ -90,7 +90,7 @@ class LocationEnhancementStage(EnrichmentStage):
         super().__init__("location_enhancement")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import enhance_location_confidence
+        from services.threat_engine import enhance_location_confidence
         return enhance_location_confidence(alert)
 
 class RelevanceFilterStage(EnrichmentStage):
@@ -100,7 +100,7 @@ class RelevanceFilterStage(EnrichmentStage):
         super().__init__("relevance_filter")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import relevance_flags
+        from services.threat_engine import relevance_flags
         try:
             alert["relevance_flags"] = relevance_flags(context.full_text)
         except Exception as e:
@@ -115,7 +115,7 @@ class ThreatScoringStage(EnrichmentStage):
         super().__init__("threat_scoring")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import assess_threat_level, calculate_socmint_score, _clamp_score
+        from services.threat_engine import assess_threat_level, calculate_socmint_score, _clamp_score
         
         threat_score_data = assess_threat_level(
             alert_text=context.full_text,
@@ -162,7 +162,7 @@ class ConfidenceCalculationStage(EnrichmentStage):
         super().__init__("confidence_calculation")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import compute_confidence
+        from services.threat_engine import compute_confidence
         
         try:
             alert["overall_confidence"] = compute_confidence(alert, "overall")
@@ -184,7 +184,7 @@ class RiskAnalysisStage(EnrichmentStage):
         super().__init__("risk_analysis")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import (
+        from services.threat_engine import (
             run_sentiment_analysis, run_forecast, run_legal_risk,
             run_cyber_ot_risk, run_environmental_epidemic_risk, compute_keyword_weight
         )
@@ -300,7 +300,7 @@ class CategoryClassificationStage(EnrichmentStage):
         super().__init__("category_classification")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import extract_threat_category, compute_confidence
+        from services.threat_engine import extract_threat_category, compute_confidence
         
         # Category/subcategory (fallbacks if missing)
         if not alert.get("category") or not alert.get("category_confidence"):
@@ -434,7 +434,7 @@ class HistoricalAnalysisStage(EnrichmentStage):
         super().__init__("historical_analysis")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import (
+        from services.threat_engine import (
             fetch_past_incidents, stats_average_score, early_warning_indicators,
             _compute_future_risk_prob
         )
@@ -467,7 +467,7 @@ class BaselineMetricsStage(EnrichmentStage):
         super().__init__("baseline_metrics")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import _baseline_metrics
+        from services.threat_engine import _baseline_metrics
         
         # Store original baseline data if already present (for testing)
         original_incident_count = alert.get("incident_count_30d")
@@ -504,7 +504,7 @@ class MetadataEnrichmentStage(EnrichmentStage):
         super().__init__("metadata_enrichment")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import _structured_sources
+        from services.threat_engine import _structured_sources
         
         # Structured sources + reports analyzed
         alert["sources"] = alert.get("sources") or _structured_sources(alert)
@@ -524,7 +524,7 @@ class SocmintEnrichmentStage(EnrichmentStage):
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
         try:
-            from ioc_extractor import extract_social_media_iocs, enrich_alert_with_socmint
+            from utils.ioc_extractor import extract_social_media_iocs, enrich_alert_with_socmint
             
             # Extract social media handles/URLs from alert text
             iocs = extract_social_media_iocs(context.full_text)
@@ -552,7 +552,7 @@ class RegionTrendStage(EnrichmentStage):
         super().__init__("region_trend")
     
     def _enrich(self, alert: dict, context: EnrichmentContext) -> dict:
-        from threat_engine import fetch_past_incidents, save_region_trend
+        from services.threat_engine import fetch_past_incidents, save_region_trend
         from datetime import timedelta
         
         city = context.location or alert.get("city") or alert.get("region") or alert.get("country")

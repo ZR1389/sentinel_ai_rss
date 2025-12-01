@@ -177,6 +177,18 @@ class MetricsLogger:
             duration_ms=duration_ms,
             **kwargs
         )
+    
+    def record_feed_processing_time(self, duration_seconds: float, **kwargs):
+        """Record RSS feed processing time (for rss_processor compatibility)"""
+        self.timing(
+            "feed_processing",
+            duration_ms=int(duration_seconds * 1000),
+            **kwargs
+        )
+    
+    def set_batch_size(self, size: int, **kwargs):
+        """Set batch size metric (for batch processing compatibility)"""
+        self.gauge("batch_size", float(size), **kwargs)
 
 def get_metrics_logger(name: str) -> MetricsLogger:
     """Get a metrics logger instance"""

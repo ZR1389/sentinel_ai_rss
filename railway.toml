@@ -14,9 +14,10 @@ healthcheck_path = "/health"
   restart_policy = "on_failure"
 
 # ============================================================================
-# CRON JOBS DISABLED IN railway.toml
-# All cron jobs are configured directly in Railway Dashboard (Settings → Cron)
-# Railway.toml cron configuration does not work reliably - use Dashboard only
+# CRON JOBS - Configured in Railway Dashboard
+# DO NOT uncomment these if cron jobs exist in Railway Dashboard
+# They will run twice and cause duplicate processing!
+# Check Railway Dashboard → Settings → Cron before enabling here
 # ============================================================================
 
 # [[cron]]

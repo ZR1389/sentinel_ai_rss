@@ -59,7 +59,7 @@ except Exception:
 
 try:
     from vector_dedup import VectorDeduplicator
-    from risk_shared import get_embedding as get_managed_embedding
+    from utils.risk_shared import get_embedding as get_managed_embedding
 except Exception:
     VectorDeduplicator = None
     get_managed_embedding = None
@@ -595,7 +595,7 @@ def deduplicate_alerts(
                 text = f"{alert.get('title','')} {alert.get('summary','')}"[:4096]
                 
                 # Use the quota-managed embedding system
-                from risk_shared import embedding_manager
+                from utils.risk_shared import embedding_manager
                 emb = embedding_manager.get_embedding_safe(text, openai_client)
                 
                 # Check vector DB for similarity using pgvector-compatible queries
