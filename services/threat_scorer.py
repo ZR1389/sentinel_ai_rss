@@ -166,6 +166,20 @@ except ImportError:
 
 # --------------------------- noise detection ---------------------------
 
+# News digests/roundups that aggregate multiple stories - poor for single-incident tracking
+NEWS_DIGEST_PATTERNS = [
+    "news wrap", "news roundup", "news digest", "daily digest", "weekly digest",
+    "evening wrap", "morning wrap", "evening news wrap", "morning news wrap",
+    "top stories", "top headlines", "headlines today", "today's headlines",
+    "& more", "and more", "...more", "plus more",
+    "in brief", "news in brief", "briefs", "news briefs",
+    "what happened today", "what you need to know", "what to know",
+    "round-up", "round up", "roundup", "weekly roundup", "daily roundup",
+    "news bulletin", "bulletin", "news summary", "summary of",
+    "this week in", "this day in", "today in news",
+    "5 things", "10 things", "things to know", "things you need",
+]
+
 # Low-quality content patterns that should be filtered out
 SPORTS_TERMS = [
     "win", "wins", "won", "beat", "beats", "score", "scored", "scores", "scoring", "goal", "goals",
@@ -220,6 +234,22 @@ POLITICAL_ROUTINE_TERMS = [
     "parliament", "senate", "congress", "legislature",
     "first to wed", "wedding", "married", "marriage", "ceremony",
     "visit", "visits", "visited", "met with", "meeting with", "summit"
+]
+
+# Political scandals, corruption - not security threats
+POLITICAL_SCANDAL_TERMS = [
+    "land deal", "land scam", "land grab", "land theft", "property deal", "property scam",
+    "corruption probe", "corruption scandal", "orders probe", "inquiry into",
+    "slams govt", "slams government", "hits out at", "attacks govt", "criticizes",
+    "vote theft", "vote rigging", "electoral fraud", "ballot stuffing",
+    "mentally unstable", "mentally ill", "psychologically", "unfit",
+    "power greed", "power hungry", "dynasty politics", "nepotism",
+    "scam", "scandal", "controversy", "allegations against", "accused of",
+    "bribery", "kickback", "embezzlement", "misappropriation", "money laundering",
+    "income tax raid", "ed raid", "cbi probe", "enforcement directorate",
+    "opposition leader", "opposition slams", "bjp slams", "congress slams",
+    "rahul gandhi", "amit shah", "narendra modi",  # Political figures in non-threat context
+    "court acquits", "acquitted", "bail granted", "charges dropped",
 ]
 
 CULTURAL_RELIGIOUS_TERMS = [
@@ -329,9 +359,16 @@ def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
     - "Alumni protest school demolition" (civic/local)
     - "Indira Gandhi refused Israel, India plan in 1980s" (historical)
     - "Sem florestas, as cidades ficam vulneráveis" (non-English)
+    - "Evening news wrap: X; Y; Z & more" (news digest)
     """
     title_norm = _norm(title or "")
     combined = f"{title_norm} {text_norm}"
+    
+    # News digest/roundup detection - aggregated content not suitable for single-incident tracking
+    # Check title only - digests are identified by their title format
+    digest_hits = sum(1 for pattern in NEWS_DIGEST_PATTERNS if pattern in title_norm)
+    if digest_hits >= 1:  # Any digest pattern in title is enough
+        return True, "news_digest"
     
     # Non-English detection - look for distinctive non-English phrases
     non_english_hits = sum(1 for pattern in NON_ENGLISH_PATTERNS if pattern in combined)
@@ -380,6 +417,21 @@ def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
         threat_check = any(t in combined for t in ["sanctions", "embargo", "freeze", "seized", "confiscated", "financial crime"])
         if not threat_check:
             return True, "economy"
+    
+    # Political scandal/corruption detection (not security threats)
+    scandal_hits = sum(1 for term in POLITICAL_SCANDAL_TERMS if term in combined)
+    if scandal_hits >= 2:
+        # Check if it's actual political violence
+        threat_check = any(t in combined for t in ["killed", "assassination", "attack", "bomb", "shooting", "riot"])
+        if not threat_check:
+            return True, "political_scandal"
+    # Single strong scandal indicator in title is enough
+    if any(term in title_norm for term in [
+        "land deal", "land scam", "corruption probe", "slams govt", "orders probe", 
+        "court acquits", "hits out at", "mentally unstable", "power greed",
+        "slams government", "attacks govt", "criticizes govt"
+    ]):
+        return True, "political_scandal"
     
     # Routine politics detection (elections, appointments, weddings, visits)
     politics_hits = sum(1 for term in POLITICAL_ROUTINE_TERMS if term in combined)
