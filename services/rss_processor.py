@@ -568,11 +568,16 @@ if save_raw_alerts_to_db is None:
                                 except Exception as e:
                                     logger.debug(f"Geocoding failed for '{location_text}': {e}")
                         
+                        # Ensure HTML is cleaned before insertion
+                        clean_title = _clean_html_content(a.get("title") or "")
+                        clean_summary = _clean_html_content(a.get("summary") or "")
+                        clean_snippet = _clean_html_content(a.get("en_snippet") or "")
+                        
                         cur.execute(sql, [
                             a.get("uuid"),
-                            a.get("title"),
-                            a.get("summary"),
-                            a.get("en_snippet"),
+                            clean_title,
+                            clean_summary,
+                            clean_snippet,
                             a.get("link"),
                             a.get("source"),
                             (a.get("published") or datetime.utcnow()),

@@ -146,6 +146,16 @@ def is_recent(ts, days: int = 7) -> bool:
     except Exception:
         return False
 
+def _clean_html(text: str) -> str:
+    """Strip HTML tags and entities from text."""
+    if not text:
+        return ""
+    import html
+    text = html.unescape(text)
+    text = re.sub(r'<[^>]*>', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
 def contains_ioc(text: str) -> bool:
     """Lightweight IOC detector for post text: IPs, domains, CVEs, hashes, emails."""
     if not text:
@@ -995,8 +1005,12 @@ def summarize_single_alert(alert: dict) -> dict:
                     error=error)
         raise ValueError(f"Alert validation failed: {error}")
     
-    title = alert.get("title", "") or ""
-    summary = alert.get("summary", "") or ""
+    # Clean HTML from title and summary before processing
+    title = _clean_html(alert.get("title", "") or "")
+    summary = _clean_html(alert.get("summary", "") or "")
+    alert["title"] = title  # Store cleaned version
+    alert["summary"] = summary  # Store cleaned version
+    
     full_text = f"{title}\n{summary}".strip()
     location = alert.get("city") or alert.get("region") or alert.get("country")
     triggers = alert.get("tags", [])
