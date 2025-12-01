@@ -357,7 +357,7 @@ def auth_status():
 def retention_status():
     """Check retention worker status and database statistics."""
     try:
-        from retention_worker import health_check as retention_health_check
+        from workers.retention_worker import health_check as retention_health_check
         status = retention_health_check()
         return jsonify(status)
     except Exception as e:
@@ -378,7 +378,7 @@ def manual_retention_cleanup():
         if not expected_key or api_key != expected_key:
             return jsonify({"error": "Unauthorized - valid API key required"}), 401
         
-        from retention_worker import cleanup_old_alerts
+        from workers.retention_worker import cleanup_old_alerts
         result = cleanup_old_alerts()
         
         return jsonify({

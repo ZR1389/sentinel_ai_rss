@@ -54,7 +54,7 @@ def main():
     if args.full:
         _vacuum_full()
     else:
-        from retention_worker import perform_vacuum
+        from workers.retention_worker import perform_vacuum
         perform_vacuum()
 
 if __name__ == "__main__":
