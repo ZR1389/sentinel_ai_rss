@@ -252,6 +252,23 @@ POLITICAL_SCANDAL_TERMS = [
     "court acquits", "acquitted", "bail granted", "charges dropped",
 ]
 
+# Political commentary/opinion pieces - not security incidents
+POLITICAL_COMMENTARY_TERMS = [
+    # US political pundits and figures in opinion context
+    "nick fuentes", "tucker carlson", "maga supporters", "maga clash",
+    "elon musk", "reinstated his account", "twitter", "x/twitter",
+    # Political opinion phrases
+    "says the writer", "opinion", "commentary", "op-ed", "editorial",
+    "supporters clash", "clash over", "debate over", "controversy over",
+    "extremism", "extremist views", "controversial views", "inflammatory",
+    # Media/social media drama
+    "online rehabilitation", "account reinstated", "banned from", "suspended from",
+    "social media", "viral post", "tweet", "tweets", "posted on",
+    # Political rhetoric (not actual threats)
+    "jews run", "women need to", "blood-and-soil", "organized jewry",
+    "white nationalism", "white supremacy", "alt-right", "far-right rhetoric",
+]
+
 CULTURAL_RELIGIOUS_TERMS = [
     "pope", "vatican", "mosque visit", "church visit", "temple visit", "cathedral",
     "religious ceremony", "pilgrimage", "prayer", "blessing", "mass",
@@ -417,6 +434,20 @@ def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
         threat_check = any(t in combined for t in ["sanctions", "embargo", "freeze", "seized", "confiscated", "financial crime"])
         if not threat_check:
             return True, "economy"
+    
+    # Political commentary/opinion detection (not security incidents)
+    commentary_hits = sum(1 for term in POLITICAL_COMMENTARY_TERMS if term in combined)
+    if commentary_hits >= 2:
+        # Check if it's actual violence being reported
+        threat_check = any(t in combined for t in ["killed", "attack", "bomb", "shooting", "stabbing", "arrested for"])
+        if not threat_check:
+            return True, "political_commentary"
+    # Single strong commentary indicator in title
+    if any(term in title_norm for term in [
+        "nick fuentes", "tucker carlson", "maga supporters clash", "supporters clash",
+        "says the writer", "op-ed", "commentary", "clash over"
+    ]):
+        return True, "political_commentary"
     
     # Political scandal/corruption detection (not security threats)
     scandal_hits = sum(1 for term in POLITICAL_SCANDAL_TERMS if term in combined)
