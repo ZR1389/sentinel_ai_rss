@@ -78,7 +78,7 @@ def cleanup_old_alerts():
     try:
         # Verify database connection first
         try:
-            from db_utils import _get_db_connection
+            from utils.db_utils import _get_db_connection
             with _get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
@@ -124,7 +124,7 @@ def cleanup_old_alerts():
             vacuum_start = datetime.now()
             
             # Import raw database connection for VACUUM (needs autocommit)
-            from db_utils import _get_db_connection
+            from utils.db_utils import _get_db_connection
             
             with _get_db_connection() as conn:
                 conn.set_session(autocommit=True)
@@ -155,7 +155,7 @@ def perform_vacuum():
     
     try:
         # Import raw database connection for VACUUM (needs autocommit)
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         # VACUUM must run outside transaction block
         with _get_db_connection() as conn:

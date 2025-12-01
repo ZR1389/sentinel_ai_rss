@@ -26,7 +26,7 @@ def _load_env():
         load_dotenv('.env', override=False)
 
 def _vacuum_full():
-    from db_utils import _get_db_connection  # uses DATABASE_URL
+    from utils.db_utils import _get_db_connection  # uses DATABASE_URL
     import logging
     logger = logging.getLogger("vacuum_full")
     db_url = os.getenv("DATABASE_URL")

@@ -1196,6 +1196,13 @@ def summarize_single_alert(alert: dict) -> dict:
     if alert.get("score", 0) < MIN_THREAT_SCORE:
         logger.info(f"Filtering low-score alert: {alert.get('title', '')[:80]} (score={alert.get('score', 0):.1f}, threshold={MIN_THREAT_SCORE})")
         return None  # Skip low-score alerts
+    
+    # Reject noise alerts (sports, entertainment, religious tourism, etc.)
+    # Even if score passed threshold, noise detection flags content that slipped through
+    if alert.get("is_noise"):
+        noise_type = alert.get("noise_type", "unknown")
+        logger.info(f"Filtering noise alert ({noise_type}): {alert.get('title', '')[:80]}")
+        return None  # Reject noise content entirely
 
     # Early warnings
     ewi = early_warning_indicators(historical_incidents) or []
@@ -1630,7 +1637,23 @@ def enhance_location_confidence(alert: dict) -> dict:
     """
     Use the new location_method and location_confidence fields from RSS processor
     to enhance threat analysis location accuracy. Now uses centralized confidence scoring.
+    Also performs geocoding if city/country are present but coordinates are missing.
     """
+    # Geocode if we have city/country but no coordinates
+    city = alert.get("city")
+    country = alert.get("country")
+    if city and country and not alert.get("latitude"):
+        try:
+            from utils.city_utils import get_city_coords
+            lat, lon = get_city_coords(city, country)
+            if lat is not None and lon is not None:
+                alert["latitude"] = lat
+                alert["longitude"] = lon
+                alert["location_sharing"] = True
+                logger.debug("geocoded_in_enrichment", city=city, country=country, lat=lat, lon=lon)
+        except Exception as e:
+            logger.debug("geocoding_failed_in_enrichment", city=city, country=country, error=str(e))
+
     # Calculate location confidence using centralized function
     location_reliability = compute_confidence(alert, "location")
     

@@ -163,7 +163,7 @@ Next step: Disable aggressive cron in railway.toml
 def check_and_notify():
     """Check geocoding status and send notification if backlog is cleared"""
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
             status = get_geocoding_status(conn)

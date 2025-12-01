@@ -25,7 +25,7 @@ def get_location_quality_report(days: int = 7) -> Dict:
         }
     """
     try:
-        from db_utils import fetch_all
+        from utils.db_utils import fetch_all
         
         # Location method distribution
         method_stats = fetch_all(
@@ -105,7 +105,7 @@ def detect_location_anomalies(days: int = 7) -> List[Dict]:
     anomalies = []
     
     try:
-        from db_utils import fetch_all
+        from utils.db_utils import fetch_all
         
         # 1. Invalid coordinates (out of bounds)
         invalid_coords = fetch_all(
@@ -357,7 +357,7 @@ def log_validation_result(alert_id: int, validation: Dict) -> None:
     Could be extended to store in database for tracking.
     """
     try:
-        from db_utils import execute_query
+        from utils.db_utils import execute_query
         
         execute_query(
             """

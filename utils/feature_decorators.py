@@ -28,7 +28,7 @@ def _get_user_id(email: Optional[str] = None) -> Optional[int]:
         return None
     
     try:
-        from db_utils import fetch_one
+        from utils.db_utils import fetch_one
         user = fetch_one("SELECT id FROM users WHERE email=%s", (email,))
         return user['id'] if user else None
     except Exception:
@@ -49,7 +49,7 @@ def _track_feature_usage(feature_name: str, user_id: Optional[int] = None, incre
         return  # Can't track without user ID
     
     try:
-        from db_utils import execute
+        from utils.db_utils import execute
         # Call the safe increment function from migration
         execute("SELECT increment_feature_usage_safe(%s, %s, %s)", (user_id, feature_name, increment))
     except Exception as e:

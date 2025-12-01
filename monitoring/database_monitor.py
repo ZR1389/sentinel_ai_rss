@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from db_utils import (
+from utils.db_utils import (
     fetch_all, fetch_one, execute,
     get_query_performance_stats,
     log_database_performance_summary,

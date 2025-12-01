@@ -12,7 +12,7 @@ from cachetools import TTLCache
 
 try:
     # Preferred helper that returns list[dict]
-    from db_utils import fetch_all
+    from utils.db_utils import fetch_all
 except Exception:
     fetch_all = None  # type: ignore
 

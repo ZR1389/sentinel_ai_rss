@@ -13,7 +13,7 @@ from typing import Dict, Any, List
 def check_database_health() -> Dict[str, Any]:
     """Check database connectivity and pool status."""
     try:
-        from db_utils import _get_db_connection, fetch_one
+        from utils.db_utils import _get_db_connection, fetch_one
         
         # Test basic connectivity
         with _get_db_connection() as conn:
@@ -128,7 +128,7 @@ def check_vector_system_health() -> Dict[str, Any]:
     """Check vector deduplication system health."""
     try:
         from keywords_loader import get_all_keywords
-        from db_utils import fetch_one
+        from utils.db_utils import fetch_one
         
         # Check keywords loaded
         keywords = get_all_keywords()
@@ -225,7 +225,7 @@ def check_environment_health() -> Dict[str, Any]:
 def check_alert_pipeline_health() -> Dict[str, Any]:
     """Check alert processing pipeline health."""
     try:
-        from db_utils import fetch_one
+        from utils.db_utils import fetch_one
         
         # Check if we have recent alerts
         try:

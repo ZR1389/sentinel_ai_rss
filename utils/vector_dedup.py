@@ -237,7 +237,7 @@ class VectorDeduplicator:
         """
         try:
             # Use the current db_utils store_alert_embedding function
-            from db_utils import store_alert_embedding as db_store_embedding
+            from utils.db_utils import store_alert_embedding as db_store_embedding
             return db_store_embedding(alert_uuid, embedding)
                     
         except Exception as e:

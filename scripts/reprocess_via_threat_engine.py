@@ -27,7 +27,7 @@ from typing import List, Dict
 # Add parent directory to path to import our modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import db_utils
+from utils import db_utils
 from services.threat_engine import summarize_single_alert
 from services.rss_processor import _clean_html_content
 

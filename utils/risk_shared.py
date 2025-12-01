@@ -290,7 +290,7 @@ def extract_location(text: str) -> Tuple[Optional[str], Optional[str]]:
     except Exception:
         # Fallback to original implementation
         try:
-            from city_utils import fuzzy_match_city, normalize_city
+            from utils.city_utils import fuzzy_match_city, normalize_city_country as normalize_city
             c = fuzzy_match_city(text or "")
             if c:
                 city, country = normalize_city(c)

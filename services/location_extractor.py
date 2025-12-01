@@ -31,7 +31,7 @@ except Exception:
     pycountry = None  # type: ignore
 
 try:
-    from city_utils import get_country_for_city, fuzzy_match_city
+    from utils.city_utils import get_country_for_city, fuzzy_match_city
 except Exception:
     def get_country_for_city(city: str) -> Optional[str]:
         return None

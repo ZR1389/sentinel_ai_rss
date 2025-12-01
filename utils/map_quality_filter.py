@@ -150,7 +150,7 @@ def example_map_query():
     """
     Example of using quality filter in map API endpoint.
     """
-    from db_utils import _get_db_connection
+    from utils.db_utils import _get_db_connection
     
     with _get_db_connection() as conn:
         cur = conn.cursor()
@@ -181,7 +181,7 @@ if __name__ == '__main__':
     import os
     load_dotenv('.env.production', override=True)
     
-    from db_utils import _get_db_connection
+    from utils.db_utils import _get_db_connection
     
     with _get_db_connection() as conn:
         cur = conn.cursor()

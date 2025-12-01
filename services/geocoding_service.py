@@ -52,7 +52,7 @@ _last_reset = datetime.utcnow().date()
 def _get_db_helpers():
     """Get database connection helper"""
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         return _get_db_connection
     except Exception as e:
         logger.error("[geocoding] DB helpers unavailable: %s", e)

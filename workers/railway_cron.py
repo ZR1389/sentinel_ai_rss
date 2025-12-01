@@ -81,7 +81,7 @@ def run_retention_cleanup():
     
     try:
         # Import and run retention worker
-        from retention_worker import cleanup_old_alerts
+        from workers.retention_worker import cleanup_old_alerts
         
         logger.info("Starting retention cleanup...")
         cleanup_old_alerts()
@@ -105,7 +105,7 @@ def run_vacuum():
     
     try:
         # Import and run vacuum
-        from retention_worker import perform_vacuum
+        from workers.retention_worker import perform_vacuum
         
         logger.info("Starting database vacuum...")
         perform_vacuum()
@@ -287,31 +287,142 @@ def run_proximity_check():
         return False
 
 def run_geocode_backfill():
-    """Geocode missing coordinates in raw_alerts"""
+    """Geocode missing coordinates in alerts using city_utils"""
     
     logger = logging.getLogger('railway_cron')
     
+    # Country capital cities for fallback when only country is known
+    COUNTRY_CAPITALS = {
+        'united kingdom': ('London', 51.5074, -0.1278),
+        'united states': ('Washington DC', 38.9072, -77.0369),
+        'india': ('New Delhi', 28.6139, 77.2090),
+        'australia': ('Canberra', -35.2809, 149.1300),
+        'brazil': ('Brasilia', -15.7801, -47.9292),
+        'sri lanka': ('Colombo', 6.9271, 79.8612),
+        'nigeria': ('Abuja', 9.0579, 7.4951),
+        'iraq': ('Baghdad', 33.3152, 44.3661),
+        'israel': ('Jerusalem', 31.7683, 35.2137),
+        'syria': ('Damascus', 33.5138, 36.2765),
+        'lebanon': ('Beirut', 33.8938, 35.5018),
+        'pakistan': ('Islamabad', 33.6844, 73.0479),
+        'afghanistan': ('Kabul', 34.5553, 69.2075),
+        'iran': ('Tehran', 35.6892, 51.3890),
+        'russia': ('Moscow', 55.7558, 37.6173),
+        'china': ('Beijing', 39.9042, 116.4074),
+        'japan': ('Tokyo', 35.6762, 139.6503),
+        'south korea': ('Seoul', 37.5665, 126.9780),
+        'germany': ('Berlin', 52.5200, 13.4050),
+        'france': ('Paris', 48.8566, 2.3522),
+        'italy': ('Rome', 41.9028, 12.4964),
+        'spain': ('Madrid', 40.4168, -3.7038),
+        'turkey': ('Ankara', 39.9334, 32.8597),
+        'egypt': ('Cairo', 30.0444, 31.2357),
+        'south africa': ('Pretoria', -25.7479, 28.2293),
+        'kenya': ('Nairobi', -1.2921, 36.8219),
+        'ethiopia': ('Addis Ababa', 9.0320, 38.7469),
+        'mexico': ('Mexico City', 19.4326, -99.1332),
+        'canada': ('Ottawa', 45.4215, -75.6972),
+    }
+    
     try:
-        from services.geocoding_service import geocode_and_update_table
-        from geocoding_monitor import check_and_notify
+        from utils.city_utils import get_city_coords
+        from utils.db_utils import _get_db_connection
+        from utils.geocoding_monitor import check_and_notify
         
-        # Geocode raw_alerts first (most recent data)
-        logger.info("Starting geocode backfill for raw_alerts...")
-        geocode_and_update_table(
-            table_name='raw_alerts',
-            id_column='id',
-            location_column='location',
-            limit=100  # Process 100 rows per run
-        )
+        logger.info("Starting geocode backfill for alerts with city/country...")
         
-        # Optionally geocode alerts table too
-        logger.info("Starting geocode backfill for alerts...")
-        geocode_and_update_table(
-            table_name='alerts',
-            id_column='id',
-            location_column='location',
-            limit=50  # Fewer for alerts since it's larger
-        )
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            # Find alerts with city/country but no coordinates
+            cur.execute('''
+                SELECT id, city, country 
+                FROM alerts 
+                WHERE (latitude IS NULL OR longitude IS NULL) 
+                AND city IS NOT NULL 
+                AND country IS NOT NULL
+                LIMIT 200
+            ''')
+            rows = cur.fetchall()
+            
+            logger.info(f"Found {len(rows)} alerts with city to geocode")
+            
+            updated = 0
+            for row in rows:
+                alert_id, city, country = row
+                lat, lon = get_city_coords(city, country)
+                if lat is not None and lon is not None:
+                    cur.execute('''
+                        UPDATE alerts SET latitude = %s, longitude = %s, location_sharing = true
+                        WHERE id = %s
+                    ''', (lat, lon, alert_id))
+                    updated += 1
+            
+            conn.commit()
+            logger.info(f"Updated {updated} alerts with coordinates (city-based)")
+        
+        # Now geocode alerts with ONLY country (no city) using capitals
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            cur.execute('''
+                SELECT id, country 
+                FROM alerts 
+                WHERE (latitude IS NULL OR longitude IS NULL) 
+                AND (city IS NULL OR city = '')
+                AND country IS NOT NULL
+                LIMIT 200
+            ''')
+            rows = cur.fetchall()
+            
+            logger.info(f"Found {len(rows)} alerts with country-only to geocode")
+            
+            updated = 0
+            for row in rows:
+                alert_id, country = row
+                country_lower = (country or '').lower().strip()
+                if country_lower in COUNTRY_CAPITALS:
+                    capital, lat, lon = COUNTRY_CAPITALS[country_lower]
+                    cur.execute('''
+                        UPDATE alerts SET latitude = %s, longitude = %s, city = %s, location_sharing = true
+                        WHERE id = %s
+                    ''', (lat, lon, capital, alert_id))
+                    updated += 1
+            
+            conn.commit()
+            logger.info(f"Updated {updated} alerts with coordinates (country capital fallback)")
+        
+        # Also geocode raw_alerts if they have city/country
+        logger.info("Starting geocode backfill for raw_alerts with city/country...")
+        
+        with _get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            cur.execute('''
+                SELECT id, city, country 
+                FROM raw_alerts 
+                WHERE (latitude IS NULL OR longitude IS NULL) 
+                AND city IS NOT NULL 
+                AND country IS NOT NULL
+                LIMIT 200
+            ''')
+            rows = cur.fetchall()
+            
+            logger.info(f"Found {len(rows)} raw_alerts to geocode")
+            
+            updated = 0
+            for row in rows:
+                alert_id, city, country = row
+                lat, lon = get_city_coords(city, country)
+                if lat is not None and lon is not None:
+                    cur.execute('''
+                        UPDATE raw_alerts SET latitude = %s, longitude = %s
+                        WHERE id = %s
+                    ''', (lat, lon, alert_id))
+                    updated += 1
+            
+            conn.commit()
+            logger.info(f"Updated {updated} raw_alerts with coordinates")
         
         # Check and notify if backlog is cleared
         try:

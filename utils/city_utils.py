@@ -23,7 +23,12 @@ def _load_location_data():
     global _CITY_COORDS_CACHE, _CITY_TO_COUNTRY_MAP, _COUNTRY_COORDS_CACHE
     
     try:
-        location_file = os.path.join(os.path.dirname(__file__), "config", "location_keywords.json")
+        # Try project root config/ first (production path)
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        location_file = os.path.join(project_root, "config", "location_keywords.json")
+        if not os.path.exists(location_file):
+            # Fallback to config_data/ if config/ doesn't exist
+            location_file = os.path.join(project_root, "config_data", "location_keywords.json")
         if os.path.exists(location_file):
             with open(location_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -75,7 +80,7 @@ def get_city_coords(city: str, country: Optional[str] = None) -> Tuple[Optional[
     
     # First try database lookup if available
     try:
-        from db_utils import fetch_one
+        from utils.db_utils import fetch_one
         if fetch_one:
             cache_ttl_days = int(os.getenv("GEOCODE_CACHE_TTL_DAYS", "180"))
             row = fetch_one(
@@ -180,7 +185,7 @@ def cache_geocode_result(city: str, country: Optional[str], lat: float, lon: flo
         lon: Longitude
     """
     try:
-        from db_utils import execute
+        from utils.db_utils import execute
         if execute:
             execute(
                 """

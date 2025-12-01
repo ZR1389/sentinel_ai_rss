@@ -97,7 +97,7 @@ class ThreatFusion:
     def _get_rss_threats(lat: float, lon: float, radius_km: int, days: int) -> List[Dict]:
         """Fetch RSS alerts from Sentinel AI alerts table"""
         try:
-            from db_utils import _get_db_connection
+            from utils.db_utils import _get_db_connection
             
             cutoff_date = datetime.utcnow() - timedelta(days=days)
             

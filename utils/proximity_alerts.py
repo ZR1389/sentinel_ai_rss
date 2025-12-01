@@ -14,7 +14,7 @@ logger = logging.getLogger("proximity_alerts")
 
 def _get_db_helpers():
     try:
-        from db_utils import _get_db_connection
+        from utils.db_utils import _get_db_connection
         return _get_db_connection
     except Exception as e:
         logger.error("[proximity] DB helpers unavailable: %s", e)

@@ -1070,7 +1070,7 @@ def fetch_alerts_by_location_fuzzy(
         except Exception:
             pycountry = None  # type: ignore
         try:
-            from city_utils import fuzzy_match_city as _fuzzy_city
+            from utils.city_utils import fuzzy_match_city as _fuzzy_city
         except Exception:
             _fuzzy_city = None  # type: ignore
 

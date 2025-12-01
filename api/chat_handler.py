@@ -30,7 +30,7 @@ from services.location_service_consolidated import enhance_geographic_query
 
 # Optional single-value fetch for verification fallback
 try:
-    from db_utils import fetch_one
+    from utils.db_utils import fetch_one
 except Exception:
     fetch_one = None  # best-effort fallback
 
@@ -48,7 +48,7 @@ from utils.security_log_utils import log_security_event
 
 # Optional city tools (safe fallbacks if missing)
 try:
-    from city_utils import fuzzy_match_city, normalize_city
+    from utils.city_utils import fuzzy_match_city, normalize_city_country as normalize_city
 except Exception:
     fuzzy_match_city = None
     normalize_city = None
@@ -922,7 +922,7 @@ def handle_user_query(
     # ----------- FUZZY FALLBACK BEFORE NO-DATA GUARD -----------
     if not db_alerts:
         try:
-            from db_utils import fetch_alerts_by_location_fuzzy
+            from utils.db_utils import fetch_alerts_by_location_fuzzy
         except Exception:
             fetch_alerts_by_location_fuzzy = None  # type: ignore
 

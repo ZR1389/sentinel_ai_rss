@@ -17,7 +17,7 @@ from datetime import datetime
 from monitoring.coverage_monitor import get_coverage_monitor
 
 try:
-    from db_utils import execute, fetch_all
+    from utils.db_utils import execute, fetch_all
 except Exception:
     execute = fetch_all = None
 

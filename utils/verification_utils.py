@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover
 
 # DB helpers provided by your app
 try:
-    from db_utils import fetch_one, fetch_all, execute
+    from utils.db_utils import fetch_one, fetch_all, execute
 except Exception:  # pragma: no cover
     fetch_one = fetch_all = execute = None
 

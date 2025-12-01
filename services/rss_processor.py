@@ -336,11 +336,15 @@ def extract_location_hybrid(title: str, summary: str, source: str) -> Dict[str, 
     
     # For backward compatibility, delegate to consolidated service
     try:
-        from location_service_consolidated import detect_location
+        try:
+            from services.location_service_consolidated import detect_location
+        except ImportError:
+            from location_service_consolidated import detect_location  # type: ignore
+
         result = detect_location(text=summary or "", title=title or "")
         return {
             "city": result.city,
-            "country": result.country, 
+            "country": result.country,
             "region": result.region,
             "method": result.location_method,
             "confidence": result.location_confidence
@@ -363,9 +367,9 @@ except Exception as e:
     execute = None
 
 try:
-    from city_utils import get_city_coords as _cu_get_city_coords
-    from city_utils import fuzzy_match_city as _cu_fuzzy_match_city
-    from city_utils import normalize_city_country as _cu_normalize_city_country
+    from utils.city_utils import get_city_coords as _cu_get_city_coords
+    from utils.city_utils import fuzzy_match_city as _cu_fuzzy_match_city
+    from utils.city_utils import normalize_city_country as _cu_normalize_city_country
 except Exception:
     _cu_get_city_coords = None
     _cu_fuzzy_match_city = None
@@ -1389,7 +1393,11 @@ def _should_use_moonshot_for_location(entry: Dict, source_tag: str) -> bool:
     summary = entry.get("summary", "")
     
     try:
-        from location_service_consolidated import is_location_ambiguous
+        try:
+            from services.location_service_consolidated import is_location_ambiguous
+        except ImportError:
+            from location_service_consolidated import is_location_ambiguous  # type: ignore
+
         return is_location_ambiguous(text=summary, title=title)
     except Exception as e:
         logger.debug(f"[Moonshot] Ambiguous check fallback for {title[:50]}: {e}")
@@ -2085,6 +2093,18 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
         from feeds_catalog import CITY_TO_COUNTRY
     except ImportError:
         CITY_TO_COUNTRY = {}
+
+    # Try deterministic location detection if tag data is missing
+    detect_location_fn = None
+    try:
+        from services.location_service_consolidated import detect_location as _detect_location
+        detect_location_fn = _detect_location
+    except ImportError:
+        try:
+            from location_service_consolidated import detect_location as _detect_location  # type: ignore
+            detect_location_fn = _detect_location
+        except ImportError:
+            detect_location_fn = None
     
     # Try source tag extraction
     if source_tag:
@@ -2126,6 +2146,26 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
                 'location_method': 'feed_tag',
                 'location_confidence': 'high'
             })
+
+    # Use deterministic location extraction when feed tags are missing or incomplete
+    if detect_location_fn and (not location_data['country'] or not location_data['city']):
+        try:
+            detected = detect_location_fn(text=text or "")
+        except Exception as exc:
+            logger.debug(f"[LocationExtraction] Deterministic detection failed: {exc}")
+            detected = None
+
+        if detected:
+            if not location_data['city'] and detected.city:
+                location_data['city'] = detected.city
+            if not location_data['country'] and detected.country:
+                location_data['country'] = detected.country
+            if not location_data['region'] and detected.region:
+                location_data['region'] = detected.region
+            if detected.location_method:
+                location_data['location_method'] = detected.location_method
+            if detected.location_confidence:
+                location_data['location_confidence'] = detected.location_confidence
     
     # Validate city/country combination before accepting
     if location_data['city'] and location_data['country']:

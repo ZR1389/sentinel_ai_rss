@@ -4900,7 +4900,7 @@ def geocoding_status():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from geocoding_monitor import get_geocoding_status
+        from utils.geocoding_monitor import get_geocoding_status
         from utils.db_utils import _get_db_connection
         
         with _get_db_connection() as conn:
@@ -4922,7 +4922,7 @@ def geocoding_notify():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from geocoding_monitor import check_and_notify
+        from utils.geocoding_monitor import check_and_notify
         
         result = check_and_notify()
         
@@ -4992,7 +4992,7 @@ def geocoding_dashboard():
 
     try:
         # Coverage/backlog
-        from geocoding_monitor import get_geocoding_status
+        from utils.geocoding_monitor import get_geocoding_status
         from utils.db_utils import _get_db_connection
         with _get_db_connection() as conn:
             coverage = get_geocoding_status(conn)
@@ -5040,7 +5040,7 @@ def geocoding_dashboard_view():
     """Server-rendered HTML view of geocoding coverage, queue, and quota."""
     try:
         # Coverage/backlog
-        from geocoding_monitor import get_geocoding_status
+        from utils.geocoding_monitor import get_geocoding_status
         from utils.db_utils import _get_db_connection
         with _get_db_connection() as conn:
             coverage = get_geocoding_status(conn)

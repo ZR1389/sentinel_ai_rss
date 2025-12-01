@@ -384,7 +384,7 @@ def _score_components(
     triggers: Optional[List[str]],
     kw_match: Optional[Dict[str, Any]] = None,
     title: str = ""
-) -> Tuple[float, Dict[str, float]]:
+) -> Tuple[float, Dict[str, float], Optional[str]]:
     """
     Deterministic mapping of signals → points. Returns (total_points, breakdown).
     
@@ -420,12 +420,13 @@ def _score_components(
     LABEL MAPPING: 85+ Critical, 65-84 High, 35-64 Moderate, 5-34 Low
     """
     breakdown: Dict[str, float] = {}
+    noise_type_detected: Optional[str] = None  # Store separately to avoid type error in sum()
 
     # Check for noise content first
     is_noise, noise_type = _detect_noise_content(text_norm, title=title)
     if is_noise:
         breakdown["noise_penalty"] = -80.0  # Heavy penalty for sports/entertainment/politics
-        breakdown["noise_type"] = noise_type
+        noise_type_detected = noise_type  # Store string separately, not in numeric breakdown
     else:
         breakdown["noise_penalty"] = 0.0
 
@@ -440,7 +441,7 @@ def _score_components(
     total = sum(breakdown.values())
     # global clamp for safety
     total = _clamp(total, 5.0, 100.0)
-    return total, breakdown
+    return total, breakdown, noise_type_detected
 
 # --------------------------- public API ---------------------------
 
@@ -450,7 +451,7 @@ def compute_now_risk(alert_text: str, triggers: Optional[List[str]] = None, loca
     NOTE: For full rule-aware scoring (including kw_match), call assess_threat_level.
     """
     text = _norm(alert_text or "")
-    score, _ = _score_components(text, triggers, kw_match=None)
+    score, _, _ = _score_components(text, triggers, kw_match=None)
     return float(round(score, 1))
 
 def assess_threat_level(
@@ -490,7 +491,8 @@ def assess_threat_level(
     title = (source_alert or {}).get("title", "")
 
     # Points (with noise detection using title)
-    score, breakdown = _score_components(text, triggers, kw_match=kw_match, title=title)
+    score, breakdown, noise_type = _score_components(text, triggers, kw_match=kw_match, title=title)
+    is_noise = noise_type is not None
 
     # Confidence: Signal quality (NOT score extremity)
     # Measures reliability of threat detection, not severity.
@@ -598,6 +600,9 @@ def assess_threat_level(
         "kw_rule": kw_rule,
         "kw_matches": trimmed_matches,
         "score_breakdown": {k: round(v, 1) for k, v in breakdown.items()},
+        # Noise detection - if True, alert should be rejected
+        "is_noise": is_noise,
+        "noise_type": noise_type,
     }
 
 # --------------------------- trends & stats (unchanged) ---------------------------

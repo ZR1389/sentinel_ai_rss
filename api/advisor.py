@@ -193,7 +193,7 @@ DOMAIN_PLAYBOOKS: Dict[str, List[str]] = {
 # ---------- Geographic validation ----------
 # Import city_utils for enhanced location processing
 try:
-    from city_utils import fuzzy_match_city, normalize_city_country, get_country_for_city
+    from utils.city_utils import fuzzy_match_city, normalize_city_country, get_country_for_city
 except Exception:
     # Fallback implementations if city_utils is not available
     def fuzzy_match_city(text: str) -> Optional[str]:

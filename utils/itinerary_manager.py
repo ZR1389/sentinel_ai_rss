@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def _conn():
     """Get database connection using db_utils pool."""
     try:
-        from db_utils import get_connection_pool
+        from utils.db_utils import get_connection_pool
         pool = get_connection_pool()
         return pool.getconn()
     except Exception as e:
@@ -27,7 +27,7 @@ def _conn():
 def _return_conn(conn):
     """Return connection to pool."""
     try:
-        from db_utils import get_connection_pool
+        from utils.db_utils import get_connection_pool
         pool = get_connection_pool()
         pool.putconn(conn)
     except Exception as e:
