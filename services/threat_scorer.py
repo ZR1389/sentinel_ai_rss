@@ -230,6 +230,62 @@ CULTURAL_RELIGIOUS_TERMS = [
     "religious leader", "spiritual leader", "interfaith", "ecumenical"
 ]
 
+# Civic/local protests that are NOT security threats
+CIVIC_LOCAL_TERMS = [
+    "stray dog", "stray dogs", "stray animals", "dog catcher", "animal shelter", "animal welfare",
+    "animal rights", "animal cruelty", "animal rescue", "pet", "pets", "puppy", "puppies",
+    # School/education-related protests (split terms for flexible matching)
+    "school demolition", "school closure", "school construction", "demolition protest",
+    "demolition of", "building demolition",  # Catches "demolition of...school"
+    "alumni protest", "alumni and activists", "parent protest", "student protest", "teacher protest",
+    "mahim school",  # Specific known civic case
+    # Property/local government issues
+    "property tax", "parking fees", "garbage collection", "waste management", "recycling",
+    "noise complaint", "pothole", "potholes", "road repair", "street light", "streetlight",
+    "zoning", "building permit", "construction permit", "planning commission",
+    "tree cutting", "tree removal", "deforestation", "logging", "forest preserve",
+    "local council", "city council", "town hall", "neighborhood association",
+    "rent control", "tenant rights", "landlord", "eviction", "housing price",
+    "bus route", "bus schedule", "metro schedule", "train schedule", "commuter",
+    "library closure", "park closure", "beach access", "public pool", "community center",
+    "local residents"  # Common civic protest marker
+]
+
+# Historical news that is NOT a current threat
+HISTORICAL_TERMS = [
+    "decades ago", "years ago", 
+    # Year/decade patterns - include without "the"
+    "in the 1980s", "in 1980s", "in the 1990s", "in 1990s", "in the 2000s",
+    "in 1947", "in 1948", "in 1965", "in 1967", "in 1971", "in 1973", "in 1979",
+    "in 1980", "in 1981", "in 1982", "in 1983", "in 1984", "in 1985",
+    # Cold war and historical era terms
+    "cold war", "cold war era", "soviet era", "world war", "world war ii", "world war i",
+    # Past tense indicators suggesting historical reporting
+    "refused", "had refused", "reportedly refused", "once refused", "rejected",
+    "declined to", "turned down",
+    # Historical documents/archives
+    "declassified", "newly declassified", "archives reveal", "documents reveal",
+    "historical", "history", "memoir", "memoirs", "biography", "autobiography",
+    "retrospective", "looking back", "anniversary of", "commemorating",
+    # Former leaders (past events)
+    "former president", "late president", "former prime minister", "late prime minister",
+    "indira gandhi",  # Historical figure
+]
+
+# Non-English content detection patterns - ONLY very distinctive non-English phrases
+# Must use multi-word phrases to avoid false positives on English text
+NON_ENGLISH_PATTERNS = [
+    # Portuguese distinctive phrases (not single common words)
+    "não há", "não é", "está em", "são mais", "mais vulneráveis",
+    "ficam mais", "cidades ficam", "tornados como",
+    # Spanish distinctive phrases  
+    "no hay", "no es", "está en", "años de", "también es",
+    # French distinctive phrases
+    "il n'y a", "ce n'est pas", "il est", "dans le", "avec le",
+    # German distinctive phrases
+    "ist nicht", "in der", "mit dem", "für die",
+]
+
 ECONOMY_BUSINESS_TERMS = [
     "stock market", "stocks", "shares", "nasdaq", "dow jones", "s&p 500", "ftse",
     "trading", "traders", "investor", "investors", "investment", "portfolio",
@@ -256,7 +312,8 @@ ECONOMY_BUSINESS_TERMS = [
 
 def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
     """
-    Detect low-quality non-threat content (sports, entertainment, economy, routine politics).
+    Detect low-quality non-threat content (sports, entertainment, economy, routine politics,
+    local civic issues, historical news, non-English content).
     Returns (is_noise, reason).
     
     Examples to REJECT:
@@ -268,9 +325,37 @@ def _detect_noise_content(text_norm: str, title: str = "") -> Tuple[bool, str]:
     - "Pope visits Blue Mosque" (religious tourism)
     - "Wiggles issue statement after appearing in Ecstasy music video" (entertainment)
     - "BBC boss Tim Davie resigns" (media politics)
+    - "People stage protest over stray dogs" (civic/local)
+    - "Alumni protest school demolition" (civic/local)
+    - "Indira Gandhi refused Israel, India plan in 1980s" (historical)
+    - "Sem florestas, as cidades ficam vulneráveis" (non-English)
     """
     title_norm = _norm(title or "")
     combined = f"{title_norm} {text_norm}"
+    
+    # Non-English detection - look for distinctive non-English phrases
+    non_english_hits = sum(1 for pattern in NON_ENGLISH_PATTERNS if pattern in combined)
+    if non_english_hits >= 1:  # Any distinctive non-English phrase is enough
+        return True, "non_english"
+    
+    # Historical news detection (past events, not current threats)
+    historical_hits = sum(1 for term in HISTORICAL_TERMS if term in combined)
+    if historical_hits >= 2:
+        # Check if it's about ongoing consequences of historical events
+        threat_check = any(t in combined for t in ["today", "now", "current", "ongoing", "latest"])
+        if not threat_check:
+            return True, "historical"
+    
+    # Civic/local issues detection (not security threats)
+    civic_hits = sum(1 for term in CIVIC_LOCAL_TERMS if term in combined)
+    if civic_hits >= 2:
+        # Check if it escalated to violence
+        threat_check = any(t in combined for t in ["killed", "shooting", "attack", "riot", "violence", "injured", "bomb"])
+        if not threat_check:
+            return True, "civic_local"
+    # Single strong civic indicator in title is enough
+    if any(term in title_norm for term in ["stray dog", "school demolition", "animal welfare", "parking fees", "pothole"]):
+        return True, "civic_local"
     
     # Sports detection - strong indicators
     sports_hits = sum(1 for term in SPORTS_TERMS if term in combined)
