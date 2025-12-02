@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover
     get_plan_feature = lambda plan, feat, default=None: default  # type: ignore
 
 try:
-    from security_log_utils import log_security_event
+    from utils.security_log_utils import log_security_event
 except Exception:  # pragma: no cover
     def log_security_event(**kwargs):  # type: ignore
         pass
@@ -72,7 +72,7 @@ def _resolve_plan(email_getter: Callable[[], Optional[str]] | None = None) -> st
         try:
             email = email_getter()
             if email:
-                from plan_utils import get_plan_limits  # local import to avoid circular
+                from utils.plan_utils import get_plan_limits  # local import to avoid circular
                 limits = get_plan_limits(email) or {}
                 plan = (limits.get('plan') or 'FREE').upper()
                 return plan

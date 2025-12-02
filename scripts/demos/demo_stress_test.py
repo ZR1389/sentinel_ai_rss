@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from llm_rate_limiter import (
+from monitoring.llm_rate_limiter import (
     # Core components
     TokenBucket,
     EnhancedCircuitBreaker,

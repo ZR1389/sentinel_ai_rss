@@ -87,7 +87,7 @@ def send_notification(report: dict, high_severity_count: int):
     """Send notification about location quality issues"""
     try:
         # Try to send email notification
-        from email_dispatcher import send_email
+        from utils.email_dispatcher import send_email
         
         admin_email = os.getenv('ADMIN_EMAIL', 'admin@example.com')
         

@@ -17,7 +17,7 @@ except ImportError as e:
 
 # Import defensive score handling
 try:
-    from score_type_safety import safe_numeric_score, safe_score_comparison
+    from utils.score_type_safety import safe_numeric_score, safe_score_comparison
 except ImportError:
     # Fallback if score_type_safety not available
     def safe_numeric_score(value, default=0.0, min_val=0.0, max_val=100.0):
@@ -144,7 +144,7 @@ def _bucket_daily_counts(incidents: List[Dict[str, Any]], days: int = 28) -> Lis
 
 # ---------------------- Import keywords from centralized source ----------------------
 try:
-    from keywords_loader import SEVERE_TERMS, MOBILITY_TERMS, INFRA_TERMS
+    from utils.keywords_loader import SEVERE_TERMS, MOBILITY_TERMS, INFRA_TERMS
 except ImportError:
     # Fallback keywords if keywords_loader is not available
     SEVERE_TERMS = [

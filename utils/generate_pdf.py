@@ -10,7 +10,7 @@ logger = logging.getLogger("generate_pdf")
 logging.basicConfig(level=CONFIG.security.log_level)
 
 try:
-    from plan_utils import user_has_paid_plan as _is_paid
+    from utils.plan_utils import user_has_paid_plan as _is_paid
 except Exception:
     def _is_paid(_email: str) -> bool:
         return False

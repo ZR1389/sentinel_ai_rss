@@ -110,7 +110,7 @@ def _notify_failure_email(payload: Dict[str, Any]) -> None:
     
     # Prefer centralized dispatcher when available
     try:
-        from email_dispatcher import send_email
+        from utils.email_dispatcher import send_email
         html_body = f"<p>{message}</p>"
         ok = send_email(user_email=to_addr, to_addr=to_addr, subject=subject, html_body=html_body, from_addr=from_addr)
         return bool(ok)
@@ -157,7 +157,7 @@ def run_fallback_task(country: str, region: Optional[str]) -> Dict[str, Any]:
     """Execute the real-time fallback with retry-aware failure notifications."""
     t0 = time.time()
     try:
-        from real_time_fallback import perform_realtime_fallback
+        from utils.real_time_fallback import perform_realtime_fallback
         attempts = perform_realtime_fallback(country=country, region=region)
         t1 = time.time()
         return {

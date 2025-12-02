@@ -7,7 +7,7 @@ Two-phase approach: bounding box filter + precise distance calculation.
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from geo_utils import haversine_distance, bounding_box, validate_coordinates
+from utils.geo_utils import haversine_distance, bounding_box, validate_coordinates
 
 logger = logging.getLogger("proximity_alerts")
 
@@ -382,7 +382,7 @@ def _send_threat_alert(traveler_id: int, email: str, name: str, threats: List[Di
         
         # Send email notification
         try:
-            from email_dispatcher import send_email
+            from utils.email_dispatcher import send_email
             subject = f"⚠️ {len(threats)} Security Threats Near Your Location"
             
             # Format threats list

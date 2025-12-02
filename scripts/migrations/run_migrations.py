@@ -1,7 +1,7 @@
 # run_migrations.py — Postgres migration runner for Sentinel AI
 import os
 from pathlib import Path
-from db_utils import execute, fetch_one
+from utils.db_utils import execute, fetch_one
 import logging
 
 logger = logging.getLogger(__name__)

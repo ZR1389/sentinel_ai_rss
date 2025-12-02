@@ -595,7 +595,7 @@ def rate_limited(service: str):
 @rate_limited("moonshot")
 def moonshot_chat_limited(messages, temperature=0.4, timeout=15, max_retries=3):
     """Moonshot chat with rate limiting and intelligent retry"""
-    from moonshot_client import moonshot_chat
+    from clients.moonshot_client import moonshot_chat
     
     def _call():
         return moonshot_chat(messages, temperature, timeout)
@@ -611,7 +611,7 @@ def moonshot_chat_limited(messages, temperature=0.4, timeout=15, max_retries=3):
 @rate_limited("openai")
 def openai_chat_limited(messages, model="gpt-4o-mini", temperature=0.4, timeout=20, max_retries=2):
     """OpenAI chat with rate limiting and retry"""
-    from openai_client_wrapper import openai_chat_completion
+    from clients.openai_client_wrapper import openai_chat_completion
     
     def _call():
         return openai_chat_completion(messages, model, temperature, timeout)
@@ -627,7 +627,7 @@ def openai_chat_limited(messages, model="gpt-4o-mini", temperature=0.4, timeout=
 @rate_limited("deepseek")
 def deepseek_chat_limited(messages, temperature=0.3, timeout=10, max_retries=3):
     """DeepSeek chat with rate limiting and retry"""
-    from deepseek_client import deepseek_chat
+    from clients.deepseek_client import deepseek_chat
     
     def _call():
         return deepseek_chat(messages, temperature, timeout)
@@ -643,7 +643,7 @@ def deepseek_chat_limited(messages, temperature=0.3, timeout=10, max_retries=3):
 @rate_limited("xai")  
 def xai_chat_limited(messages, temperature=0.3, timeout=15, max_retries=2):
     """XAI chat with rate limiting and retry"""
-    from xai_client import xai_chat
+    from clients.xai_client import xai_chat
     
     def _call():
         return xai_chat(messages, temperature, timeout)

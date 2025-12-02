@@ -52,7 +52,7 @@ def check_llm_health() -> Dict[str, Any]:
         # Check XAI/Grok
         xai_status = {"available": False, "error": None}
         try:
-            from xai_client import XAI_API_KEY
+            from clients.xai_client import XAI_API_KEY
             if XAI_API_KEY:
                 # Don't make actual API call in health check to avoid quota usage
                 xai_status = {"available": True, "configured": True, "error": None}
@@ -127,7 +127,7 @@ def check_cache_health() -> Dict[str, Any]:
 def check_vector_system_health() -> Dict[str, Any]:
     """Check vector deduplication system health."""
     try:
-        from keywords_loader import get_all_keywords
+        from utils.keywords_loader import get_all_keywords
         from utils.db_utils import fetch_one
         
         # Check keywords loaded
@@ -265,7 +265,7 @@ def check_llm_ping() -> Dict[str, Any]:
         # Allow skipping LLM ping to avoid quota/timing issues in dev
         if os.getenv("HEALTH_SKIP_LLM_PING", "false").lower() in ("1", "true", "yes"): 
             return {"ping_successful": True, "response_received": False, "error": None}
-        from xai_client import XAI_API_KEY, grok_chat
+        from clients.xai_client import XAI_API_KEY, grok_chat
         
         if not XAI_API_KEY:
             return {"ping_successful": False, "error": "XAI_API_KEY not set"}

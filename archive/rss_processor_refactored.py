@@ -19,9 +19,9 @@ except Exception as e:
     def detect(text: str) -> str:
         return "en"
 
-from config import CONFIG
-from metrics import METRICS
-from location_extractor import LOCATION_EXTRACTOR, LocationResult
+from core.config import CONFIG
+from core.metrics import METRICS
+from services.location_extractor import LOCATION_EXTRACTOR, LocationResult
 # from async_db import AsyncDB  # Disabled until asyncpg is installed
 
 logger = logging.getLogger("rss_processor")
@@ -276,7 +276,7 @@ class RSSProcessor:
     def _keyword_match(self, title: str, text: str) -> Tuple[bool, Dict[str, Any]]:
         """Multi-tier keyword matching."""
         try:
-            from risk_shared import KEYWORD_SET, KeywordMatcher, BROAD_TERMS_DEFAULT, IMPACT_TERMS_DEFAULT
+            from utils.risk_shared import KEYWORD_SET, KeywordMatcher, BROAD_TERMS_DEFAULT, IMPACT_TERMS_DEFAULT
             
             # Try strict co-occurrence
             if CONFIG.enable_cooccurrence:
@@ -292,7 +292,7 @@ class RSSProcessor:
                     return True, {"rule": result.rule, "matches": result.matches, "tier": "strict"}
             
             # Fallback to keyword count
-            from risk_shared import _normalize
+            from utils.risk_shared import _normalize
             normalized = _normalize(f"{title}\n{text}")
             matched = [kw for kw in KEYWORD_SET if kw in normalized]
             
@@ -465,7 +465,7 @@ async def main():
     try:
         # Run the main processor
         async with RSSProcessor() as processor:
-            from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+            from utils.feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
             
             specs = _build_feed_specs(LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS)
             alerts = await processor.process_feeds(specs, limit=CONFIG.batch_limit)

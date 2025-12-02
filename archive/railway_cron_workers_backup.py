@@ -265,7 +265,7 @@ def run_proximity_check():
     logger = logging.getLogger('railway_cron')
     
     try:
-        from proximity_alerts import check_all_travelers
+        from utils.proximity_alerts import check_all_travelers
         
         logger.info("Starting proximity check for all travelers...")
         result = check_all_travelers(send_alerts=True)
@@ -450,7 +450,7 @@ def run_scheduler_notify():
     logger = logging.getLogger('railway_cron')
     
     try:
-        from email_dispatcher import send_pdf_report
+        from utils.email_dispatcher import send_pdf_report
         import psycopg2
         from psycopg2.extras import DictCursor
         

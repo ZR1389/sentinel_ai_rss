@@ -1,7 +1,7 @@
 from marshmallow import Schema, fields, validate, ValidationError, INCLUDE
 
 # You can import your password strength checker
-from password_strength_utils import is_strong_password
+from utils.password_strength_utils import is_strong_password
 
 def validate_password(password):
     if not is_strong_password(password):

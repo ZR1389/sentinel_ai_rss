@@ -10,7 +10,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 PUSH_ENABLED = os.getenv("PUSH_ENABLED", "false").lower() in ("1","true","yes","y")
 
 try:
-    from plan_utils import user_has_paid_plan as _is_paid
+    from utils.plan_utils import user_has_paid_plan as _is_paid
 except Exception:
     def _is_paid(_email: str) -> bool:
         return False

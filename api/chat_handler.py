@@ -39,7 +39,7 @@ from api.advisor import generate_advice
 
 # Plan/usage are INFO-only here (no gating / no metering)
 try:
-    from plan_utils import get_plan, get_usage
+    from utils.plan_utils import get_plan, get_usage
 except Exception:
     get_plan = None
     get_usage = None
@@ -55,7 +55,7 @@ except Exception:
 
 # Optional verification util (preferred)
 try:
-    from verification_utils import verification_status as _verification_status
+    from utils.verification_utils import verification_status as _verification_status
 except Exception:
     _verification_status = None
 
@@ -393,7 +393,7 @@ def _build_quota_obj(email: str, plan_name: str) -> Dict[str, Any]:
         else:
             # Try to get from plan_utils
             try:
-                from plan_utils import get_plan_limits
+                from utils.plan_utils import get_plan_limits
                 limits = get_plan_limits(email) or {}
                 quota_obj["limit"] = limits.get("chat_messages_per_month", 3)
             except Exception:
@@ -591,7 +591,7 @@ def handle_user_query(
     extracted_country = None
     try:
         if not region:
-            from location_extractor import extract_location_from_query
+            from services.location_extractor import extract_location_from_query
             loc = extract_location_from_query(query)
             extracted_city = (loc or {}).get("city")
             extracted_country = (loc or {}).get("country")

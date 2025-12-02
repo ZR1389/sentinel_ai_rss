@@ -17,7 +17,7 @@ logging.basicConfig(
 
 def demo_sla_mappings():
     """Show SLA mappings for all plans."""
-    from sla_mapper import get_all_sla_tiers, format_sla_summary
+    from utils.sla_mapper import get_all_sla_tiers, format_sla_summary
     
     print("=" * 80)
     print("SLA MAPPINGS BY PLAN")
@@ -39,7 +39,7 @@ def demo_sla_mappings():
 
 def demo_support_request():
     """Demonstrate support request logging with SLA tracking."""
-    from sla_mapper import log_support_request
+    from utils.sla_mapper import log_support_request
     
     print("\n" + "=" * 80)
     print("SUPPORT REQUEST LOGGING DEMO")
@@ -66,7 +66,7 @@ def demo_support_request():
 
 def demo_sla_breach_checking():
     """Demonstrate SLA breach detection."""
-    from sla_mapper import check_sla_breach
+    from utils.sla_mapper import check_sla_breach
     
     print("\n" + "=" * 80)
     print("SLA BREACH CHECKING DEMO")
@@ -132,7 +132,7 @@ def demo_integration_pattern():
     
     code = '''
 # Add import at top of main.py (after logging setup):
-from sla_mapper import get_sla_for_plan, format_sla_summary
+from utils.sla_mapper import get_sla_for_plan, format_sla_summary
 
 # In /auth/status endpoint, add to response JSON:
 "support_level": format_sla_summary(plan_name),

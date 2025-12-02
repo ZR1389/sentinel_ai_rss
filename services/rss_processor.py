@@ -51,7 +51,7 @@ from utils.batch_state_manager import get_batch_state_manager, reset_batch_state
 
 # Metrics integration for performance monitoring
 try:
-    from metrics import RSSProcessorMetrics
+    from core.metrics import RSSProcessorMetrics
     metrics = RSSProcessorMetrics()
 except ImportError:
     # Fallback if metrics not available
@@ -96,7 +96,7 @@ _GLOBAL_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
 # Import circuit breaker for LLM API protection
 try:
-    from llm_rate_limiter import moonshot_circuit
+    from monitoring.llm_rate_limiter import moonshot_circuit
 except ImportError:
     # Fallback if circuit breaker not available
     class MockCircuitBreaker:
@@ -201,7 +201,7 @@ except Exception as e:
 
 # ---------------------------- LLM Router for Location Extraction -------------------------
 try:
-    from llm_router import route_llm
+    from monitoring.llm_router import route_llm
     LLM_AVAILABLE = True
     logger.info("[LLM] LLM router available for location extraction fallback")
 except Exception as e:
@@ -339,7 +339,7 @@ def extract_location_hybrid(title: str, summary: str, source: str) -> Dict[str, 
         try:
             from services.location_service_consolidated import detect_location
         except ImportError:
-            from location_service_consolidated import detect_location  # type: ignore
+            from services.location_service_consolidated import detect_location  # type: ignore
 
         result = detect_location(text=summary or "", title=title or "")
         return {
@@ -452,7 +452,7 @@ def _geo_db_store(city: str, country: Optional[str], lat: float, lon: float) -> 
 
 # Timeout Manager Import
 try:
-    from geocoding_timeout_manager import GeocodingTimeoutManager
+    from utils.geocoding_timeout_manager import GeocodingTimeoutManager
     TIMEOUT_MANAGER_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"[GEOCODE] Timeout manager not available, using legacy geocoding: {e}")
@@ -648,7 +648,7 @@ def _load_keywords() -> Tuple[List[str], str]:
     # Primary: Use centralized keywords_loader
     if use_centralized:
         try:
-            from keywords_loader import get_all_keywords
+            from utils.keywords_loader import get_all_keywords
             all_keywords = get_all_keywords()
             for k in all_keywords:
                 kk = _normalize(str(k))
@@ -696,7 +696,7 @@ def _load_keywords() -> Tuple[List[str], str]:
     # Fallback 2: Load from risk_shared directly
     if use_risk and not kws:
         try:
-            from risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
+            from utils.risk_shared import CATEGORY_KEYWORDS, DOMAIN_KEYWORDS
             for lst in list(CATEGORY_KEYWORDS.values()) + list(DOMAIN_KEYWORDS.values()):
                 for k in lst:
                     kk = _normalize(str(k))
@@ -717,10 +717,10 @@ logger.info("Loaded %d keywords (mode=%s)", len(KEYWORDS), KEYWORDS_MODE)
 # --------- Build the co-occurrence matcher (aligned with risk_shared) ----------
 MATCHER = None
 try:
-    from risk_shared import KeywordMatcher, build_default_matcher, get_all_keywords
+    from utils.risk_shared import KeywordMatcher, build_default_matcher, get_all_keywords
     try:
-        from risk_shared import BROAD_TERMS_DEFAULT as _BROAD_TERMS_DEFAULT
-        from risk_shared import IMPACT_TERMS_DEFAULT as _IMPACT_TERMS_DEFAULT
+        from utils.risk_shared import BROAD_TERMS_DEFAULT as _BROAD_TERMS_DEFAULT
+        from utils.risk_shared import IMPACT_TERMS_DEFAULT as _IMPACT_TERMS_DEFAULT
     except Exception:
         _BROAD_TERMS_DEFAULT = []
         _IMPACT_TERMS_DEFAULT = []
@@ -788,7 +788,7 @@ def _kw_decide(title: str, text: str, lang: str = "en") -> Tuple[bool, Dict[str,
     return False, {"hit": False, "rule": None, "matches": {}}
 
 try:
-    from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+    from utils.feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 except Exception:
     LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS = {}, {}, []
 
@@ -1401,7 +1401,7 @@ def _should_use_moonshot_for_location(entry: Dict, source_tag: str) -> bool:
         try:
             from services.location_service_consolidated import is_location_ambiguous
         except ImportError:
-            from location_service_consolidated import is_location_ambiguous  # type: ignore
+            from services.location_service_consolidated import is_location_ambiguous  # type: ignore
 
         return is_location_ambiguous(text=summary, title=title)
     except Exception as e:
@@ -1418,7 +1418,7 @@ def _should_use_moonshot_for_location(entry: Dict, source_tag: str) -> bool:
         
         # Check for travel/mobility domains where location is critical
         try:
-            from risk_shared import detect_domains
+            from utils.risk_shared import detect_domains
             domains = detect_domains(text)
             if "travel_mobility" in domains or "civil_unrest" in domains:
                 # Location is critical for these domains
@@ -1468,7 +1468,7 @@ Return JSON array of objects with: city, country, region, confidence, alert_uuid
 
     try:
         # CIRCUIT BREAKER PROTECTION: Prevent infinite retries and DDoS
-        from moonshot_client import MoonshotClient
+        from clients.moonshot_client import MoonshotClient
         
         moonshot = MoonshotClient()
 
@@ -2077,7 +2077,7 @@ def _validate_city_country_match(city: str, country: str) -> bool:
         return True  # Can't validate if either is missing
     
     try:
-        from feeds_catalog import CITY_TO_COUNTRY
+        from utils.feeds_catalog import CITY_TO_COUNTRY
     except ImportError:
         return True  # Can't validate without mapping
     
@@ -2107,7 +2107,7 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
     
     # Import city-to-country mapping
     try:
-        from feeds_catalog import CITY_TO_COUNTRY
+        from utils.feeds_catalog import CITY_TO_COUNTRY
     except ImportError:
         CITY_TO_COUNTRY = {}
 
@@ -2118,7 +2118,7 @@ def _extract_location_fallback(text: str, source_tag: Optional[str] = None) -> D
         detect_location_fn = _detect_location
     except ImportError:
         try:
-            from location_service_consolidated import detect_location as _detect_location  # type: ignore
+            from services.location_service_consolidated import detect_location as _detect_location  # type: ignore
             detect_location_fn = _detect_location
         except ImportError:
             detect_location_fn = None

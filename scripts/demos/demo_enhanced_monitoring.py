@@ -25,7 +25,7 @@ from datetime import datetime
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from llm_rate_limiter import (
+from monitoring.llm_rate_limiter import (
     # Core monitoring functions
     get_comprehensive_rate_limiter_stats,
     get_comprehensive_circuit_breaker_stats,

@@ -15,7 +15,7 @@ EMAIL_PUSH_ENABLED = CONFIG.email.push_enabled
 BREVO_API_KEY = os.getenv("BREVO_API_KEY") or getattr(CONFIG, "brevo_api_key", None)
 
 try:
-    from plan_utils import user_has_paid_plan as _is_paid
+    from utils.plan_utils import user_has_paid_plan as _is_paid
 except Exception:
     def _is_paid(_email: str) -> bool:
         return False

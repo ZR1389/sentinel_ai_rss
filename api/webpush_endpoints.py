@@ -19,7 +19,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Paid plan check (reuse your plan gating approach)
 try:
-    from plan_utils import user_has_paid_plan as is_paid_user
+    from utils.plan_utils import user_has_paid_plan as is_paid_user
 except Exception:
     def is_paid_user(_email: str) -> bool:
         return False

@@ -31,7 +31,7 @@ except Exception as e:
 
 # ---------------------- Import keywords from centralized source ----------------------
 try:
-    from keywords_loader import (
+    from utils.keywords_loader import (
         CATEGORY_KEYWORDS, SUBCATEGORY_MAP, DOMAIN_KEYWORDS,
         get_all_keywords, get_keywords_by_category, get_keywords_by_domain
     )

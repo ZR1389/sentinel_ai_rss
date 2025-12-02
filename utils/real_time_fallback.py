@@ -11,7 +11,7 @@ Core concepts:
   - Fully non-blocking optional async interface (currently synchronous for simplicity)
 
 Usage (minimal):
-  from real_time_fallback import get_fallback_manager
+  from utils.real_time_fallback import get_fallback_manager
   fm = get_fallback_manager()
   results = fm.trigger_for_gaps()
 
@@ -35,7 +35,7 @@ except Exception as e:  # pragma: no cover
         return None
 
 try:
-    from feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
+    from utils.feeds_catalog import LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS
 except Exception as e:  # pragma: no cover
     logger.error("Feeds catalog unavailable: %s", e)
     LOCAL_FEEDS, COUNTRY_FEEDS, GLOBAL_FEEDS = {}, {}, []

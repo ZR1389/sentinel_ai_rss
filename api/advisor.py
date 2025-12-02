@@ -23,7 +23,7 @@ from monitoring.llm_router import route_llm
 # -------- LLM clients / prompts (soft imports so advisor always loads) --------
 # Specialized: Grok (x.ai)
 try:
-    from xai_client import grok_chat  # type: ignore
+    from clients.xai_client import grok_chat  # type: ignore
 except Exception:
     def grok_chat(messages, temperature=0.2):
         return None  # graceful no-op
@@ -33,7 +33,7 @@ try:
     from deepseek_client_timeout import deepseek_chat  # type: ignore
 except Exception:
     try:
-        from deepseek_client import deepseek_chat  # type: ignore
+        from clients.deepseek_client import deepseek_chat  # type: ignore
     except Exception:
         def deepseek_chat(messages, temperature=0.2, timeout=None):
             return None
@@ -43,7 +43,7 @@ try:
     from openai_client_wrapper_timeout import openai_chat  # type: ignore
 except Exception:
     try:
-        from openai_client_wrapper import openai_chat  # type: ignore
+        from clients.openai_client_wrapper import openai_chat  # type: ignore
     except Exception:
         def openai_chat(messages, temperature=0.2, timeout=None):
             return None
@@ -55,7 +55,7 @@ except Exception:
     OpenAI = None  # type: ignore
 
 try:
-    from prompts import (  # type: ignore
+    from core.prompts import (  # type: ignore
         SYSTEM_INFO_PROMPT,
         GLOBAL_GUARDRAILS_PROMPT,
         ADVISOR_STRUCTURED_SYSTEM_PROMPT,
@@ -78,7 +78,7 @@ except Exception:
 
 # Shared heuristics & guards
 try:
-    from risk_shared import (
+    from utils.risk_shared import (
         detect_domains,
         source_reliability,
         info_ops_flags,

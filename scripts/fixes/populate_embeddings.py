@@ -12,8 +12,8 @@ from typing import Optional
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from vector_dedup import VectorDeduplicator
-from risk_shared import embedding_manager
+from utils.vector_dedup import VectorDeduplicator
+from utils.risk_shared import embedding_manager
 
 # Configure logging
 logging.basicConfig(
@@ -46,7 +46,7 @@ def populate_embeddings(
     if dry_run:
         logger.info("DRY RUN MODE - No actual changes will be made")
         # For dry run, just count what would be processed
-        from db_utils import fetch_all
+        from utils.db_utils import fetch_all
         query = """
             SELECT COUNT(*) as count
             FROM alerts 

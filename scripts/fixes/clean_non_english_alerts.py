@@ -52,7 +52,7 @@ def check_sports_keywords(text: str) -> bool:
 
 def identify_non_english_alerts(dry_run: bool = True) -> List[Dict[str, Any]]:
     """Identify alerts that should be removed - optimized version."""
-    from db_utils import _get_db_connection
+    from utils.db_utils import _get_db_connection
     from psycopg2.extras import RealDictCursor
     
     print("\n" + "="*70)
@@ -153,7 +153,7 @@ def display_removal_preview(alerts: List[Dict[str, Any]], limit: int = 20):
 
 def execute_cleanup(alerts: List[Dict[str, Any]]) -> int:
     """Actually delete the identified alerts."""
-    from db_utils import _get_db_connection
+    from utils.db_utils import _get_db_connection
     
     print("\n" + "="*70)
     print("EXECUTING CLEANUP")

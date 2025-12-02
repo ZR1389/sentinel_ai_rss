@@ -46,7 +46,7 @@ def demo_query_sanitization():
     """Demonstrate query sanitization for secure logging"""
     print_section("Query Sanitization Demo")
     
-    from db_utils import _sanitize_query_for_log
+    from utils.db_utils import _sanitize_query_for_log
     
     # Test cases for query sanitization
     test_queries = [
@@ -75,7 +75,7 @@ def demo_performance_monitoring():
     """Demonstrate query performance monitoring"""
     print_section("Query Performance Monitoring Demo")
     
-    from db_utils import (
+    from utils.db_utils import (
         _log_query_performance, get_query_performance_stats, 
         reset_query_performance_stats
     )
@@ -125,7 +125,7 @@ def demo_database_logging():
     """Demonstrate enhanced database operation logging"""
     print_section("Enhanced Database Logging Demo")
     
-    from db_utils import _log_db_operation
+    from utils.db_utils import _log_db_operation
     
     print("📝 Testing comprehensive database operation logging:")
     
@@ -243,7 +243,7 @@ def demo_performance_summary():
     """Demonstrate comprehensive performance summary logging"""
     print_section("Performance Summary Demo")
     
-    from db_utils import log_database_performance_summary
+    from utils.db_utils import log_database_performance_summary
     
     print("📊 Generating comprehensive database performance summary:")
     print("   (Check the logs above for detailed performance information)")
@@ -355,7 +355,7 @@ def demo_real_world_scenarios():
         }
     ]
     
-    from db_utils import _log_query_performance
+    from utils.db_utils import _log_query_performance
     
     for scenario in scenarios:
         print(f"\n   📊 {scenario['name']}:")

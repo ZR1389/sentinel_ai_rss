@@ -43,7 +43,7 @@ def handle_user_query_with_monitoring(message, email, **kwargs):
     # ... existing query handling ...
     
     # Extract location
-    from location_extractor import extract_location_from_query
+    from services.location_extractor import extract_location_from_query
     
     result = extract_location_from_query(message)
     city = result.get('city')
@@ -69,7 +69,7 @@ def handle_user_query_with_monitoring(message, email, **kwargs):
 
 def generate_advisory_with_monitoring(alert, user_message, profile):
     """Example: Record advisory generation attempts"""
-    from advisor import render_advisory
+    from api.advisor import render_advisory
     
     # Generate advisory
     advisory = render_advisory(alert, user_message, profile)

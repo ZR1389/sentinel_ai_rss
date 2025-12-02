@@ -36,7 +36,7 @@ from functools import wraps
 import time
 import uuid
 try:
-    from fallback_jobs import (
+    from utils.fallback_jobs import (
         submit_fallback_job,
         get_fallback_job_status,
         list_fallback_jobs,
@@ -237,7 +237,7 @@ def _options_only():
 def health_check():
     """Comprehensive health check for Railway zero-downtime deployments."""
     try:
-        from health_check import perform_health_check
+        from utils.health_check import perform_health_check
         health_data = perform_health_check()
         # Attach public base URL for easy discovery (env or request-derived)
         try:
@@ -258,7 +258,7 @@ def health_check():
 def health_quick():
     """Quick health check - database only."""
     try:
-        from health_check import check_database_health
+        from utils.health_check import check_database_health
         db_check = check_database_health()
         status = "healthy" if db_check["connected"] else "degraded"
         return jsonify({"status": status, "database": db_check})
@@ -4212,7 +4212,7 @@ def search_threats():
         return _build_cors_response(make_response("", 204))
 
     try:
-        from llm_router import route_llm_search
+        from monitoring.llm_router import route_llm_search
     except Exception:
         return _build_cors_response(make_response(jsonify({"error": "Search service unavailable"}), 503))
 
@@ -4261,7 +4261,7 @@ def batch_enrich_alerts():
         return _build_cors_response(make_response("", 204))
 
     try:
-        from llm_router import route_llm_batch
+        from monitoring.llm_router import route_llm_batch
     except Exception:
         return _build_cors_response(make_response(jsonify({"error": "Batch processing unavailable"}), 503))
 
@@ -5486,7 +5486,7 @@ def _generate_llm_travel_advisory(assessment: dict, destination: str | None = No
 
         # Call LLM via router (advisor task type)
         try:
-            from llm_router import route_llm
+            from monitoring.llm_router import route_llm
             messages = [
                 {"role": "system", "content": "You are a professional security analyst. Provide tactical, actionable travel risk advisories."},
                 {"role": "user", "content": prompt},
@@ -5772,7 +5772,7 @@ def trigger_realtime_fallback():
         acting_email = request.headers.get("X-Acting-Email", "unknown@system")
         acting_plan = request.headers.get("X-Acting-Plan", "UNKNOWN").upper()
 
-        from real_time_fallback import perform_realtime_fallback
+        from utils.real_time_fallback import perform_realtime_fallback
         # Filters via query or JSON body (country required, region optional)
         body = {}
         try:
@@ -6178,7 +6178,7 @@ def get_proximity_threats(traveler_id):
         return _build_cors_response(make_response("", 204))
     
     try:
-        from proximity_alerts import find_threats_near_traveler
+        from utils.proximity_alerts import find_threats_near_traveler
         
         hours = request.args.get('hours', 24, type=int)
         
@@ -6215,7 +6215,7 @@ def proximity_by_location():
         return _build_cors_response(make_response("", 204))
     
     try:
-        from proximity_alerts import find_threats_near_location
+        from utils.proximity_alerts import find_threats_near_location
         
         data = request.json
         
@@ -6261,7 +6261,7 @@ def traveler_alert_history(traveler_id):
         return _build_cors_response(make_response("", 204))
     
     try:
-        from proximity_alerts import get_traveler_threat_history
+        from utils.proximity_alerts import get_traveler_threat_history
         
         days = request.args.get('days', 30, type=int)
         
@@ -6300,7 +6300,7 @@ def admin_check_all_travelers():
         if not expected_key or api_key != expected_key:
             return jsonify({"error": "Unauthorized - valid API key required"}), 401
         
-        from proximity_alerts import check_all_travelers
+        from utils.proximity_alerts import check_all_travelers
         
         data = request.json or {}
         send_alerts = data.get('send_alerts', False)
@@ -7120,7 +7120,7 @@ def saved_searches_delete(search_id):
     # Anti-downgrade protection: if user is currently over limit, only allow deleting over-limit searches
     if limit is not None and current_count > limit:
         if not is_over:
-            from security_log_utils import log_security_event
+            from utils.security_log_utils import log_security_event
             log_security_event(
                 event_type='feature_denied',
                 email=email,
@@ -9469,7 +9469,7 @@ def admin_run_digest_now(schedule_id):
     - One-off digest requests
     """
     try:
-        from weekly_digest_generator import generate_weekly_digest_pdf, send_digest_email
+        from utils.weekly_digest_generator import generate_weekly_digest_pdf, send_digest_email
         from datetime import timedelta
         
         # Get schedule details

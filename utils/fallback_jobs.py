@@ -32,7 +32,7 @@ from typing import Optional, Dict, Any, List
 logger = logging.getLogger(__name__)
 
 try:
-    from real_time_fallback import perform_realtime_fallback
+    from utils.real_time_fallback import perform_realtime_fallback
 except Exception as e:  # pragma: no cover
     logger.error("fallback_jobs: perform_realtime_fallback import failed: %s", e)
     def perform_realtime_fallback(country: Optional[str] = None, region: Optional[str] = None):  # type: ignore

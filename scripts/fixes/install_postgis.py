@@ -8,7 +8,7 @@ import sys
 # Add app to path for imports
 sys.path.insert(0, '/app' if os.path.exists('/app') else os.getcwd())
 
-from db_utils import _get_db_connection
+from utils.db_utils import _get_db_connection
 
 def check_and_install_postgis():
     """Check if PostGIS is installed, install if not"""

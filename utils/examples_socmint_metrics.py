@@ -33,7 +33,7 @@ if not result['success']:
 
 # 4. Alert Enrichment (cache-aware)
 # ==================================
-from ioc_extractor import extract_social_media_iocs, enrich_alert_with_socmint
+from utils.ioc_extractor import extract_social_media_iocs, enrich_alert_with_socmint
 
 alert = {
     'uuid': 'alert-123',

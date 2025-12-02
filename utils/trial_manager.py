@@ -29,7 +29,7 @@ except Exception:
 
 # Optional email dispatcher (Brevo-backed generic sender)
 try:
-    from email_dispatcher import send_email  # type: ignore
+    from utils.email_dispatcher import send_email  # type: ignore
 except Exception:
     def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from_addr: str = None) -> bool:
         return False

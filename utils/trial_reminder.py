@@ -26,7 +26,7 @@ except Exception:
 
 # Use centralized email dispatcher (Brevo first, SMTP fallback)
 try:
-    from email_dispatcher import send_email  # paid-plan gating inside
+    from utils.email_dispatcher import send_email  # paid-plan gating inside
 except Exception:
     def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from_addr: str = None) -> bool:
         logger.warning(f"email_dispatcher not available, skipping email to {to_addr}")

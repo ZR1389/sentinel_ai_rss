@@ -11,7 +11,7 @@ Re-runs location extraction using the full location service stack.
 """
 
 import sys
-from db_utils import _get_db_connection
+from utils.db_utils import _get_db_connection
 from psycopg2.extras import RealDictCursor
 
 def fix_alert_locations(dry_run=True):

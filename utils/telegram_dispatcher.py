@@ -12,7 +12,7 @@ TELEGRAM_PUSH_ENABLED = CONFIG.telegram.push_enabled
 
 # Plan gate (no metering here)
 try:
-    from plan_utils import user_has_paid_plan as _is_paid
+    from utils.plan_utils import user_has_paid_plan as _is_paid
 except Exception:
     def _is_paid(_email: str) -> bool:  # fallback denies if plan_utils missing
         return False

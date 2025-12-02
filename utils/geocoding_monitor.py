@@ -113,7 +113,7 @@ Next step: Disable aggressive cron in railway.toml
     
         # Try email via centralized dispatcher (Brevo first, SMTP fallback)
         try:
-            from email_dispatcher import send_email
+            from utils.email_dispatcher import send_email
             to_addr = os.getenv("MONITOR_EMAIL", "ops@zikarisk.com")
             subject = "Geocoding Backlog Cleared"
             html = f"<p>Geocoding backlog cleared. raw_alerts: {status['backlog']}, alerts: {status['with_coords']}</p>"

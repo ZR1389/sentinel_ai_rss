@@ -37,28 +37,28 @@ except Exception:
 
 # New: optional wrappers (safe imports)
 try:
-    from deepseek_client import deepseek_chat
+    from clients.deepseek_client import deepseek_chat
 except Exception:
     deepseek_chat = None  # type: ignore
 
 try:
-    from openai_client_wrapper import openai_chat
+    from clients.openai_client_wrapper import openai_chat
 except Exception:
     openai_chat = None  # type: ignore
 
 try:
     # Your existing file — we call grok_chat from here
-    from xai_client import grok_chat
+    from clients.xai_client import grok_chat
 except Exception:
     grok_chat = None  # type: ignore
 
 try:
-    from prompts import THREAT_SUMMARIZE_SYSTEM_PROMPT
+    from core.prompts import THREAT_SUMMARIZE_SYSTEM_PROMPT
 except Exception:
     THREAT_SUMMARIZE_SYSTEM_PROMPT = None
 
 try:
-    from vector_dedup import VectorDeduplicator
+    from utils.vector_dedup import VectorDeduplicator
     from utils.risk_shared import get_embedding as get_managed_embedding
 except Exception:
     VectorDeduplicator = None
