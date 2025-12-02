@@ -460,8 +460,20 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
         "location_method","location_confidence","location_sharing"
     ]
 
+    def _generate_deterministic_uuid(title: str, link: str) -> str:
+        """Generate deterministic UUID from title+link to prevent duplicates."""
+        content = f"{title}:{link}"
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
     def _coerce(a: Dict[str, Any]) -> Tuple:
-        aid = a.get("uuid") or str(_uuid.uuid4())
+        # Generate deterministic UUID from title+link if not provided
+        title = a.get("title", "") or ""
+        link = a.get("link", "") or ""
+        aid = a.get("uuid")
+        if not aid and title and link:
+            aid = _generate_deterministic_uuid(title, link)
+        elif not aid:
+            aid = str(_uuid.uuid4())  # Fallback for edge cases
         if isinstance(aid, _uuid.UUID):
             aid = str(aid)
 
@@ -679,8 +691,21 @@ def save_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     def _json(v):
         return Json(v) if v is not None else None
 
+    def _generate_deterministic_uuid(title: str, link: str) -> str:
+        """Generate deterministic UUID from title+link to prevent duplicates."""
+        content = f"{title}:{link}"
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
     def _coerce_row(a: Dict[str, Any]) -> Tuple:
-        aid = a.get("uuid") or str(_uuid.uuid4())
+        # Generate deterministic UUID from title+link if not provided
+        # This ensures same article always gets same UUID
+        title = a.get("title", "") or ""
+        link = a.get("link", "") or ""
+        aid = a.get("uuid")
+        if not aid and title and link:
+            aid = _generate_deterministic_uuid(title, link)
+        elif not aid:
+            aid = str(_uuid.uuid4())  # Fallback for edge cases
         if isinstance(aid, _uuid.UUID):
             aid = str(aid)
 
