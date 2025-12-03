@@ -571,7 +571,7 @@ def save_raw_alerts_to_db(alerts: List[Dict[str, Any]]) -> int:
     sql = f"""
     INSERT INTO raw_alerts ({", ".join(cols)})
     VALUES %s
-    ON CONFLICT (uuid) DO NOTHING
+    ON CONFLICT (md5((title || link))) DO NOTHING
     """
     try:
         with _get_db_connection() as conn:
