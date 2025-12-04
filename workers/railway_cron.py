@@ -17,10 +17,19 @@ def setup_cron_environment():
     # Set working directory to app directory
     if os.path.exists('/app'):
         os.chdir('/app')
+    else:
+        # For local testing: change to parent directory (root of project)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)  # Go up from workers/ to root
+        os.chdir(project_root)
     
     # Add app directory to Python path
     if '/app' not in sys.path:
         sys.path.insert(0, '/app')
+    
+    # For local testing: add current working directory to path
+    if os.getcwd() not in sys.path:
+        sys.path.insert(0, os.getcwd())
     
     # Setup basic logging for cron job
     logging.basicConfig(
