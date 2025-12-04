@@ -22,47 +22,47 @@ healthcheck_path = "/health"
 
 # [[cron]]
 #   name = "retention-cleanup"
-#   command = "python railway_cron.py cleanup"
+#   command = "python workers/railway_cron.py cleanup"
 #   schedule = "0 */6 * * *"
 #   
 # [[cron]]
 #   name = "daily-vacuum"
-#   command = "python railway_cron.py vacuum"
+#   command = "python workers/railway_cron.py vacuum"
 #   schedule = "0 2 * * *"
 #
 # [[cron]]
 #   name = "rss-ingest"
-#   command = "python railway_cron.py rss"
+#   command = "python workers/railway_cron.py rss"
 #   schedule = "0 6,18 * * *"
 #
 # [[cron]]
 #   name = "engine-enrich"
-#   command = "python railway_cron.py engine"
+#   command = "python workers/railway_cron.py engine"
 #   schedule = "0 7,19 * * *"
 #
 # [[cron]]
 #   name = "proximity-check"
-#   command = "python railway_cron.py proximity"
+#   command = "python workers/railway_cron.py proximity"
 #   schedule = "0 8,20 * * *"
 #   
 # [[cron]]
 #   name = "geocode-backfill"
-#   command = "python railway_cron.py geocode"
+#   command = "python workers/railway_cron.py geocode"
 #   schedule = "30 3 * * *"
 #
 # [[cron]]
 #   name = "daily-notify"
-#   command = "python railway_cron.py notify"
+#   command = "python workers/railway_cron.py notify"
 #   schedule = "0 8 * * *"
 #
 # [[cron]]
 #   name = "trial-reminders"
-#   command = "python railway_cron.py trial_reminders"
+#   command = "python workers/railway_cron.py trial_reminders"
 #   schedule = "0 10 * * *"
 #
 # [[cron]]
 #   name = "check-expired-trials"
-#   command = "python railway_cron.py check_trials"
+#   command = "python workers/railway_cron.py check_trials"
 #   schedule = "0 2 * * *"
 
 # Environment Variables (set these in Railway Dashboard)
