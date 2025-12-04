@@ -1761,7 +1761,7 @@ async def _build_alert_from_entry(
             "link": link,
             "source": source,
             "published": published.replace(tzinfo=None) if hasattr(published, 'replace') else published,
-            "tags": _auto_tags(text_blob),
+            "tags": [kw_match["keyword"]] if kw_match else [],
             "language": language,
             "kw_match": kw_match,
             **location_data
@@ -1795,24 +1795,20 @@ async def _build_alert_from_entry(
         return None
 
 def _auto_tags(text: str) -> List[str]:
-    t = (text or "").lower()
-    tags: List[str] = []
-    pairs = {
-        "cyber_it": ["ransomware","phishing","malware","breach","ddos","credential","cve","zero-day","exploit","vpn","mfa"],
-        "civil_unrest": ["protest","riot","clash","strike","looting","roadblock"],
-        "physical_safety": ["shooting","stabbing","robbery","assault","kidnap","kidnapping","murder","attack"],
-        "travel_mobility": ["checkpoint","curfew","closure","detour","airport","border","rail","metro","road","highway","port"],
-        "infrastructure_utilities": ["substation","grid","pipeline","telecom","fiber","power outage","blackout"],
-        "environmental_hazards": ["earthquake","flood","wildfire","hurricane","storm","heatwave","landslide"],
-        "public_health_epidemic": ["outbreak","epidemic","pandemic","cholera","dengue","covid","ebola"],
-        "terrorism": ["ied","vbied","explosion","bomb","suicide"],
-        "digital_privacy_surveillance": ["surveillance","device check","spyware","pegasus","imsi","stingray","biometric"],
-        "legal_regulatory": ["visa","immigration","border control","ban","restriction","curfew","checkpoint"],
-    }
-    for tag, kws in pairs.items():
-        if any(k in t for k in kws):
-            tags.append(tag)
-    return tags
+    """DEPRECATED (2025-12-03) - Legacy broad keyword tagging.
+    
+    This function has been replaced by keyword-aware tagging that only tags
+    when threat_keywords.json confirms a real threat. The old system used
+    simple substring matching on 76 broad keywords, causing 23,528 false
+    positives (e.g., tagging "airport" in any airport news).
+    
+    New approach: tags = [kw_match["keyword"]] if kw_match else []
+    
+    This eliminates false positives and ties tags directly to threat intelligence.
+    See docs/TAGGING_LOGIC_AUDIT.md for migration details.
+    """
+    logger.warning("_auto_tags() called - function deprecated. Tags now come from threat_keywords.json matches only.")
+    return []
 
 async def ingest_feeds(feed_specs: List[Dict[str, Any]], limit: int = BATCH_LIMIT) -> List[Dict[str, Any]]:
     start_time = time.time()
