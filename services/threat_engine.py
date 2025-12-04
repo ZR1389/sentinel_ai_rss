@@ -1656,6 +1656,10 @@ def enhance_location_confidence(alert: dict) -> dict:
     # Geocode if we have city/country but no coordinates
     city = alert.get("city")
     country = alert.get("country")
+    
+    # Track if we're updating location_method
+    current_method = alert.get("location_method", "unknown")
+    
     if city and country and not alert.get("latitude"):
         try:
             from utils.city_utils import get_city_coords
@@ -1664,9 +1668,18 @@ def enhance_location_confidence(alert: dict) -> dict:
                 alert["latitude"] = lat
                 alert["longitude"] = lon
                 alert["location_sharing"] = True
-                logger.debug("geocoded_in_enrichment", city=city, country=country, lat=lat, lon=lon)
+                # Update location_method to indicate successful enrichment geocoding
+                alert["location_method"] = "legacy_precise"
+                logger.debug("geocoded_in_enrichment", city=city, country=country, lat=lat, lon=lon, method="legacy_precise")
         except Exception as e:
             logger.debug("geocoding_failed_in_enrichment", city=city, country=country, error=str(e))
+    
+    # If we have coordinates and city/country but location_method is still 'unknown' or 'none'
+    # this means it was enriched from city/country match - mark as legacy_precise
+    if alert.get("latitude") and alert.get("longitude") and alert.get("city") and alert.get("country"):
+        if current_method in ("unknown", "none", "rejected_validation"):
+            alert["location_method"] = "legacy_precise"
+            logger.debug("enriched_unknown_to_legacy_precise", city=city, country=country)
 
     # Calculate location confidence using centralized function
     location_reliability = compute_confidence(alert, "location")
