@@ -4,6 +4,8 @@ import os
 import smtplib
 import logging
 import json
+import socket
+import threading
 from email.mime.text import MIMEText
 from typing import Optional, List, Dict
 from core.config import CONFIG
@@ -23,6 +25,7 @@ except Exception:
 def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from_addr: Optional[str] = None) -> bool:
     """
     Paid-only, opt-in email. Unmetered. First try Brevo; fallback to SMTP.
+    Runs in background thread to prevent blocking.
     """
     if not _is_paid(user_email):
         logger.debug("email dispatch denied: user not on paid plan (%s)", user_email)
@@ -31,60 +34,71 @@ def send_email(user_email: str, to_addr: str, subject: str, html_body: str, from
         logger.debug("email dispatch disabled via env")
         return False
 
-    # Prefer Brevo transactional API
-    if BREVO_API_KEY:
+    def _send_async():
+        # Prefer Brevo transactional API
+        if BREVO_API_KEY:
+            try:
+                import requests
+                sender_email = from_addr or CONFIG.email.email_from or "no-reply@sentinel.local"
+                payload = {
+                    "sender": {"email": sender_email, "name": CONFIG.email.email_from_name or "Sentinel"},
+                    "to": [{"email": to_addr}],
+                    "subject": subject,
+                    "htmlContent": html_body,
+                }
+                resp = requests.post(
+                    "https://api.brevo.com/v3/smtp/email",
+                    headers={
+                        "api-key": BREVO_API_KEY,
+                        "accept": "application/json",
+                        "content-type": "application/json",
+                    },
+                    data=json.dumps(payload),
+                    timeout=20,
+                )
+                if 200 <= resp.status_code < 300:
+                    logger.debug("Brevo email sent successfully to %s", to_addr)
+                    return
+                logger.warning("Brevo send failed: %s %s", resp.status_code, resp.text[:300])
+            except Exception as e:
+                logger.error("Brevo send_email error: %s", e)
+
+        # Fallback to SMTP if configured
+        host = CONFIG.email.smtp_host
+        port = CONFIG.email.smtp_port
+        user = CONFIG.email.smtp_user
+        pwd  = CONFIG.email.smtp_pass
+        use_tls = CONFIG.email.smtp_tls
+        _from_addr = from_addr or CONFIG.email.email_from or user or "no-reply@sentinel.local"
+
+        if not host or not user or not pwd:
+            logger.warning("SMTP creds missing; skipping email dispatch")
+            return
+
         try:
-            import requests
-            sender_email = from_addr or CONFIG.email.email_from or "no-reply@sentinel.local"
-            payload = {
-                "sender": {"email": sender_email, "name": CONFIG.email.email_from_name or "Sentinel"},
-                "to": [{"email": to_addr}],
-                "subject": subject,
-                "htmlContent": html_body,
-            }
-            resp = requests.post(
-                "https://api.brevo.com/v3/smtp/email",
-                headers={
-                    "api-key": BREVO_API_KEY,
-                    "accept": "application/json",
-                    "content-type": "application/json",
-                },
-                data=json.dumps(payload),
-                timeout=20,
-            )
-            if 200 <= resp.status_code < 300:
-                return True
-            logger.warning("Brevo send failed: %s %s", resp.status_code, resp.text[:300])
+            msg = MIMEText(html_body, "html", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = _from_addr
+            msg["To"] = to_addr
+
+            # Create socket with timeout BEFORE SMTP connection
+            sock = socket.create_connection((host, port), timeout=10)
+            with smtplib.SMTP(host, port, timeout=15) as s:
+                s.sock = sock
+                if use_tls:
+                    s.starttls()
+                s.login(user, pwd)
+                s.sendmail(_from_addr, [to_addr], msg.as_string())
+            logger.debug("SMTP email sent successfully to %s", to_addr)
+        except socket.timeout:
+            logger.warning("SMTP connection timeout to %s:%s", host, port)
         except Exception as e:
-            logger.error("Brevo send_email error: %s", e)
+            logger.error("SMTP send_email failed: %s", e)
 
-    # Fallback to SMTP if configured
-    host = CONFIG.email.smtp_host
-    port = CONFIG.email.smtp_port
-    user = CONFIG.email.smtp_user
-    pwd  = CONFIG.email.smtp_pass
-    use_tls = CONFIG.email.smtp_tls
-    from_addr = from_addr or CONFIG.email.email_from or user or "no-reply@sentinel.local"
-
-    if not host or not user or not pwd:
-        logger.warning("SMTP creds missing; skipping email dispatch")
-        return False
-
-    try:
-        msg = MIMEText(html_body, "html", "utf-8")
-        msg["Subject"] = subject
-        msg["From"] = from_addr
-        msg["To"] = to_addr
-
-        with smtplib.SMTP(host, port, timeout=20) as s:
-            if use_tls:
-                s.starttls()
-            s.login(user, pwd)
-            s.sendmail(from_addr, [to_addr], msg.as_string())
-        return True
-    except Exception as e:
-        logger.error("SMTP send_email failed: %s", e)
-        return False
+    # Send in background thread to prevent blocking
+    thread = threading.Thread(target=_send_async, daemon=True)
+    thread.start()
+    return True  # Return immediately after spawning thread
 
 def send_pdf_report(email: str, region: Optional[str] = None) -> dict:
     """
@@ -116,6 +130,7 @@ def send_bulk(user_email: str, recipients: List[str], subject: str, html_body: s
     """
     Send a generic email to multiple recipients. Uses Brevo if available, else SMTP in a loop.
     Returns a map of recipient -> success boolean.
+    All sends are non-blocking (spawned as background threads).
     """
     results: Dict[str, bool] = {}
     for r in recipients:
