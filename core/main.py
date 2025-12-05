@@ -8864,11 +8864,13 @@ def analyze_route_risk():
     """Analyze route risk for provided waypoints/segments (gated by route_analysis feature).
     
     Accepts:
-        waypoints: List of waypoint objects with lat/lon
+        waypoints: List of waypoint objects with {lat, lon, name?, country_code?}
         routes: Optional list of route segment data
+        radius_km: Search radius for threats along route (default: 50km)
+        days: Historical lookback period (default: 14 days)
         
     Returns:
-        Risk analysis results without persisting itinerary
+        Risk analysis results with threat data from ThreatFusion engine
     """
     if request.method == 'OPTIONS':
         return _build_cors_response(make_response("", 204))
@@ -8877,30 +8879,269 @@ def analyze_route_risk():
         data = request.json or {}
         waypoints = data.get('waypoints', [])
         routes = data.get('routes', [])
+        radius_km = int(data.get('radius_km', 50))
+        days = int(data.get('days', 14))
+        
+        # Clamp values
+        radius_km = max(1, min(radius_km, 200))
+        days = max(1, min(days, 90))
         
         if not waypoints:
             return _build_cors_response(make_response(jsonify({'error': 'waypoints required'}), 400))
         
-        # Placeholder route risk analysis logic
-        # In production, this would call actual route analysis service
+        # Validate waypoint structure
+        for wp in waypoints:
+            if 'lat' not in wp or 'lon' not in wp:
+                return _build_cors_response(make_response(jsonify({'error': 'Each waypoint must have lat/lon'}), 400))
+        
+        # Analyze threats along route using ThreatFusion
+        from utils.threat_fusion import ThreatFusion
+        
+        waypoint_assessments = []
+        all_threats = []
+        max_risk_level = 'LOW'
+        risk_order = ['LOW', 'MODERATE', 'HIGH', 'SEVERE', 'EXTREME']
+        
+        for idx, wp in enumerate(waypoints):
+            try:
+                assessment = ThreatFusion.assess_location(
+                    lat=float(wp['lat']),
+                    lon=float(wp['lon']),
+                    country_code=wp.get('country_code'),
+                    radius_km=radius_km,
+                    days=days
+                )
+                
+                waypoint_assessments.append({
+                    'waypoint_index': idx,
+                    'name': wp.get('name', f"Waypoint {idx + 1}"),
+                    'lat': wp['lat'],
+                    'lon': wp['lon'],
+                    'risk_level': assessment['risk_level'],
+                    'threat_count': assessment['total_threats'],
+                    'categories': assessment['threat_categories'],
+                    'top_threats': assessment['top_threats'][:3]  # Top 3 for each waypoint
+                })
+                
+                # Track highest risk level
+                if risk_order.index(assessment['risk_level']) > risk_order.index(max_risk_level):
+                    max_risk_level = assessment['risk_level']
+                
+                # Aggregate all threats
+                all_threats.extend(assessment['top_threats'])
+                
+            except Exception as e:
+                logger.error(f"Failed to assess waypoint {idx}: {e}")
+                waypoint_assessments.append({
+                    'waypoint_index': idx,
+                    'name': wp.get('name', f"Waypoint {idx + 1}"),
+                    'lat': wp['lat'],
+                    'lon': wp['lon'],
+                    'risk_level': 'UNKNOWN',
+                    'threat_count': 0,
+                    'error': str(e)
+                })
+        
+        # Deduplicate and sort threats by severity
+        seen_titles = set()
+        unique_threats = []
+        for threat in all_threats:
+            title = threat.get('title', '')
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique_threats.append(threat)
+        
+        # Sort by severity score descending
+        unique_threats.sort(key=lambda t: t.get('score', 0), reverse=True)
+        
+        # Generate risk factors
+        risk_factors = []
+        high_risk_waypoints = [wa for wa in waypoint_assessments if wa.get('risk_level') in ['HIGH', 'SEVERE', 'EXTREME']]
+        if high_risk_waypoints:
+            risk_factors.append(f"{len(high_risk_waypoints)} waypoint(s) with elevated risk")
+        
+        total_threats = sum(wa.get('threat_count', 0) for wa in waypoint_assessments)
+        if total_threats > 20:
+            risk_factors.append(f"High threat density ({total_threats} incidents)")
+        
+        # Generate recommendations
+        recommendations = []
+        if max_risk_level in ['HIGH', 'SEVERE', 'EXTREME']:
+            recommendations.append('Consider alternative routes through lower-risk areas')
+            recommendations.append('Monitor real-time threat alerts before departure')
+        if total_threats > 10:
+            recommendations.append('Review detailed threat assessments for each waypoint')
+        recommendations.append('Enable geo-fenced alerts for route corridor monitoring')
+        
         risk_summary = {
-            'overall_risk': 'moderate',
+            'overall_risk': max_risk_level,
             'waypoint_count': len(waypoints),
             'route_segments': len(routes) if routes else 0,
-            'risk_factors': [],
-            'recommendations': ['Monitor travel advisories', 'Review local security conditions']
+            'total_threats': total_threats,
+            'unique_threats': len(unique_threats),
+            'risk_factors': risk_factors,
+            'recommendations': recommendations,
+            'waypoint_assessments': waypoint_assessments,
+            'top_threats': unique_threats[:10],  # Top 10 overall
+            'analysis_params': {
+                'radius_km': radius_km,
+                'days': days,
+                'timestamp': datetime.utcnow().isoformat()
+            }
         }
         
-        # Could integrate with threat_engine, location_service, etc.
-        # For now, return structured placeholder
         return _build_cors_response(jsonify({
             'ok': True,
-            'analysis': risk_summary,
-            'note': 'Route analysis service - BUSINESS plan feature'
+            'analysis': risk_summary
         }))
     except Exception as e:
-        logger.error(f'analyze_route_risk error: {e}')
-        return _build_cors_response(make_response(jsonify({'error': 'Route analysis failed'}), 500))
+        logger.error(f'analyze_route_risk error: {e}', exc_info=True)
+        return _build_cors_response(make_response(jsonify({'error': 'Route analysis failed', 'detail': str(e)}), 500))
+
+
+@app.route('/api/travel-risk/route-corridor', methods=['POST', 'OPTIONS'])
+@login_required
+@feature_required('route_analysis', required_plan='BUSINESS')
+def analyze_route_corridor():
+    """Analyze threat corridor between two points.
+    
+    Accepts:
+        point1: {lat, lon} - Starting point
+        point2: {lat, lon} - Ending point
+        radius_km: Corridor width (default: 50km from centerline)
+        days: Historical lookback period (default: 14 days)
+        
+    Returns:
+        Corridor risk analysis with threats along the route
+    """
+    if request.method == 'OPTIONS':
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        data = request.json or {}
+        point1 = data.get('point1')
+        point2 = data.get('point2')
+        radius_km = int(data.get('radius_km', 50))
+        days = int(data.get('days', 14))
+        
+        # Validate inputs
+        if not point1 or not point2:
+            return _build_cors_response(make_response(jsonify({'error': 'point1 and point2 required'}), 400))
+        
+        if 'lat' not in point1 or 'lon' not in point1 or 'lat' not in point2 or 'lon' not in point2:
+            return _build_cors_response(make_response(jsonify({'error': 'Points must have lat/lon'}), 400))
+        
+        # Clamp values
+        radius_km = max(1, min(radius_km, 200))
+        days = max(1, min(days, 90))
+        
+        # Calculate corridor segments (sample points along route)
+        from math import sqrt
+        lat1, lon1 = float(point1['lat']), float(point1['lon'])
+        lat2, lon2 = float(point2['lat']), float(point2['lon'])
+        
+        # Calculate distance between points
+        from utils.threat_fusion import ThreatFusion
+        distance_km = ThreatFusion._haversine_distance(lat1, lon1, lat2, lon2)
+        
+        # Sample points along corridor (every ~50km or at least 3 points)
+        num_samples = max(3, int(distance_km / 50) + 2)
+        
+        corridor_assessments = []
+        all_threats = []
+        max_risk_level = 'LOW'
+        risk_order = ['LOW', 'MODERATE', 'HIGH', 'SEVERE', 'EXTREME']
+        
+        for i in range(num_samples):
+            # Linear interpolation
+            t = i / (num_samples - 1)
+            sample_lat = lat1 + t * (lat2 - lat1)
+            sample_lon = lon1 + t * (lon2 - lon1)
+            
+            try:
+                assessment = ThreatFusion.assess_location(
+                    lat=sample_lat,
+                    lon=sample_lon,
+                    radius_km=radius_km,
+                    days=days
+                )
+                
+                corridor_assessments.append({
+                    'segment_index': i,
+                    'lat': sample_lat,
+                    'lon': sample_lon,
+                    'distance_from_start_km': distance_km * t,
+                    'risk_level': assessment['risk_level'],
+                    'threat_count': assessment['total_threats'],
+                    'top_threats': assessment['top_threats'][:2]
+                })
+                
+                # Track highest risk
+                if risk_order.index(assessment['risk_level']) > risk_order.index(max_risk_level):
+                    max_risk_level = assessment['risk_level']
+                
+                all_threats.extend(assessment['top_threats'])
+                
+            except Exception as e:
+                logger.error(f"Failed to assess corridor segment {i}: {e}")
+        
+        # Deduplicate threats
+        seen_titles = set()
+        unique_threats = []
+        for threat in all_threats:
+            title = threat.get('title', '')
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique_threats.append(threat)
+        
+        unique_threats.sort(key=lambda t: t.get('score', 0), reverse=True)
+        
+        # Generate risk factors
+        risk_factors = []
+        high_risk_segments = [ca for ca in corridor_assessments if ca.get('risk_level') in ['HIGH', 'SEVERE', 'EXTREME']]
+        if high_risk_segments:
+            risk_factors.append(f"{len(high_risk_segments)} high-risk corridor segment(s)")
+        
+        total_threats = sum(ca.get('threat_count', 0) for ca in corridor_assessments)
+        if total_threats > 15:
+            risk_factors.append(f"Elevated threat density along corridor")
+        
+        # Recommendations
+        recommendations = []
+        if max_risk_level in ['HIGH', 'SEVERE', 'EXTREME']:
+            recommendations.append('Consider alternative routes or timing')
+            recommendations.append('Enable real-time monitoring for corridor')
+        if distance_km > 500:
+            recommendations.append('Long distance route - consider breaking into stages')
+        recommendations.append('Review segment-specific threats before travel')
+        
+        corridor_analysis = {
+            'overall_risk': max_risk_level,
+            'corridor_distance_km': round(distance_km, 2),
+            'corridor_width_km': radius_km,
+            'segments_analyzed': len(corridor_assessments),
+            'total_threats': total_threats,
+            'unique_threats': len(unique_threats),
+            'risk_factors': risk_factors,
+            'recommendations': recommendations,
+            'segment_assessments': corridor_assessments,
+            'top_threats': unique_threats[:10],
+            'analysis_params': {
+                'point1': point1,
+                'point2': point2,
+                'radius_km': radius_km,
+                'days': days,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        }
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'corridor': corridor_analysis
+        }))
+    except Exception as e:
+        logger.error(f'analyze_route_corridor error: {e}', exc_info=True)
+        return _build_cors_response(make_response(jsonify({'error': 'Corridor analysis failed', 'detail': str(e)}), 500))
 
 
 @app.route('/api/travel-risk/itinerary/<itinerary_uuid>', methods=['PATCH'])
@@ -9110,13 +9351,16 @@ def get_itinerary_stats():
     try:
         stats = get_itinerary_stats(user_id=user_id)
         
-        # Standardized envelope
+        # Standardized envelope with all frontend-expected fields
         return _build_cors_response(jsonify({
             'ok': True,
             'data': {
-                'total': stats['count'],
-                'active': stats['active'],
-                'deleted': stats['deleted']
+                'total_itineraries': stats['count'],
+                'active_itineraries': stats['active'],
+                'deleted': stats['deleted'],
+                'destinations_tracked': stats.get('destinations_tracked', 0),
+                'upcoming_trips_next_30d': stats.get('upcoming_trips_next_30d', 0),
+                'last_updated': stats.get('last_updated')
             }
         }))
     except Exception as e:

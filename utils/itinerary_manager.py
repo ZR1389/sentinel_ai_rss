@@ -368,7 +368,7 @@ def delete_itinerary(
         _return_conn(conn)
 
 
-def get_itinerary_stats(user_id: int) -> Dict[str, int]:
+def get_itinerary_stats(user_id: int) -> Dict[str, Any]:
     """
     Get statistics about user's itineraries.
     
@@ -376,22 +376,55 @@ def get_itinerary_stats(user_id: int) -> Dict[str, int]:
         user_id: User ID
         
     Returns:
-        Dict with counts: {count, active, deleted} (count = total)
+        Dict with counts: {count, active, deleted, destinations_tracked, upcoming_trips_next_30d, last_updated}
     """
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Basic counts
             cur.execute("""
                 SELECT 
                     COUNT(*) as count,
                     COUNT(*) FILTER (WHERE is_deleted = FALSE) as active,
-                    COUNT(*) FILTER (WHERE is_deleted = TRUE) as deleted
+                    COUNT(*) FILTER (WHERE is_deleted = TRUE) as deleted,
+                    MAX(updated_at) as last_updated
                 FROM travel_itineraries
                 WHERE user_id = %s
             """, (user_id,))
             
             result = cur.fetchone()
-            return dict(result) if result else {'count': 0, 'active': 0, 'deleted': 0}
+            stats = dict(result) if result else {'count': 0, 'active': 0, 'deleted': 0, 'last_updated': None}
+            
+            # Count total destinations (waypoints) across active itineraries
+            cur.execute("""
+                SELECT 
+                    COALESCE(SUM(jsonb_array_length(COALESCE(data->'destinations', '[]'::jsonb))), 0) as destinations_tracked
+                FROM travel_itineraries
+                WHERE user_id = %s AND is_deleted = FALSE
+            """, (user_id,))
+            
+            dest_result = cur.fetchone()
+            stats['destinations_tracked'] = int(dest_result['destinations_tracked']) if dest_result else 0
+            
+            # Count upcoming trips (start_date within next 30 days)
+            cur.execute("""
+                SELECT COUNT(*) as upcoming_trips_next_30d
+                FROM travel_itineraries
+                WHERE user_id = %s 
+                  AND is_deleted = FALSE
+                  AND data->>'start_date' IS NOT NULL
+                  AND (data->>'start_date')::timestamp <= NOW() + INTERVAL '30 days'
+                  AND (data->>'start_date')::timestamp >= NOW()
+            """, (user_id,))
+            
+            upcoming_result = cur.fetchone()
+            stats['upcoming_trips_next_30d'] = int(upcoming_result['upcoming_trips_next_30d']) if upcoming_result else 0
+            
+            # Format last_updated as ISO string if present
+            if stats.get('last_updated'):
+                stats['last_updated'] = stats['last_updated'].isoformat() if hasattr(stats['last_updated'], 'isoformat') else str(stats['last_updated'])
+            
+            return stats
     except Exception as e:
         logger.error(f"Failed to get itinerary stats: {e}")
         raise
