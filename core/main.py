@@ -5650,7 +5650,7 @@ def travel_risk_assessment():
         )
         
         # Run fusion analysis
-        from threat_fusion import ThreatFusion
+        from utils.threat_fusion import ThreatFusion
         assessment = ThreatFusion.assess_location(
             lat=lat,
             lon=lon,
