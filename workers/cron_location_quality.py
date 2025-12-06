@@ -12,6 +12,7 @@ Usage:
 import os
 import sys
 import logging
+import signal
 from datetime import datetime
 
 # Configure logging
@@ -20,6 +21,13 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Timeout handler to prevent infinite execution
+class TimeoutError(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutError("Job execution exceeded timeout limit")
 
 def main():
     """Run daily location quality check"""
@@ -31,12 +39,22 @@ def main():
                        help='Send notification if high-severity anomalies exceed this count (default: 5)')
     parser.add_argument('--dry-run', action='store_true', 
                        help='Run without sending notifications')
+    parser.add_argument('--timeout', type=int, default=300,
+                       help='Maximum execution time in seconds (default: 300 = 5 minutes)')
     args = parser.parse_args()
     
+    # Set timeout alarm
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(args.timeout)
+    
     try:
+        # Add parent directory to path for imports
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
         from monitoring.location_quality_monitor import get_location_quality_report
         
         logger.info(f"=== Location Quality Check ({args.days} days) ===")
+        logger.info(f"Timeout set to {args.timeout} seconds")
         
         # Generate report
         report = get_location_quality_report(args.days)
@@ -75,11 +93,21 @@ def main():
         else:
             logger.info(f"✅ Quality check passed (high-severity anomalies: {high_severity_count})")
         
+        # Cancel alarm before exiting
+        signal.alarm(0)
+        
         # Return appropriate exit code
         sys.exit(0 if high_severity_count < args.notify_threshold else 1)
+    
+    except TimeoutError as e:
+        logger.error(f"❌ TIMEOUT: {e}")
+        logger.error(f"Job exceeded {args.timeout} seconds - forcing exit")
+        signal.alarm(0)  # Cancel alarm
+        sys.exit(124)  # Standard timeout exit code
         
     except Exception as e:
         logger.error(f"Location quality check failed: {e}", exc_info=True)
+        signal.alarm(0)  # Cancel alarm
         sys.exit(2)
 
 
@@ -113,16 +141,23 @@ Top Issues:
         body += f"\n\nView full report: {os.getenv('APP_URL', 'http://localhost:5000')}/admin/location/quality"
         body += f"\nView validations: {os.getenv('APP_URL', 'http://localhost:5000')}/admin/location/validations?corrections=true"
         
-        send_email(
-            to_email=admin_email,
-            subject=subject,
-            body=body
-        )
-        
-        logger.info(f"Notification sent to {admin_email}")
+        # Correct function signature: send_email(user_email, to_addr, subject, html_body, from_addr)
+        # For admin notifications, use admin_email as both user_email (for plan check) and to_addr
+        try:
+            send_email(
+                user_email=admin_email,  # Required: user email for plan check
+                to_addr=admin_email,      # Required: recipient email
+                subject=subject,          # Required: email subject
+                html_body=body,           # Required: email body (accepts plain text too)
+                from_addr=None            # Optional: from address (uses default)
+            )
+            logger.info(f"Email notification sent to {admin_email}")
+        except Exception as email_err:
+            logger.error(f"Email send failed: {email_err}")
+            raise  # Re-raise to trigger fallback
         
     except Exception as e:
-        logger.error(f"Failed to send notification: {e}")
+        logger.error(f"Failed to send email notification: {e}")
         
         # Fallback: log to Slack/webhook if configured
         try_webhook_notification(report, high_severity_count)
