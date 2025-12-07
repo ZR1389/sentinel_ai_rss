@@ -76,6 +76,9 @@ def generate_intelligence_report_pdf(
 
     body_html = _render_body_html(report_body)
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    report_id = request_meta.get("id") if isinstance(request_meta, dict) else None
+    client_name = user_email or request_meta.get("client_name") if isinstance(request_meta, dict) else None
+    report_date = datetime.utcnow().strftime("%Y-%m-%d")
 
     context = {
         "title": report_title or request_meta.get("title") or "Intelligence Report",
@@ -84,6 +87,11 @@ def generate_intelligence_report_pdf(
         "analyst_email": analyst_email,
         "user_email": user_email,
         "request": request_meta or {},
+        "report_id": report_id or file_tag or uuid.uuid4().hex,
+        "client_name": client_name or "Client",
+        "report_date": report_date,
+        "classification": "CONFIDENTIAL",
+        "prepared_by": "Zika Risk Intelligence",
     }
 
     try:

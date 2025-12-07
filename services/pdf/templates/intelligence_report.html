@@ -3,22 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <style>
-    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; }
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 48px; }
     h1, h2 { border-bottom: 1px solid #000; padding-bottom: 4px; }
-    .cover { text-align: center; margin-top: 200px; }
+    .cover { text-align: center; margin-top: 160px; }
+    .logo {
+      width: 120px; height: 120px; margin: 0 auto 24px auto;
+      border: 2px solid #000; display: flex; align-items: center; justify-content: center;
+      font-weight: bold; font-size: 14px;
+    }
+    .meta { margin-top: 12px; line-height: 1.6; }
     .section { margin-top: 30px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border: 1px solid #000; padding: 6px; font-size: 11px; }
+    .label { font-weight: bold; }
+    .footer { margin-top: 40px; font-size: 10px; color: #555; text-align: center; }
   </style>
 </head>
 <body>
 
 <div class="cover">
+  <div class="logo">Zika Risk</div>
   <h1>INTELLIGENCE ASSESSMENT REPORT</h1>
-  <p>Report ID: {{ report_id }}</p>
-  <p>Classification: CONFIDENTIAL</p>
-  <p>Prepared for: {{ client_name }}</p>
-  <p>Date: {{ report_date }}</p>
+  <div class="meta">
+    <p><span class="label">Report ID:</span> {{ report_id }}</p>
+    <p><span class="label">Classification:</span> {{ classification }}</p>
+    <p><span class="label">Prepared for:</span> {{ client_name }}</p>
+    <p><span class="label">Prepared by:</span> {{ prepared_by }}</p>
+    <p><span class="label">Date:</span> {{ report_date }}</p>
+  </div>
 </div>
 
 <div class="section">
@@ -29,7 +41,7 @@
 </div>
 
 <div class="section">
-  <h2>SCOPE & METHODOLOGY</h2>
+  <h2>SCOPE &amp; METHODOLOGY</h2>
   <ul>
     {% for source in sources %}
       <li>{{ source }}</li>
@@ -62,6 +74,8 @@
     {% endfor %}
   </ul>
 </div>
+
+<div class="footer">Zika Risk Intelligence · Confidential deliverable</div>
 
 </body>
 </html>
