@@ -9769,6 +9769,97 @@ def get_user_reports():
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get reports'}), 500))
 
 
+@app.route('/api/reports/mine', methods=['GET', 'OPTIONS'])
+@login_required
+def get_user_reports_mine():
+    """
+    User view their own report requests (simplified, preview metadata only).
+    
+    Returns list with:
+    - status
+    - timestamps
+    - preview metadata (NOT full report body)
+    
+    Query params:
+        limit: Max records to return (default 50)
+        status: Filter by status (optional)
+        sort: 'newest' (default) or 'oldest'
+    
+    Response includes request summary + report count/status, without full report bodies.
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        email = get_logged_in_email()
+        
+        if fetch_one is None:
+            return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+        
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = str(user_row['id'] if isinstance(user_row, dict) else user_row[0])
+        
+        limit = min(int(request.args.get('limit', 50)), 100)
+        status_filter = request.args.get('status', None)
+        sort = request.args.get('sort', 'newest')
+        
+        from utils.db_utils import get_user_report_requests, fetch_all
+        requests = get_user_report_requests(user_id, limit=limit, status=status_filter)
+        
+        # Build preview response (no full report bodies)
+        preview_list = []
+        for req in requests:
+            # Get associated reports metadata (count, status, no body)
+            reports_meta = fetch_all("""
+                SELECT id, title, confidence_level, generated_by, pdf_url, 
+                       delivered_at, created_at
+                FROM reports
+                WHERE request_id = %s
+                LIMIT 5
+            """, (req['id'],))
+            
+            reports_preview = [
+                {
+                    "id": str(row[0]),
+                    "title": row[1],
+                    "confidence_level": row[2],
+                    "generated_by": row[3],
+                    "pdf_url": row[4],
+                    "delivered_at": row[5].isoformat() if row[5] else None,
+                    "created_at": row[6].isoformat() if row[6] else None
+                }
+                for row in (reports_meta or [])
+            ]
+            
+            preview_list.append({
+                "id": req['id'],
+                "report_type": req['report_type'],
+                "title": req['title'],
+                "target": req['target'],
+                "scope": req['scope'],
+                "urgency": req['urgency'],
+                "status": req['status'],
+                "created_at": req['created_at'],
+                "updated_at": req['updated_at'],
+                "reports_count": len(reports_preview),
+                "reports": reports_preview  # Preview only, no bodies
+            })
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'data': preview_list,
+            'count': len(preview_list)
+        }))
+        
+    except Exception as e:
+        logger.error(f'get_user_reports_mine error: {e}')
+        import traceback
+        traceback.print_exc()
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to get reports'}), 500))
+
+
 @app.route('/api/intelligence-reports', methods=['GET', 'OPTIONS'])
 @login_required
 def get_user_intelligence_reports():
