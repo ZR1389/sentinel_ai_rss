@@ -1576,6 +1576,10 @@ def admin_finalize_report(request_id):
 
         # Generate PDF using dedicated intelligence template
         output_dir = os.path.join("downloads", "intelligence_reports")
+        
+        # Optionally get logo URL from environment or config
+        logo_url = os.getenv("LOGO_URL")  # e.g., "https://cdn.example.com/logo.png"
+        
         pdf_path = generate_intelligence_report_pdf(
             report_title=report_title,
             report_body=report_body,
@@ -1584,6 +1588,7 @@ def admin_finalize_report(request_id):
             user_email=user_email,
             output_dir=output_dir,
             file_tag=report_id,
+            logo_url=logo_url,
         )
 
         if not pdf_path or not os.path.exists(pdf_path):

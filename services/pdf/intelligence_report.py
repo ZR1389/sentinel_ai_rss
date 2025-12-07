@@ -45,7 +45,8 @@ def generate_intelligence_report_pdf(
     analyst_email: Optional[str] = None,
     user_email: Optional[str] = None,
     output_dir: Optional[str] = None,
-    file_tag: Optional[str] = None
+    file_tag: Optional[str] = None,
+    logo_url: Optional[str] = None
 ) -> Optional[str]:
     """Render an intelligence report PDF using a dedicated template.
 
@@ -57,6 +58,7 @@ def generate_intelligence_report_pdf(
         user_email: Optional requester email for header/footer context.
         output_dir: Optional override for output directory.
         file_tag: Optional tag to prefix the filename (defaults to request ID).
+        logo_url: Optional URL to organization logo (e.g., frontend CDN URL).
 
     Returns:
         Absolute path to the generated PDF, or None on failure.
@@ -96,6 +98,7 @@ def generate_intelligence_report_pdf(
         "report_date": report_date,
         "classification": _m("classification", "CONFIDENTIAL"),
         "prepared_by": _m("prepared_by", "Zika Risk Intelligence"),
+        "logo_url": logo_url or _m("logo_url"),
         # Executive summary
         "summary": _m("summary", ""),
         "risk_level": _m("risk_level", "MODERATE"),

@@ -26,7 +26,11 @@
 <body>
 
 <div class="cover">
-  <div class="logo">Zika Risk</div>
+  {% if logo_url %}
+    <img src="{{ logo_url }}" alt="Logo" style="width: 120px; height: 120px; margin: 0 auto 24px auto;" />
+  {% else %}
+    <div class="logo">Zika Risk</div>
+  {% endif %}
   <h1>INTELLIGENCE ASSESSMENT REPORT</h1>
   <div class="meta">
     <p><span class="label">Report ID:</span> {{ report_id }}</p>
