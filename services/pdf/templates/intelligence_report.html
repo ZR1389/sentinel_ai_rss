@@ -5,6 +5,7 @@
   <style>
     body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 48px; }
     h1, h2 { border-bottom: 1px solid #000; padding-bottom: 4px; }
+    h3 { margin-bottom: 6px; }
     .cover { text-align: center; margin-top: 160px; }
     .logo {
       width: 120px; height: 120px; margin: 0 auto 24px auto;
@@ -17,6 +18,9 @@
     th, td { border: 1px solid #000; padding: 6px; font-size: 11px; }
     .label { font-weight: bold; }
     .footer { margin-top: 40px; font-size: 10px; color: #555; text-align: center; }
+    .page-break { page-break-before: always; }
+    .pill { display: inline-block; padding: 4px 8px; border: 1px solid #000; margin-left: 8px; }
+    ul { margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -35,22 +39,60 @@
 
 <div class="section">
   <h2>EXECUTIVE SUMMARY</h2>
+  <h3>Assessment Purpose</h3>
   <p>{{ summary }}</p>
-  <p><strong>Risk Level:</strong> {{ risk_level }}</p>
-  <p><strong>Confidence:</strong> {{ confidence_level }}</p>
+  {% if key_findings %}
+  <h3>Key Findings</h3>
+  <ul>
+    {% for k in key_findings %}
+      <li>{{ k }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p><strong>Overall Risk Level:</strong> {{ risk_level }}</p>
+  <p><strong>Confidence Level:</strong> {{ confidence_level }}</p>
+  {% if immediate_recommendations %}
+  <h3>Immediate Recommendations</h3>
+  <ul>
+    {% for rec in immediate_recommendations %}
+      <li>{{ rec }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
 </div>
 
-<div class="section">
-  <h2>SCOPE &amp; METHODOLOGY</h2>
+<div class="section page-break">
+  <h2>SCOPE AND METHODOLOGY</h2>
+  <h3>Data Sources Used</h3>
   <ul>
     {% for source in sources %}
       <li>{{ source }}</li>
     {% endfor %}
   </ul>
+  {% if time_ranges %}
+  <h3>Time Ranges Analyzed</h3>
+  <ul>
+    {% for tr in time_ranges %}
+      <li>{{ tr }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if geographic_scope %}
+  <p><strong>Geographic Scope:</strong> {{ geographic_scope }}</p>
+  {% endif %}
+  {% if limitations %}
+  <h3>Known Limitations</h3>
+  <ul>
+    {% for lim in limitations %}
+      <li>{{ lim }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
 </div>
 
-<div class="section">
+<div class="section page-break">
   <h2>THREAT LANDSCAPE</h2>
+  <h3>Recent Incidents</h3>
   <table>
     <tr>
       <th>Date</th><th>Type</th><th>Location</th><th>Severity</th>
@@ -64,15 +106,117 @@
       </tr>
     {% endfor %}
   </table>
-</div>
-
-<div class="section">
-  <h2>RECOMMENDATIONS</h2>
+  <p><strong>Trend:</strong> {{ trend }}</p>
+  {% if threat_categories %}
+  <h3>Threat Categories</h3>
   <ul>
-    {% for r in recommendations %}
-      <li>{{ r }}</li>
+    {% for k, v in threat_categories.items() %}
+      <li><strong>{{ k }}:</strong> {{ v }}</li>
     {% endfor %}
   </ul>
+  {% endif %}
+</div>
+
+<div class="section page-break">
+  <h2>DETAILED ANALYSIS</h2>
+  {% if area_analyses %}
+    {% for a in area_analyses %}
+      <h3>Area / Target Analysis: {{ a.name or a.title }}</h3>
+      <p>{{ a.description }}</p>
+      {% if a.risk_factors %}<p><strong>Risk Factors:</strong> {{ a.risk_factors }}</p>{% endif %}
+      {% if a.infrastructure %}<p><strong>Infrastructure Weaknesses:</strong> {{ a.infrastructure }}</p>{% endif %}
+      {% if a.patterns %}<p><strong>Patterns of Behavior:</strong> {{ a.patterns }}</p>{% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {% if threat_actors %}
+    {% for ta in threat_actors %}
+      <h3>Threat Actor Profile: {{ ta.name }}</h3>
+      {% if ta.tactics %}<p><strong>Tactics:</strong> {{ ta.tactics }}</p>{% endif %}
+      {% if ta.capabilities %}<p><strong>Capabilities:</strong> {{ ta.capabilities }}</p>{% endif %}
+      {% if ta.intent %}<p><strong>Intent Indicators:</strong> {{ ta.intent }}</p>{% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {% if vulnerabilities %}
+    {% for v in vulnerabilities %}
+      <h3>Vulnerability Analysis: {{ v.name or v.title }}</h3>
+      {% if v.travel %}<p><strong>Travel Movement:</strong> {{ v.travel }}</p>{% endif %}
+      {% if v.digital %}<p><strong>Digital Exposure:</strong> {{ v.digital }}</p>{% endif %}
+      {% if v.behavioral %}<p><strong>Behavioral Risks:</strong> {{ v.behavioral }}</p>{% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {% if body_html %}
+    <h3>Full Narrative</h3>
+    <div>{{ body_html | safe }}</div>
+  {% endif %}
+</div>
+
+{% if travel_risk %}
+<div class="section page-break">
+  <h2>TRAVEL RISK</h2>
+  {% if travel_risk.airport %}<p><strong>Airport Risk Profile:</strong> {{ travel_risk.airport }}</p>{% endif %}
+  {% if travel_risk.transport %}<p><strong>Transport Risks:</strong> {{ travel_risk.transport }}</p>{% endif %}
+  {% if travel_risk.hotel_zones %}<p><strong>Hotel Zone Analysis:</strong> {{ travel_risk.hotel_zones }}</p>{% endif %}
+  {% if travel_risk.routes %}<p><strong>Safe Routes vs High-Risk Zones:</strong> {{ travel_risk.routes }}</p>{% endif %}
+</div>
+{% endif %}
+
+{% if map_snapshot_url or risk_grid %}
+<div class="section page-break">
+  <h2>MAP SNAPSHOT</h2>
+  {% if map_snapshot_url %}
+    <p>Embedded map:</p>
+    <img src="{{ map_snapshot_url }}" alt="Map snapshot" style="max-width:100%; border:1px solid #000;" />
+  {% endif %}
+  {% if risk_grid %}
+    <table>
+      <tr><th>Area</th><th>Risk</th><th>Notes</th></tr>
+      {% for r in risk_grid %}
+        <tr>
+          <td>{{ r.area }}</td><td>{{ r.risk }}</td><td>{{ r.notes }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="section page-break">
+  <h2>TACTICAL &amp; STRATEGIC RECOMMENDATIONS</h2>
+  {% if final_recommendations %}
+    <ul>
+      {% for rec in final_recommendations %}
+        <li>{{ rec }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>Recommendations will be provided based on evolving threat indicators.</p>
+  {% endif %}
+</div>
+
+<div class="section page-break">
+  <h2>APPENDIX</h2>
+  {% if appendix_sources %}
+  <h3>Sources</h3>
+  <ul>
+    {% for s in appendix_sources %}
+      <li>{{ s }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if processing_timestamps %}
+    <p><strong>Processing Timestamps:</strong></p>
+    <ul>
+      {% for k, v in processing_timestamps.items() %}
+        <li>{{ k }}: {{ v }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if engine_version %}
+    <p><strong>Engine Version:</strong> {{ engine_version }}</p>
+  {% endif %}
 </div>
 
 <div class="footer">Zika Risk Intelligence · Confidential deliverable</div>

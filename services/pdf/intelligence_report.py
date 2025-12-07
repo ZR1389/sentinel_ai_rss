@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -74,24 +74,63 @@ def generate_intelligence_report_pdf(
     )
     template = env.get_template("intelligence_report.html")
 
+    meta: Dict[str, Any] = request_meta or {}
+    def _m(key: str, default: Any = None) -> Any:
+        return meta.get(key, default) if isinstance(meta, dict) else default
+
     body_html = _render_body_html(report_body)
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    report_id = request_meta.get("id") if isinstance(request_meta, dict) else None
-    client_name = user_email or request_meta.get("client_name") if isinstance(request_meta, dict) else None
+    report_id = _m("id") or file_tag or uuid.uuid4().hex
+    client_name = user_email or _m("client_name") or _m("user_email") or "Client"
     report_date = datetime.utcnow().strftime("%Y-%m-%d")
 
     context = {
-        "title": report_title or request_meta.get("title") or "Intelligence Report",
+        "title": report_title or _m("title") or "Intelligence Report",
         "body_html": body_html,
         "generated_at": now_str,
         "analyst_email": analyst_email,
         "user_email": user_email,
-        "request": request_meta or {},
-        "report_id": report_id or file_tag or uuid.uuid4().hex,
-        "client_name": client_name or "Client",
+        "request": meta,
+        "report_id": report_id,
+        "client_name": client_name,
         "report_date": report_date,
-        "classification": "CONFIDENTIAL",
-        "prepared_by": "Zika Risk Intelligence",
+        "classification": _m("classification", "CONFIDENTIAL"),
+        "prepared_by": _m("prepared_by", "Zika Risk Intelligence"),
+        # Executive summary
+        "summary": _m("summary", ""),
+        "risk_level": _m("risk_level", "MODERATE"),
+        "confidence_level": _m("confidence_level", "Medium"),
+        "key_findings": _m("key_findings", []),
+        "immediate_recommendations": _m("immediate_recommendations", []),
+        # Scope & methodology
+        "sources": _m("sources", ["RSS monitors", "ACLED", "GDELT", "OSINT", "SOCMINT"]),
+        "time_ranges": _m("time_ranges", []),
+        "geographic_scope": _m("geographic_scope", ""),
+        "limitations": _m("limitations", []),
+        # Threat landscape
+        "threats": _m("threats", []),
+        "trend": _m("trend", "Increasing"),
+        "threat_categories": _m("threat_categories", {
+            "Political": "",
+            "Crime": "",
+            "Terrorism": "",
+            "Military": "",
+        }),
+        # Detailed analysis blocks
+        "area_analyses": _m("area_analyses", []),
+        "threat_actors": _m("threat_actors", []),
+        "vulnerabilities": _m("vulnerabilities", []),
+        # Travel risk (optional)
+        "travel_risk": _m("travel_risk"),
+        # Map snapshot / risk grid (optional)
+        "map_snapshot_url": _m("map_snapshot_url"),
+        "risk_grid": _m("risk_grid", []),
+        # Final recommendations
+        "final_recommendations": _m("final_recommendations", []),
+        # Appendix
+        "appendix_sources": _m("appendix_sources", []),
+        "processing_timestamps": _m("processing_timestamps", {}),
+        "engine_version": _m("engine_version"),
     }
 
     try:
