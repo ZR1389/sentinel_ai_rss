@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ title }}</title>
+  <style>
+    :root {
+      --bg: #0b1727;
+      --panel: #0f2138;
+      --panel-strong: #0b2437;
+      --accent: #0ea5e9;
+      --accent-strong: #0284c7;
+      --text: #e5ecf5;
+      --muted: #9fb2c7;
+      --border: #1f334a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 24px;
+      line-height: 1.55;
+    }
+    .page {
+      background: linear-gradient(180deg, rgba(14,165,233,0.07), rgba(11,23,39,0.95));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+      margin-bottom: 18px;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+      letter-spacing: 0.2px;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin: 0;
+      font-size: 13px;
+    }
+    .pill {
+      background: rgba(14,165,233,0.14);
+      color: var(--text);
+      border: 1px solid rgba(14,165,233,0.35);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 16px 0 18px 0;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .card .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.4px;
+      margin-bottom: 6px;
+    }
+    .card .value {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      word-wrap: break-word;
+    }
+    .section-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      margin: 20px 0 10px 0;
+      display: inline-block;
+    }
+    .context-block {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .body {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 6px;
+    }
+    .body h1, .body h2, .body h3, .body h4 {
+      color: var(--text);
+      margin-top: 14px;
+      margin-bottom: 8px;
+    }
+    .body p { margin: 8px 0; }
+    .body ul { padding-left: 18px; }
+    .body li { margin: 6px 0; }
+    .report-body {
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 13px;
+      color: var(--text);
+    }
+    footer {
+      border-top: 1px solid var(--border);
+      margin-top: 22px;
+      padding-top: 12px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <h1 class="title">{{ title }}</h1>
+        <p class="subtitle">Generated {{ generated_at }}{% if user_email %} · For {{ user_email }}{% endif %}{% if analyst_email %} · Analyst {{ analyst_email }}{% endif %}</p>
+      </div>
+      <div class="pill">Intelligence Report</div>
+    </header>
+
+    <div class="meta-grid">
+      <div class="card"><div class="label">Type</div><div class="value">{{ request.report_type or "N/A" }}</div></div>
+      <div class="card"><div class="label">Target</div><div class="value">{{ request.target or "N/A" }}</div></div>
+      <div class="card"><div class="label">Scope</div><div class="value">{{ request.scope or "N/A" }}</div></div>
+      <div class="card"><div class="label">Urgency</div><div class="value">{{ request.urgency or "standard" }}</div></div>
+      <div class="card"><div class="label">Status</div><div class="value">{{ request.status or "draft" }}</div></div>
+      <div class="card"><div class="label">Created</div><div class="value">{{ request.created_at or "" }}</div></div>
+    </div>
+
+    {% if request.notes or request.analyst_notes %}
+    <div class="section-title">Notes</div>
+    <div class="context-block">
+      {% if request.notes %}<p><strong>User:</strong> {{ request.notes }}</p>{% endif %}
+      {% if request.analyst_notes %}<p><strong>Analyst:</strong> {{ request.analyst_notes }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if request.context_chat_id or request.context_itinerary_id or request.context_alert_ids %}
+    <div class="section-title">Linked Context</div>
+    <div class="context-block">
+      {% if request.context_chat_id %}<p><strong>Chat:</strong> {{ request.context_chat_id }}</p>{% endif %}
+      {% if request.context_itinerary_id %}<p><strong>Itinerary:</strong> {{ request.context_itinerary_id }}</p>{% endif %}
+      {% if request.context_alert_ids %}<p><strong>Alerts:</strong> {{ request.context_alert_ids|join(', ') }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="section-title">Report Body</div>
+    <div class="body">{{ body_html | safe }}</div>
+
+    <footer>
+      Sentinel AI · Confidential intelligence deliverable. Distribution limited to authorized recipients.
+    </footer>
+  </div>
+</body>
+</html>
