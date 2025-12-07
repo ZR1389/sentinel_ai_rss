@@ -1210,6 +1210,223 @@ def admin_update_report_status(request_id):
         return make_response(jsonify({"error": str(e)}), 500)
 
 
+@app.route("/admin/reports/<request_id>/draft", methods=["POST"])
+def admin_generate_draft_report(request_id):
+    """
+    Generate AI-assisted draft report for a request (admin/analyst only).
+    
+    Collects:
+    - Travel risk data (if itinerary linked)
+    - Threat map data (if alert_ids linked)
+    - User context and notes
+    - History of related threats
+    
+    Calls LLM pipeline to generate report_body.
+    Stores result in reports table as 'draft'.
+    
+    Request body (optional):
+    {
+      "include_travel_risk": true,
+      "include_alerts": true,
+      "tone": "technical|executive|tactical"
+    }
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from utils.db_utils import (
+            get_report_request_details, 
+            create_report, 
+            fetch_all,
+            fetch_one,
+            update_report_request_status
+        )
+        from utils.threat_fusion import ThreatFusion
+        
+        # Get request details
+        request_details = get_report_request_details(request_id)
+        if not request_details:
+            return make_response(jsonify({"error": "Request not found"}), 404)
+        
+        data = request.json or {}
+        include_travel_risk = data.get("include_travel_risk", True)
+        include_alerts = data.get("include_alerts", True)
+        tone = data.get("tone", "tactical")  # tactical, technical, executive
+        
+        # ===== COLLECT DATA =====
+        
+        # 1. User context
+        context_parts = [
+            f"Report Type: {request_details['report_type'].upper()}",
+            f"Target: {request_details['target']}",
+            f"Scope: {request_details['scope']}",
+            f"User Instructions: {request_details['notes'] or 'N/A'}"
+        ]
+        
+        # 2. Travel risk data (if itinerary linked)
+        travel_risk_data = None
+        if include_travel_risk and request_details.get('context_itinerary_id'):
+            try:
+                itinerary_id = request_details['context_itinerary_id']
+                
+                # Fetch itinerary details
+                itinerary = fetch_one("""
+                    SELECT data, title, description
+                    FROM travel_itineraries
+                    WHERE id = %s
+                """, (itinerary_id,))
+                
+                if itinerary:
+                    import json
+                    itinerary_data = json.loads(itinerary[0]) if isinstance(itinerary[0], str) else itinerary[0]
+                    title = itinerary[1]
+                    
+                    # Run threat assessment on destinations
+                    if isinstance(itinerary_data, list) and len(itinerary_data) > 0:
+                        first_stop = itinerary_data[0]
+                        if isinstance(first_stop, dict) and 'location' in first_stop:
+                            loc = first_stop['location']
+                            assessment = ThreatFusion.assess_location(
+                                lat=loc.get('lat'),
+                                lon=loc.get('lon'),
+                                country_code=loc.get('country_code'),
+                                radius_km=50,
+                                days=30
+                            )
+                            travel_risk_data = {
+                                "itinerary_title": title,
+                                "destinations_count": len(itinerary_data),
+                                "threat_assessment": assessment
+                            }
+                            context_parts.append(f"Travel Itinerary: {title} ({len(itinerary_data)} stops)")
+            except Exception as e:
+                logger.warning(f"Failed to fetch travel risk data: {e}")
+        
+        # 3. Threat map data (if alerts linked)
+        alerts_data = None
+        if include_alerts and request_details.get('context_alert_ids'):
+            try:
+                alert_ids = request_details['context_alert_ids']
+                if alert_ids and len(alert_ids) > 0:
+                    # Fetch alerts (limit to 10)
+                    placeholders = ','.join(['%s'] * min(len(alert_ids), 10))
+                    alerts = fetch_all(f"""
+                        SELECT title, threat_level, source, created_at
+                        FROM alerts
+                        WHERE uuid IN ({placeholders})
+                        ORDER BY created_at DESC
+                        LIMIT 10
+                    """, tuple(alert_ids[:10]))
+                    
+                    if alerts:
+                        alerts_data = [
+                            {
+                                "title": row[0],
+                                "threat_level": row[1],
+                                "source": row[2],
+                                "created_at": row[3].isoformat() if row[3] else None
+                            }
+                            for row in alerts
+                        ]
+                        context_parts.append(f"Linked Alerts: {len(alerts_data)} items")
+            except Exception as e:
+                logger.warning(f"Failed to fetch alerts data: {e}")
+        
+        # 4. Build context prompt
+        context_prompt = "\n".join(context_parts)
+        
+        # ===== CALL LLM PIPELINE =====
+        
+        report_title = request_details.get('title') or f"{request_details['report_type']} Report: {request_details['target']}"
+        
+        # Construct analyst query for LLM
+        analyst_query = f"""
+        Generate a {tone} intelligence report based on this tasking:
+        
+        {context_prompt}
+        
+        {"Travel Risk Assessment:" + str(travel_risk_data) if travel_risk_data else ""}
+        
+        {"Related Alerts:" + str(alerts_data) if alerts_data else ""}
+        
+        Analyst Notes: {request_details.get('analyst_notes') or 'None'}
+        
+        Format as markdown. Include:
+        - Executive summary
+        - Key findings
+        - Risk assessment
+        - Recommendations
+        """
+        
+        # Call LLM pipeline
+        report_body = None
+        try:
+            if _advisor_callable:
+                # Use existing advisor pipeline
+                response = _advisor_callable(
+                    user_query=analyst_query,
+                    user_email="analyst@sentinel-ai.com",
+                    plan="ENTERPRISE"
+                )
+                
+                if isinstance(response, dict):
+                    report_body = response.get('message') or response.get('advisory') or str(response)
+                else:
+                    report_body = str(response)
+            else:
+                logger.warning("Advisor callable not available, using basic LLM")
+                from utils.llm_router import route_query
+                report_body = route_query(analyst_query, model="auto")
+        except Exception as e:
+            logger.error(f"LLM pipeline error: {e}")
+            report_body = f"[Draft Generation Failed]\n\nContext:\n{context_prompt}\n\nError: {str(e)}"
+        
+        # ===== STORE RESULT =====
+        
+        # Create report with generated body
+        result = create_report(
+            request_id=request_id,
+            title=report_title,
+            report_body=report_body or "[Empty draft]",
+            author_id=None,  # AI-generated
+            confidence_level="medium",
+            source_summary={
+                "travel_risk": bool(travel_risk_data),
+                "alerts_count": len(alerts_data) if alerts_data else 0,
+                "tone": tone
+            },
+            generated_by="ai"  # AI-assisted draft
+        )
+        
+        # Update request to 'draft' status
+        update_report_request_status(request_id, "draft", "AI-generated draft ready for review")
+        
+        logger.info(f"Draft report generated for request {request_id}: {len(report_body or '')} chars")
+        
+        return jsonify({
+            "ok": True,
+            "message": "Draft report generated",
+            "report_id": result.get('id'),
+            "status": "draft",
+            "request_id": request_id,
+            "body_length": len(report_body or ''),
+            "data_sources": {
+                "travel_risk": bool(travel_risk_data),
+                "alerts_count": len(alerts_data) if alerts_data else 0
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"admin_generate_draft_report error: {e}")
+        import traceback
+        traceback.print_exc()
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
 @app.route("/admin/reports/<request_id>/deliver", methods=["POST"])
 def admin_deliver_report(request_id):
     """Create and deliver final report for a request (admin/analyst only)."""
