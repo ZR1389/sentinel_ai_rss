@@ -991,6 +991,124 @@ def trigger_acled_collection():
 
 # ========== Admin: Intelligence Report Workflow ==========
 
+@app.route("/admin/reports", methods=["GET"])
+def admin_get_all_reports():
+    """
+    Admin / Analyst views all report requests (comprehensive list).
+    
+    Query filters:
+    - status: requested | triaged | in_progress | draft | delivered | cancelled
+    - urgency: standard | priority | critical
+    - report_type: threat_assessment | threat | travel | due_diligence | exec | custom
+    - limit: max records (default 100, max 500)
+    - sort: 'urgency' (default) or 'recent'
+    
+    Returns all requests with full metadata for analyst workflow.
+    """
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from utils.db_utils import fetch_all
+        
+        # Parse filter parameters
+        status_filter = request.args.get("status")
+        urgency_filter = request.args.get("urgency")
+        report_type_filter = request.args.get("report_type")
+        limit = min(int(request.args.get("limit", 100)), 500)
+        sort = request.args.get("sort", "urgency")
+        
+        # Build WHERE clause dynamically
+        where_clauses = []
+        params = []
+        
+        if status_filter:
+            where_clauses.append("rr.status = %s")
+            params.append(status_filter)
+        
+        if urgency_filter:
+            where_clauses.append("rr.urgency = %s")
+            params.append(urgency_filter)
+        
+        if report_type_filter:
+            where_clauses.append("rr.report_type = %s")
+            params.append(report_type_filter)
+        
+        where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        
+        # Sort order
+        if sort == "recent":
+            order_clause = "rr.created_at DESC"
+        else:  # urgency (default)
+            order_clause = """
+                CASE rr.urgency 
+                    WHEN 'critical' THEN 1
+                    WHEN 'priority' THEN 2
+                    ELSE 3
+                END,
+                rr.created_at ASC
+            """
+        
+        params.append(limit)
+        
+        query = f"""
+            SELECT rr.id, rr.user_id, rr.report_type, rr.title, rr.target, rr.scope,
+                   rr.urgency, rr.status, rr.notes, rr.analyst_notes,
+                   rr.created_at, rr.updated_at, u.email,
+                   COUNT(r.id) as report_count
+            FROM report_requests rr
+            LEFT JOIN users u ON rr.user_id = u.id
+            LEFT JOIN reports r ON rr.id = r.request_id
+            {where_clause}
+            GROUP BY rr.id, u.email
+            ORDER BY {order_clause}
+            LIMIT %s
+        """
+        
+        results = fetch_all(query, tuple(params))
+        
+        requests = [
+            {
+                "id": str(row[0]),
+                "user_id": str(row[1]) if row[1] else None,
+                "report_type": row[2],
+                "title": row[3],
+                "target": row[4],
+                "scope": row[5],
+                "urgency": row[6],
+                "status": row[7],
+                "notes": row[8],
+                "analyst_notes": row[9],
+                "created_at": row[10].isoformat() if row[10] else None,
+                "updated_at": row[11].isoformat() if row[11] else None,
+                "user_email": row[12],
+                "report_count": row[13]
+            }
+            for row in results
+        ] if results else []
+        
+        return jsonify({
+            "ok": True,
+            "data": requests,
+            "count": len(requests),
+            "filters": {
+                "status": status_filter,
+                "urgency": urgency_filter,
+                "report_type": report_type_filter,
+                "sort": sort
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"admin_get_all_reports error: {e}")
+        import traceback
+        traceback.print_exc()
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
 @app.route("/admin/reports/pending", methods=["GET"])
 def admin_get_pending_reports():
     """Get all pending report requests for analyst triage (admin only)."""
