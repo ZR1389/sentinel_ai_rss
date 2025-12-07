@@ -9560,7 +9560,7 @@ def get_itinerary_stats():
 
 # ========== Intelligence Reports (Professional Tasking System) ==========
 
-@app.route('/api/intelligence-reports/request', methods=['POST', 'OPTIONS'])
+@app.route('/api/reports/request', methods=['POST', 'OPTIONS'])
 @login_required
 def create_intelligence_report():
     """
@@ -9568,16 +9568,20 @@ def create_intelligence_report():
     
     Request body:
     {
-        "report_type": "threat|travel|due_diligence|exec|custom",
+        "report_type": "threat_assessment|travel|due_diligence|exec|custom",
+        "title": "Short label (optional)",
         "target": "Country/person/org/event/location",
         "scope": "Geographic, temporal, or operational scope",
-        "title": "Optional short label",
-        "notes": "User instructions and context",
         "urgency": "standard|priority|critical",
-        "context_chat_id": "Optional UUID of related chat",
-        "context_itinerary_id": "Optional UUID of travel itinerary",
-        "context_alert_ids": ["Optional array of alert UUIDs"]
+        "notes": "User instructions and context (optional)",
+        "context": {
+            "chat_id": "UUID (optional)",
+            "alert_ids": ["UUID1", "UUID2"] (optional),
+            "itinerary_id": "UUID (optional)"
+        }
     }
+    
+    Returns: {"ok": true, "request_id": "UUID", "status": "requested"}
     """
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
@@ -9586,7 +9590,7 @@ def create_intelligence_report():
         payload = _json_request()
         email = get_logged_in_email()
         
-        # Get user_id
+        # Get user_id (JWT identifies user)
         if fetch_one is None:
             return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
         
@@ -9602,12 +9606,15 @@ def create_intelligence_report():
         title = (payload.get("title") or "").strip() or None
         notes = (payload.get("notes") or "").strip() or None
         urgency = (payload.get("urgency") or "standard").strip().lower()
-        context_chat_id = (payload.get("context_chat_id") or "").strip() or None
-        context_itinerary_id = (payload.get("context_itinerary_id") or "").strip() or None
-        context_alert_ids = payload.get("context_alert_ids") or None
+        
+        # Extract context object (nested structure)
+        context = payload.get("context") or {}
+        context_chat_id = (context.get("chat_id") or "").strip() or None
+        context_itinerary_id = (context.get("itinerary_id") or "").strip() or None
+        context_alert_ids = context.get("alert_ids") or None
         
         # Validate required fields
-        valid_types = ["threat", "travel", "due_diligence", "exec", "custom"]
+        valid_types = ["threat_assessment", "threat", "travel", "due_diligence", "exec", "custom"]
         if report_type not in valid_types:
             return _build_cors_response(make_response(
                 jsonify({'error': f'Invalid report_type. Must be one of: {", ".join(valid_types)}'}), 400))
@@ -9623,6 +9630,16 @@ def create_intelligence_report():
         valid_urgencies = ["standard", "priority", "critical"]
         if urgency not in valid_urgencies:
             urgency = "standard"
+        
+        # Note: DO NOT block users because this is service-based (validate plan but proceed)
+        # Check plan for logging/metrics only
+        user_plan = "FREE"
+        try:
+            from utils.plan_utils import get_plan
+            if get_plan:
+                user_plan = get_plan(email) or "FREE"
+        except Exception:
+            pass
         
         # Initialize tables and create request
         from utils.db_utils import init_intelligence_reports_tables, create_report_request
@@ -9642,9 +9659,9 @@ def create_intelligence_report():
                 context_alert_ids=context_alert_ids
             )
             
-            logger.info(f"Report request created: {email} - {report_type} - {target}")
+            logger.info(f"Report request created: {email} ({user_plan}) - {report_type} - {target}")
             
-            # Send notification to analysts
+            # Fire async notification (email/telegram/webhook)
             try:
                 from utils.email_dispatcher import send_email
                 admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel-ai.com")
@@ -9655,7 +9672,7 @@ def create_intelligence_report():
                     subject=f"New {urgency.upper()} Report Request: {report_type}",
                     html_body=f"""
                     <h2>New Intelligence Report Request</h2>
-                    <p><strong>From:</strong> {email}</p>
+                    <p><strong>From:</strong> {email} ({user_plan})</p>
                     <p><strong>Request ID:</strong> {result.get('id')}</p>
                     <p><strong>Type:</strong> {report_type}</p>
                     <p><strong>Target:</strong> {target}</p>
@@ -9665,16 +9682,18 @@ def create_intelligence_report():
                     {f'<p><strong>Notes:</strong><br>{notes}</p>' if notes else ''}
                     {f'<p><strong>Context Chat:</strong> {context_chat_id}</p>' if context_chat_id else ''}
                     {f'<p><strong>Context Itinerary:</strong> {context_itinerary_id}</p>' if context_itinerary_id else ''}
+                    {f'<p><strong>Context Alerts:</strong> {len(context_alert_ids)} alerts</p>' if context_alert_ids else ''}
                     """,
                     from_addr=None
                 )
             except Exception as e:
                 logger.warning(f"Failed to send analyst notification: {e}")
             
+            # Return request_id and status
             return _build_cors_response(jsonify({
                 'ok': True,
-                'message': 'Report request created',
-                'request': result
+                'request_id': result.get('id'),
+                'status': result.get('status')
             }))
             
         except Exception as e:
@@ -9692,9 +9711,17 @@ def create_intelligence_report():
             jsonify({'error': 'Internal error', 'details': str(e)}), 500))
 
 
-@app.route('/api/intelligence-reports', methods=['GET', 'OPTIONS'])
+# Alias for backwards compatibility (frontend may use old path)
+@app.route('/api/intelligence-reports/request', methods=['POST', 'OPTIONS'])
 @login_required
-def get_user_intelligence_reports():
+def create_intelligence_report_alias():
+    """Alias for /api/reports/request (backwards compatibility)."""
+    return create_intelligence_report()
+
+
+@app.route('/api/reports', methods=['GET', 'OPTIONS'])
+@login_required
+def get_user_reports():
     """
     Get intelligence report requests for the logged-in user.
     
@@ -9736,13 +9763,20 @@ def get_user_intelligence_reports():
         }))
         
     except Exception as e:
-        logger.error(f'get_user_intelligence_reports error: {e}')
+        logger.error(f'get_user_reports error: {e}')
         import traceback
         traceback.print_exc()
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get reports'}), 500))
 
 
-@app.route('/api/intelligence-reports/<request_id>', methods=['GET', 'OPTIONS'])
+@app.route('/api/intelligence-reports', methods=['GET', 'OPTIONS'])
+@login_required
+def get_user_intelligence_reports():
+    """Alias for /api/reports (backwards compatibility)."""
+    return get_user_reports()
+
+
+@app.route('/api/reports/<request_id>', methods=['GET', 'OPTIONS'])
 @login_required
 def get_report_request_detail(request_id):
     """Get full details of a specific report request with all associated reports."""
