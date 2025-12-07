@@ -988,6 +988,196 @@ def trigger_acled_collection():
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }), 500)
 
+
+# ========== Admin: Intelligence Report Workflow ==========
+
+@app.route("/admin/reports/pending", methods=["GET"])
+def admin_get_pending_reports():
+    """Get all pending report requests for analyst triage (admin only)."""
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from utils.db_utils import fetch_all
+        
+        status_filter = request.args.get("status", "requested")
+        limit = min(int(request.args.get("limit", 100)), 500)
+        
+        results = fetch_all("""
+            SELECT rr.id, rr.user_id, rr.report_type, rr.title, rr.target, rr.scope,
+                   rr.urgency, rr.status, rr.notes, rr.analyst_notes,
+                   rr.created_at, rr.updated_at, u.email
+            FROM report_requests rr
+            LEFT JOIN users u ON rr.user_id = u.id
+            WHERE rr.status = %s
+            ORDER BY 
+                CASE rr.urgency 
+                    WHEN 'critical' THEN 1
+                    WHEN 'priority' THEN 2
+                    ELSE 3
+                END,
+                rr.created_at ASC
+            LIMIT %s
+        """, (status_filter, limit))
+        
+        requests = [
+            {
+                "id": str(row[0]),
+                "user_id": str(row[1]) if row[1] else None,
+                "report_type": row[2],
+                "title": row[3],
+                "target": row[4],
+                "scope": row[5],
+                "urgency": row[6],
+                "status": row[7],
+                "notes": row[8],
+                "analyst_notes": row[9],
+                "created_at": row[10].isoformat() if row[10] else None,
+                "updated_at": row[11].isoformat() if row[11] else None,
+                "user_email": row[12]
+            }
+            for row in results
+        ] if results else []
+        
+        return jsonify({
+            "ok": True,
+            "data": requests,
+            "count": len(requests),
+            "status_filter": status_filter
+        })
+        
+    except Exception as e:
+        logger.error(f"admin_get_pending_reports error: {e}")
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
+@app.route("/admin/reports/<request_id>/status", methods=["POST"])
+def admin_update_report_status(request_id):
+    """Update report request status and analyst notes (admin only)."""
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from utils.db_utils import update_report_request_status
+        
+        data = request.json or {}
+        new_status = data.get("status")
+        analyst_notes = data.get("analyst_notes")
+        
+        valid_statuses = ["requested", "triaged", "in_progress", "draft", "delivered", "cancelled"]
+        if new_status not in valid_statuses:
+            return make_response(jsonify({
+                "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            }), 400)
+        
+        success = update_report_request_status(request_id, new_status, analyst_notes)
+        
+        if success:
+            return jsonify({
+                "ok": True,
+                "message": f"Status updated to {new_status}",
+                "request_id": request_id
+            })
+        else:
+            return make_response(jsonify({"error": "Failed to update status"}), 500)
+        
+    except Exception as e:
+        logger.error(f"admin_update_report_status error: {e}")
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
+@app.route("/admin/reports/<request_id>/deliver", methods=["POST"])
+def admin_deliver_report(request_id):
+    """Create and deliver final report for a request (admin/analyst only)."""
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from utils.db_utils import create_report, get_report_request_details, fetch_one
+        
+        data = request.json or {}
+        title = data.get("title")
+        report_body = data.get("report_body")
+        confidence_level = data.get("confidence_level", "medium")
+        source_summary = data.get("source_summary")
+        generated_by = data.get("generated_by", "hybrid")
+        pdf_url = data.get("pdf_url")
+        author_email = data.get("author_email")  # Analyst email
+        
+        if not title or not report_body:
+            return make_response(jsonify({"error": "title and report_body are required"}), 400)
+        
+        # Get author_id if provided
+        author_id = None
+        if author_email:
+            author_row = fetch_one("SELECT id FROM users WHERE email = %s", (author_email,))
+            if author_row:
+                author_id = str(author_row[0] if isinstance(author_row, tuple) else author_row['id'])
+        
+        # Get request details for notification
+        request_details = get_report_request_details(request_id)
+        if not request_details:
+            return make_response(jsonify({"error": "Request not found"}), 404)
+        
+        # Create the report
+        result = create_report(
+            request_id=request_id,
+            title=title,
+            report_body=report_body,
+            author_id=author_id,
+            confidence_level=confidence_level,
+            source_summary=source_summary,
+            generated_by=generated_by,
+            pdf_url=pdf_url
+        )
+        
+        # Send notification to user
+        try:
+            if request_details.get('user_id'):
+                user_row = fetch_one("SELECT email FROM users WHERE id = %s", (request_details['user_id'],))
+                if user_row:
+                    user_email = user_row[0] if isinstance(user_row, tuple) else user_row['email']
+                    
+                    from utils.email_dispatcher import send_email
+                    send_email(
+                        user_email=user_email,
+                        to_addr=user_email,
+                        subject=f"Your Intelligence Report is Ready: {title}",
+                        html_body=f"""
+                        <h2>Your Intelligence Report has been delivered</h2>
+                        <p><strong>Request ID:</strong> {request_id}</p>
+                        <p><strong>Report Title:</strong> {title}</p>
+                        <p><strong>Confidence Level:</strong> {confidence_level}</p>
+                        {f'<p><strong>PDF:</strong> <a href="{pdf_url}">Download Report</a></p>' if pdf_url else ''}
+                        <p>View your report in the Sentinel AI dashboard.</p>
+                        """,
+                        from_addr=None
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to send user notification: {e}")
+        
+        return jsonify({
+            "ok": True,
+            "message": "Report delivered successfully",
+            "report": result
+        })
+        
+    except Exception as e:
+        logger.error(f"admin_deliver_report error: {e}")
+        import traceback
+        traceback.print_exc()
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
 # ---------- Imports: plan / advisor / engines ----------
 try:
     from utils.plan_utils import (
@@ -9368,96 +9558,93 @@ def get_itinerary_stats():
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get stats'}), 500))
 
 
-# ========== Intelligence Reports ==========
+# ========== Intelligence Reports (Professional Tasking System) ==========
 
 @app.route('/api/intelligence-reports/request', methods=['POST', 'OPTIONS'])
+@login_required
 def create_intelligence_report():
     """
-    Create a new intelligence report request.
+    Create a new intelligence report request (tasking).
     
     Request body:
     {
-        "report_type": "competitive|threat|cyber|regulatory|financial|custom",
-        "subject": "Target/subject of the report",
-        "timeline": "Standard|Expedited|Urgent",
-        "context_description": "Optional context and notes"
+        "report_type": "threat|travel|due_diligence|exec|custom",
+        "target": "Country/person/org/event/location",
+        "scope": "Geographic, temporal, or operational scope",
+        "title": "Optional short label",
+        "notes": "User instructions and context",
+        "urgency": "standard|priority|critical",
+        "context_chat_id": "Optional UUID of related chat",
+        "context_itinerary_id": "Optional UUID of travel itinerary",
+        "context_alert_ids": ["Optional array of alert UUIDs"]
     }
-    
-    Note: Does NOT require login - accepts anonymous requests (stores email from contact form)
     """
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
     
     try:
         payload = _json_request()
+        email = get_logged_in_email()
+        
+        # Get user_id
+        if fetch_one is None:
+            return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+        
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = str(user_row['id'] if isinstance(user_row, dict) else user_row[0])
+        
+        # Extract and validate fields
+        report_type = (payload.get("report_type") or "").strip().lower()
+        target = (payload.get("target") or "").strip()
+        scope = (payload.get("scope") or "").strip()
+        title = (payload.get("title") or "").strip() or None
+        notes = (payload.get("notes") or "").strip() or None
+        urgency = (payload.get("urgency") or "standard").strip().lower()
+        context_chat_id = (payload.get("context_chat_id") or "").strip() or None
+        context_itinerary_id = (payload.get("context_itinerary_id") or "").strip() or None
+        context_alert_ids = payload.get("context_alert_ids") or None
         
         # Validate required fields
-        report_type = (payload.get("report_type") or "").strip().upper()
-        subject = (payload.get("subject") or "").strip()
-        timeline = (payload.get("timeline") or "").strip()
-        context_description = (payload.get("context_description") or "").strip() or None
-        email = (payload.get("email") or "").strip().lower()
-        
-        # Validate inputs
-        valid_types = ["COMPETITIVE", "THREAT", "CYBER", "REGULATORY", "FINANCIAL", "CUSTOM"]
+        valid_types = ["threat", "travel", "due_diligence", "exec", "custom"]
         if report_type not in valid_types:
             return _build_cors_response(make_response(
-                jsonify({'error': f'Invalid report type. Must be one of: {", ".join(valid_types)}'}), 400))
+                jsonify({'error': f'Invalid report_type. Must be one of: {", ".join(valid_types)}'}), 400))
         
-        if not subject:
+        if not target:
             return _build_cors_response(make_response(
-                jsonify({'error': 'Subject is required'}), 400))
+                jsonify({'error': 'Target is required'}), 400))
         
-        if not timeline:
+        if not scope:
             return _build_cors_response(make_response(
-                jsonify({'error': 'Timeline is required'}), 400))
+                jsonify({'error': 'Scope is required'}), 400))
         
-        if not email:
-            return _build_cors_response(make_response(
-                jsonify({'error': 'Email is required'}), 400))
+        valid_urgencies = ["standard", "priority", "critical"]
+        if urgency not in valid_urgencies:
+            urgency = "standard"
         
-        # Get user_id if authenticated, otherwise create anonymous entry
-        user_id = None
-        try:
-            user_email = get_logged_in_email()
-            if user_email and fetch_one:
-                user_row = fetch_one('SELECT id FROM users WHERE email=%s', (user_email,))
-                if user_row:
-                    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
-        except Exception:
-            pass
-        
-        # If no authenticated user, check if email exists in database
-        if not user_id and fetch_one:
-            try:
-                user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
-                if user_row:
-                    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
-            except Exception:
-                pass
-        
-        # If still no user_id, generate a temporary UUID for anonymous requests
-        if not user_id:
-            import uuid
-            user_id = str(uuid.uuid4())
-        
-        # Initialize table and create request
-        from utils.db_utils import init_intelligence_reports_table, create_intelligence_report_request
+        # Initialize tables and create request
+        from utils.db_utils import init_intelligence_reports_tables, create_report_request
         
         try:
-            init_intelligence_reports_table()
-            result = create_intelligence_report_request(
+            init_intelligence_reports_tables()
+            result = create_report_request(
                 user_id=user_id,
-                email=email,
                 report_type=report_type,
-                subject=subject,
-                timeline=timeline,
-                context_description=context_description
+                target=target,
+                scope=scope,
+                title=title,
+                notes=notes,
+                urgency=urgency,
+                context_chat_id=context_chat_id,
+                context_itinerary_id=context_itinerary_id,
+                context_alert_ids=context_alert_ids
             )
             
-            logger.info(f"Intelligence report request created: {email} - {report_type} - {subject}")
+            logger.info(f"Report request created: {email} - {report_type} - {target}")
             
-            # Send confirmation email to admin/sales
+            # Send notification to analysts
             try:
                 from utils.email_dispatcher import send_email
                 admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel-ai.com")
@@ -9465,30 +9652,35 @@ def create_intelligence_report():
                 send_email(
                     user_email=email,
                     to_addr=admin_email,
-                    subject=f"New Intelligence Report Request: {report_type}",
+                    subject=f"New {urgency.upper()} Report Request: {report_type}",
                     html_body=f"""
                     <h2>New Intelligence Report Request</h2>
                     <p><strong>From:</strong> {email}</p>
-                    <p><strong>Report Type:</strong> {report_type}</p>
-                    <p><strong>Subject:</strong> {subject}</p>
-                    <p><strong>Timeline:</strong> {timeline}</p>
-                    <p><strong>Context:</strong></p>
-                    <p>{context_description or 'N/A'}</p>
+                    <p><strong>Request ID:</strong> {result.get('id')}</p>
+                    <p><strong>Type:</strong> {report_type}</p>
+                    <p><strong>Target:</strong> {target}</p>
+                    <p><strong>Scope:</strong> {scope}</p>
+                    <p><strong>Urgency:</strong> {urgency.upper()}</p>
+                    {f'<p><strong>Title:</strong> {title}</p>' if title else ''}
+                    {f'<p><strong>Notes:</strong><br>{notes}</p>' if notes else ''}
+                    {f'<p><strong>Context Chat:</strong> {context_chat_id}</p>' if context_chat_id else ''}
+                    {f'<p><strong>Context Itinerary:</strong> {context_itinerary_id}</p>' if context_itinerary_id else ''}
                     """,
                     from_addr=None
                 )
             except Exception as e:
-                logger.warning(f"Failed to send admin notification: {e}")
+                logger.warning(f"Failed to send analyst notification: {e}")
             
             return _build_cors_response(jsonify({
                 'ok': True,
-                'message': 'Intelligence report request received',
-                'request_id': result.get('id'),
-                'status': 'pending'
+                'message': 'Report request created',
+                'request': result
             }))
             
         except Exception as e:
-            logger.error(f"Error creating intelligence report: {e}")
+            logger.error(f"Error creating report request: {e}")
+            import traceback
+            traceback.print_exc()
             return _build_cors_response(make_response(
                 jsonify({'error': 'Failed to create report request', 'details': str(e)}), 500))
     
@@ -9508,9 +9700,10 @@ def get_user_intelligence_reports():
     
     Query params:
         limit: Max records to return (default 50)
+        status: Filter by status (optional)
     
     Returns:
-        Array of report request records
+        Array of report request records with associated reports
     """
     if request.method == "OPTIONS":
         return _build_cors_response(make_response("", 204))
@@ -9524,22 +9717,70 @@ def get_user_intelligence_reports():
         user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
         if not user_row:
             return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
-        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        user_id = str(user_row['id'] if isinstance(user_row, dict) else user_row[0])
         
         limit = min(int(request.args.get('limit', 50)), 100)
+        status_filter = request.args.get('status', None)
         
-        from utils.db_utils import get_user_intelligence_reports
-        reports = get_user_intelligence_reports(user_id, limit=limit)
+        from utils.db_utils import get_user_report_requests, get_reports_by_request
+        requests = get_user_report_requests(user_id, limit=limit, status=status_filter)
+        
+        # Attach reports to each request
+        for req in requests:
+            req['reports'] = get_reports_by_request(req['id'])
         
         return _build_cors_response(jsonify({
             'ok': True,
-            'data': reports,
-            'count': len(reports)
+            'data': requests,
+            'count': len(requests)
         }))
         
     except Exception as e:
         logger.error(f'get_user_intelligence_reports error: {e}')
+        import traceback
+        traceback.print_exc()
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get reports'}), 500))
+
+
+@app.route('/api/intelligence-reports/<request_id>', methods=['GET', 'OPTIONS'])
+@login_required
+def get_report_request_detail(request_id):
+    """Get full details of a specific report request with all associated reports."""
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        email = get_logged_in_email()
+        
+        if fetch_one is None:
+            return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+        
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = str(user_row['id'] if isinstance(user_row, dict) else user_row[0])
+        
+        from utils.db_utils import get_report_request_details, get_reports_by_request
+        
+        request_details = get_report_request_details(request_id)
+        if not request_details:
+            return _build_cors_response(make_response(jsonify({'error': 'Request not found'}), 404))
+        
+        # Verify ownership
+        if request_details['user_id'] != user_id:
+            return _build_cors_response(make_response(jsonify({'error': 'Unauthorized'}), 403))
+        
+        # Attach reports
+        request_details['reports'] = get_reports_by_request(request_id)
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'data': request_details
+        }))
+        
+    except Exception as e:
+        logger.error(f'get_report_request_detail error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to get request details'}), 500))
 
 
 # ========== Phase 3: PDF Export History ==========

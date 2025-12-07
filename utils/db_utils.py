@@ -1407,135 +1407,309 @@ def get_alert_embedding(alert_uuid: str) -> Optional[List[float]]:
 
 
 # =====================================================================
-# Intelligence Reports Functions
+# Intelligence Reports Functions (Professional Tasking System)
 # =====================================================================
 
-def init_intelligence_reports_table():
-    """Initialize the intelligence_reports table if it doesn't exist."""
+def init_intelligence_reports_tables():
+    """Initialize report_requests and reports tables for intelligence tasking workflow."""
     try:
+        # Main request/tasking table
         execute("""
-            CREATE TABLE IF NOT EXISTS intelligence_reports (
-                id SERIAL PRIMARY KEY,
-                user_id UUID,
-                email VARCHAR(255) NOT NULL,
-                report_type VARCHAR(100) NOT NULL,
-                subject TEXT NOT NULL,
-                timeline VARCHAR(50) NOT NULL,
-                context_description TEXT,
-                status VARCHAR(50) DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW(),
-                completed_at TIMESTAMP,
-                notes TEXT
+            CREATE TABLE IF NOT EXISTS report_requests (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                
+                report_type TEXT NOT NULL,
+                title TEXT,
+                target TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                
+                context_chat_id UUID NULL,
+                context_itinerary_id UUID NULL,
+                context_alert_ids JSONB NULL,
+                
+                notes TEXT NULL,
+                urgency TEXT DEFAULT 'standard',
+                status TEXT DEFAULT 'requested',
+                analyst_notes TEXT NULL,
+                
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
             )
         """)
-        # Indexes for quick filtering
+        
+        # Final report output table
         execute("""
-            CREATE INDEX IF NOT EXISTS idx_intel_reports_user_status
-            ON intelligence_reports (user_id, status)
+            CREATE TABLE IF NOT EXISTS reports (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                request_id UUID REFERENCES report_requests(id) ON DELETE CASCADE,
+                
+                author_id UUID REFERENCES users(id) NULL,
+                title TEXT NOT NULL,
+                report_body TEXT NOT NULL,
+                
+                confidence_level TEXT DEFAULT 'medium',
+                source_summary JSONB,
+                generated_by TEXT DEFAULT 'hybrid',
+                
+                pdf_url TEXT NULL,
+                delivered_at TIMESTAMPTZ NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+        
+        # Indexes for performance
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_report_requests_user_status
+            ON report_requests (user_id, status)
         """)
         execute("""
-            CREATE INDEX IF NOT EXISTS idx_intel_reports_created_at
-            ON intelligence_reports (created_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_report_requests_created
+            ON report_requests (created_at DESC)
         """)
-        logger.info("✓ intelligence_reports table initialized")
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_reports_request_id
+            ON reports (request_id)
+        """)
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_reports_delivered
+            ON reports (delivered_at DESC)
+        """)
+        
+        logger.info("✓ Intelligence reports tables (report_requests, reports) initialized")
     except Exception as e:
-        logger.warning(f"Intelligence reports table already exists or init failed: {e}")
+        logger.warning(f"Intelligence reports tables already exist or init failed: {e}")
 
 
-def create_intelligence_report_request(
+def create_report_request(
     user_id: str,
-    email: str,
     report_type: str,
-    subject: str,
-    timeline: str,
-    context_description: Optional[str] = None
+    target: str,
+    scope: str,
+    title: Optional[str] = None,
+    notes: Optional[str] = None,
+    urgency: str = 'standard',
+    context_chat_id: Optional[str] = None,
+    context_itinerary_id: Optional[str] = None,
+    context_alert_ids: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
-    Create a new intelligence report request.
+    Create a new intelligence report request (tasking).
     
     Args:
         user_id: UUID of the requesting user
-        email: Email of the user
-        report_type: Type of report (one of: competitive, threat, cyber, regulatory, financial, custom)
-        subject: Report subject/target
-        timeline: Timeline/urgency (Standard, Expedited, Urgent)
-        context_description: Optional context/notes
+        report_type: Type (threat, travel, due_diligence, exec, custom)
+        target: Target entity (country/person/org/event/location)
+        scope: Geographic, temporal, operational scope
+        title: Short internal label
+        notes: User-provided instructions
+        urgency: standard | priority | critical
+        context_chat_id: Optional link to chat thread
+        context_itinerary_id: Optional link to travel itinerary
+        context_alert_ids: Optional list of alert UUIDs
         
     Returns:
-        Dictionary with created report info or error
+        Dictionary with created request info
     """
     try:
-        row = fetch_one("""
-            INSERT INTO intelligence_reports 
-            (user_id, email, report_type, subject, timeline, context_description, status)
-            VALUES (%s, %s, %s, %s, %s, %s, 'pending')
-            RETURNING id
-        """, (user_id, email, report_type, subject, timeline, context_description))
-        report_id = row[0] if row else None
+        import json
+        context_alerts_json = json.dumps(context_alert_ids) if context_alert_ids else None
         
-        logger.info(f"Created intelligence report {report_id} for {email}")
+        row = fetch_one("""
+            INSERT INTO report_requests 
+            (user_id, report_type, title, target, scope, notes, urgency, 
+             context_chat_id, context_itinerary_id, context_alert_ids, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'requested')
+            RETURNING id, created_at
+        """, (user_id, report_type, title, target, scope, notes, urgency,
+              context_chat_id, context_itinerary_id, context_alerts_json))
+        
+        request_id = str(row[0]) if row else None
+        created_at = row[1].isoformat() if row and row[1] else datetime.utcnow().isoformat()
+        
+        logger.info(f"Created report request {request_id} for user {user_id}: {report_type} - {target}")
         
         return {
-            "id": report_id,
-            "status": "pending",
-            "created_at": datetime.utcnow().isoformat(),
+            "id": request_id,
+            "status": "requested",
+            "created_at": created_at,
             "report_type": report_type,
-            "subject": subject,
-            "timeline": timeline
+            "target": target,
+            "scope": scope,
+            "urgency": urgency
         }
     except Exception as e:
-        logger.error(f"Error creating intelligence report: {e}")
+        logger.error(f"Error creating report request: {e}")
         raise
 
 
-def get_user_intelligence_reports(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """Retrieve intelligence reports for a user."""
+def get_user_report_requests(user_id: str, limit: int = 50, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve report requests for a user with optional status filter."""
     try:
-        results = fetch_all("""
-            SELECT id, report_type, subject, timeline, status, created_at, completed_at
-            FROM intelligence_reports
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s
-        """, (user_id, limit))
+        if status:
+            results = fetch_all("""
+                SELECT id, report_type, title, target, scope, urgency, status, created_at, updated_at
+                FROM report_requests
+                WHERE user_id = %s AND status = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (user_id, status, limit))
+        else:
+            results = fetch_all("""
+                SELECT id, report_type, title, target, scope, urgency, status, created_at, updated_at
+                FROM report_requests
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (user_id, limit))
         
         return [
             {
-                "id": row[0],
+                "id": str(row[0]),
                 "report_type": row[1],
-                "subject": row[2],
-                "timeline": row[3],
-                "status": row[4],
-                "created_at": row[5].isoformat() if row[5] else None,
-                "completed_at": row[6].isoformat() if row[6] else None
+                "title": row[2],
+                "target": row[3],
+                "scope": row[4],
+                "urgency": row[5],
+                "status": row[6],
+                "created_at": row[7].isoformat() if row[7] else None,
+                "updated_at": row[8].isoformat() if row[8] else None
             }
             for row in results
         ] if results else []
     except Exception as e:
-        logger.error(f"Error fetching user intelligence reports: {e}")
+        logger.error(f"Error fetching user report requests: {e}")
         return []
 
 
-def update_intelligence_report_status(
-    report_id: int,
+def update_report_request_status(
+    request_id: str,
     status: str,
-    notes: Optional[str] = None
+    analyst_notes: Optional[str] = None
 ) -> bool:
-    """Update the status of an intelligence report."""
+    """Update the status of a report request."""
     try:
-        completed_at = "NOW()" if status == "completed" else "NULL"
-        execute(f"""
-            UPDATE intelligence_reports
+        execute("""
+            UPDATE report_requests
             SET status = %s, 
-                notes = %s,
-                completed_at = CASE WHEN %s = 'completed' THEN NOW() ELSE completed_at END,
+                analyst_notes = COALESCE(%s, analyst_notes),
                 updated_at = NOW()
             WHERE id = %s
-        """, (status, notes, status, report_id))
+        """, (status, analyst_notes, request_id))
         
-        logger.info(f"Updated intelligence report {report_id} status to {status}")
+        logger.info(f"Updated report request {request_id} status to {status}")
         return True
     except Exception as e:
-        logger.error(f"Error updating intelligence report status: {e}")
+        logger.error(f"Error updating report request status: {e}")
         return False
+
+
+def get_report_request_details(request_id: str) -> Optional[Dict[str, Any]]:
+    """Get full details of a report request."""
+    try:
+        row = fetch_one("""
+            SELECT id, user_id, report_type, title, target, scope, notes, urgency, status,
+                   context_chat_id, context_itinerary_id, context_alert_ids,
+                   analyst_notes, created_at, updated_at
+            FROM report_requests
+            WHERE id = %s
+        """, (request_id,))
+        
+        if not row:
+            return None
+        
+        import json
+        return {
+            "id": str(row[0]),
+            "user_id": str(row[1]) if row[1] else None,
+            "report_type": row[2],
+            "title": row[3],
+            "target": row[4],
+            "scope": row[5],
+            "notes": row[6],
+            "urgency": row[7],
+            "status": row[8],
+            "context_chat_id": str(row[9]) if row[9] else None,
+            "context_itinerary_id": str(row[10]) if row[10] else None,
+            "context_alert_ids": json.loads(row[11]) if row[11] else [],
+            "analyst_notes": row[12],
+            "created_at": row[13].isoformat() if row[13] else None,
+            "updated_at": row[14].isoformat() if row[14] else None
+        }
+    except Exception as e:
+        logger.error(f"Error fetching report request details: {e}")
+        return None
+
+
+def create_report(
+    request_id: str,
+    title: str,
+    report_body: str,
+    author_id: Optional[str] = None,
+    confidence_level: str = 'medium',
+    source_summary: Optional[Dict[str, Any]] = None,
+    generated_by: str = 'hybrid',
+    pdf_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """Create a final report linked to a request."""
+    try:
+        import json
+        source_json = json.dumps(source_summary) if source_summary else None
+        
+        row = fetch_one("""
+            INSERT INTO reports
+            (request_id, author_id, title, report_body, confidence_level, 
+             source_summary, generated_by, pdf_url, delivered_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            RETURNING id, created_at, delivered_at
+        """, (request_id, author_id, title, report_body, confidence_level,
+              source_json, generated_by, pdf_url))
+        
+        report_id = str(row[0]) if row else None
+        
+        # Update request status to delivered
+        execute("""
+            UPDATE report_requests
+            SET status = 'delivered', updated_at = NOW()
+            WHERE id = %s
+        """, (request_id,))
+        
+        logger.info(f"Created report {report_id} for request {request_id}")
+        
+        return {
+            "id": report_id,
+            "request_id": request_id,
+            "created_at": row[1].isoformat() if row and row[1] else None,
+            "delivered_at": row[2].isoformat() if row and row[2] else None
+        }
+    except Exception as e:
+        logger.error(f"Error creating report: {e}")
+        raise
+
+
+def get_reports_by_request(request_id: str) -> List[Dict[str, Any]]:
+    """Get all reports associated with a request."""
+    try:
+        results = fetch_all("""
+            SELECT id, title, confidence_level, generated_by, pdf_url, 
+                   delivered_at, created_at
+            FROM reports
+            WHERE request_id = %s
+            ORDER BY created_at DESC
+        """, (request_id,))
+        
+        return [
+            {
+                "id": str(row[0]),
+                "title": row[1],
+                "confidence_level": row[2],
+                "generated_by": row[3],
+                "pdf_url": row[4],
+                "delivered_at": row[5].isoformat() if row[5] else None,
+                "created_at": row[6].isoformat() if row[6] else None
+            }
+            for row in results
+        ] if results else []
+    except Exception as e:
+        logger.error(f"Error fetching reports: {e}")
+        return []
