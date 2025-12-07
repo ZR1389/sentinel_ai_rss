@@ -1713,3 +1713,18 @@ def get_reports_by_request(request_id: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error fetching reports: {e}")
         return []
+
+
+def update_report_pdf_url(report_id: str, pdf_url: str) -> bool:
+    """Update pdf_url for a report."""
+    try:
+        execute("""
+            UPDATE reports
+            SET pdf_url = %s, delivered_at = NOW()
+            WHERE id = %s
+        """, (pdf_url, report_id))
+        logger.info(f"Updated pdf_url for report {report_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating report pdf_url: {e}")
+        return False

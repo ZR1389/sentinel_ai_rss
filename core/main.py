@@ -1513,6 +1513,222 @@ def admin_deliver_report(request_id):
         return make_response(jsonify({"error": str(e)}), 500)
 
 
+@app.route("/admin/reports/<request_id>/finalize", methods=["POST"])
+def admin_finalize_report(request_id):
+    """Generate PDF from report and mark as delivered (admin/analyst only)."""
+    try:
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        
+        if not expected_key or api_key != expected_key:
+            return jsonify({"error": "Unauthorized - valid API key required"}), 401
+        
+        from utils.db_utils import (
+            get_report_request_details, get_reports_by_request,
+            update_report_pdf_url, update_report_request_status, fetch_one, execute
+        )
+        from utils.generate_pdf import generate_pdf_advisory
+        
+        data = request.json or {}
+        report_id = data.get("report_id")  # ID of the report to finalize
+        
+        if not report_id:
+            return make_response(jsonify({"error": "report_id is required"}), 400)
+        
+        # Get the report
+        report_row = fetch_one("""
+            SELECT id, title, report_body, created_at
+            FROM reports
+            WHERE id = %s
+        """, (report_id,))
+        
+        if not report_row:
+            return make_response(jsonify({"error": "Report not found"}), 404)
+        
+        report_title = report_row[1]
+        report_body = report_row[2]
+        
+        # Generate PDF using analyst email or default
+        analyst_email = data.get("analyst_email", "analyst@sentinel-ai.com")
+        
+        # Create PDF file in /tmp with timestamp
+        import time
+        timestamp = int(time.time() * 1000)
+        pdf_filename = f"report_{report_id}_{timestamp}.pdf"
+        pdf_path = os.path.join("/tmp", pdf_filename)
+        
+        # Generate the PDF
+        pdf_result = generate_pdf_advisory(
+            user_email=analyst_email,
+            title=report_title,
+            body_text=report_body,
+            out_path=pdf_path
+        )
+        
+        if not pdf_result:
+            logger.error(f"PDF generation failed for report {report_id}")
+            return make_response(jsonify({"error": "PDF generation failed"}), 500)
+        
+        # Store PDF URL (for now, use file path; in production use S3/CDN)
+        pdf_url = f"/api/reports/{report_id}/download"
+        
+        # Update report with PDF URL
+        update_report_pdf_url(report_id, pdf_url)
+        
+        # Update request status to delivered
+        update_report_request_status(request_id, "delivered")
+        
+        # Get file size
+        file_size = os.path.getsize(pdf_path)
+        
+        # Send notification to user
+        try:
+            request_details = get_report_request_details(request_id)
+            if request_details and request_details.get('user_id'):
+                user_row = fetch_one("SELECT email FROM users WHERE id = %s", (request_details['user_id'],))
+                if user_row:
+                    user_email = user_row[0] if isinstance(user_row, tuple) else user_row['email']
+                    
+                    from utils.email_dispatcher import send_email
+                    send_email(
+                        user_email=user_email,
+                        to_addr=user_email,
+                        subject=f"Your Intelligence Report is Ready for Download: {report_title}",
+                        html_body=f"""
+                        <h2>Your Intelligence Report is Now Ready</h2>
+                        <p><strong>Request ID:</strong> {request_id}</p>
+                        <p><strong>Report Title:</strong> {report_title}</p>
+                        <p><a href="https://sentinel-ai.com/app/reports/{report_id}/download" style="background-color: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block;">Download Report (PDF)</a></p>
+                        <p>Access your report in the Sentinel AI dashboard.</p>
+                        """,
+                        from_addr=None
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to send user notification: {e}")
+        
+        return jsonify({
+            "ok": True,
+            "message": "Report finalized with PDF",
+            "pdf_url": pdf_url,
+            "file_size": file_size,
+            "pdf_path": pdf_path,
+            "delivered_at": datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"admin_finalize_report error: {e}")
+        import traceback
+        traceback.print_exc()
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
+@app.route("/api/reports/<report_id>/download", methods=["GET"])
+def download_report_pdf(report_id):
+    """Download finalized PDF report (authenticated users only)."""
+    try:
+        # Check authentication (JWT)
+        from flask import send_file
+        auth_header = request.headers.get("Authorization") or request.args.get("token")
+        user_email = None
+        user_id = None
+        
+        if auth_header:
+            try:
+                if auth_header.startswith("Bearer "):
+                    token = auth_header[7:]
+                else:
+                    token = auth_header
+                
+                # Try to decode JWT
+                from utils.security_log_utils import decode_jwt
+                payload = decode_jwt(token)
+                if payload:
+                    user_email = payload.get("sub") or payload.get("email")
+                    user_id = payload.get("user_id")
+            except Exception as e:
+                logger.debug(f"JWT decode failed: {e}")
+        
+        if not user_email and not user_id:
+            return jsonify({"error": "Unauthorized - JWT token required"}), 401
+        
+        from utils.db_utils import fetch_one
+        
+        # Get report
+        report_row = fetch_one("""
+            SELECT id, request_id, title, pdf_url, created_at
+            FROM reports
+            WHERE id = %s
+        """, (report_id,))
+        
+        if not report_row:
+            return jsonify({"error": "Report not found"}), 404
+        
+        request_id = report_row[1]
+        report_title = report_row[2]
+        pdf_url_stored = report_row[3]
+        
+        # Check ownership
+        request_row = fetch_one("""
+            SELECT user_id FROM report_requests WHERE id = %s
+        """, (request_id,))
+        
+        if not request_row:
+            return jsonify({"error": "Request not found"}), 404
+        
+        owner_user_id = request_row[0]
+        
+        # Verify user is owner or has admin API key
+        api_key = request.headers.get("X-API-Key") or request.args.get("api_key")
+        expected_key = os.getenv("ADMIN_API_KEY")
+        is_admin = expected_key and api_key == expected_key
+        
+        # Check ownership if not admin
+        if not is_admin:
+            if not user_id:
+                # Try to fetch user_id from email
+                user_row = fetch_one("SELECT id FROM users WHERE email = %s", (user_email,))
+                if user_row:
+                    user_id = user_row[0]
+            
+            if str(user_id) != str(owner_user_id):
+                return jsonify({"error": "Forbidden - you do not have access to this report"}), 403
+        
+        # Check if PDF exists
+        if not pdf_url_stored:
+            return jsonify({"error": "Report PDF not yet generated"}), 412
+        
+        # Get the PDF file path
+        # For now, look in /tmp for the most recent PDF matching this report_id
+        import glob
+        pdf_files = glob.glob(f"/tmp/report_{report_id}_*.pdf")
+        
+        if not pdf_files:
+            return jsonify({"error": "PDF file not found on server"}), 404
+        
+        # Get the most recent PDF
+        pdf_path = max(pdf_files, key=os.path.getctime)
+        
+        if not os.path.exists(pdf_path):
+            return jsonify({"error": "PDF file not found"}), 404
+        
+        # Log download
+        logger.info(f"Report {report_id} downloaded by user {user_id}")
+        
+        # Stream the PDF file
+        return send_file(
+            pdf_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{report_title.replace(' ', '_')[:80]}.pdf"
+        )
+        
+    except Exception as e:
+        logger.error(f"download_report_pdf error: {e}")
+        import traceback
+        traceback.print_exc()
+        return make_response(jsonify({"error": str(e)}), 500)
+
+
 # ---------- Imports: plan / advisor / engines ----------
 try:
     from utils.plan_utils import (
