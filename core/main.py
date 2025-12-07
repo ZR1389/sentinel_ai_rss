@@ -9368,6 +9368,180 @@ def get_itinerary_stats():
         return _build_cors_response(make_response(jsonify({'error': 'Failed to get stats'}), 500))
 
 
+# ========== Intelligence Reports ==========
+
+@app.route('/api/intelligence-reports/request', methods=['POST', 'OPTIONS'])
+def create_intelligence_report():
+    """
+    Create a new intelligence report request.
+    
+    Request body:
+    {
+        "report_type": "competitive|threat|cyber|regulatory|financial|custom",
+        "subject": "Target/subject of the report",
+        "timeline": "Standard|Expedited|Urgent",
+        "context_description": "Optional context and notes"
+    }
+    
+    Note: Does NOT require login - accepts anonymous requests (stores email from contact form)
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        payload = _json_request()
+        
+        # Validate required fields
+        report_type = (payload.get("report_type") or "").strip().upper()
+        subject = (payload.get("subject") or "").strip()
+        timeline = (payload.get("timeline") or "").strip()
+        context_description = (payload.get("context_description") or "").strip() or None
+        email = (payload.get("email") or "").strip().lower()
+        
+        # Validate inputs
+        valid_types = ["COMPETITIVE", "THREAT", "CYBER", "REGULATORY", "FINANCIAL", "CUSTOM"]
+        if report_type not in valid_types:
+            return _build_cors_response(make_response(
+                jsonify({'error': f'Invalid report type. Must be one of: {", ".join(valid_types)}'}), 400))
+        
+        if not subject:
+            return _build_cors_response(make_response(
+                jsonify({'error': 'Subject is required'}), 400))
+        
+        if not timeline:
+            return _build_cors_response(make_response(
+                jsonify({'error': 'Timeline is required'}), 400))
+        
+        if not email:
+            return _build_cors_response(make_response(
+                jsonify({'error': 'Email is required'}), 400))
+        
+        # Get user_id if authenticated, otherwise create anonymous entry
+        user_id = None
+        try:
+            user_email = get_logged_in_email()
+            if user_email and fetch_one:
+                user_row = fetch_one('SELECT id FROM users WHERE email=%s', (user_email,))
+                if user_row:
+                    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        except Exception:
+            pass
+        
+        # If no authenticated user, check if email exists in database
+        if not user_id and fetch_one:
+            try:
+                user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+                if user_row:
+                    user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+            except Exception:
+                pass
+        
+        # If still no user_id, generate a temporary UUID for anonymous requests
+        if not user_id:
+            import uuid
+            user_id = str(uuid.uuid4())
+        
+        # Initialize table and create request
+        from utils.db_utils import init_intelligence_reports_table, create_intelligence_report_request
+        
+        try:
+            init_intelligence_reports_table()
+            result = create_intelligence_report_request(
+                user_id=user_id,
+                email=email,
+                report_type=report_type,
+                subject=subject,
+                timeline=timeline,
+                context_description=context_description
+            )
+            
+            logger.info(f"Intelligence report request created: {email} - {report_type} - {subject}")
+            
+            # Send confirmation email to admin/sales
+            try:
+                from utils.email_dispatcher import send_email
+                admin_email = os.getenv("ADMIN_EMAIL", "admin@sentinel-ai.com")
+                
+                send_email(
+                    user_email=email,
+                    to_addr=admin_email,
+                    subject=f"New Intelligence Report Request: {report_type}",
+                    html_body=f"""
+                    <h2>New Intelligence Report Request</h2>
+                    <p><strong>From:</strong> {email}</p>
+                    <p><strong>Report Type:</strong> {report_type}</p>
+                    <p><strong>Subject:</strong> {subject}</p>
+                    <p><strong>Timeline:</strong> {timeline}</p>
+                    <p><strong>Context:</strong></p>
+                    <p>{context_description or 'N/A'}</p>
+                    """,
+                    from_addr=None
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send admin notification: {e}")
+            
+            return _build_cors_response(jsonify({
+                'ok': True,
+                'message': 'Intelligence report request received',
+                'request_id': result.get('id'),
+                'status': 'pending'
+            }))
+            
+        except Exception as e:
+            logger.error(f"Error creating intelligence report: {e}")
+            return _build_cors_response(make_response(
+                jsonify({'error': 'Failed to create report request', 'details': str(e)}), 500))
+    
+    except Exception as e:
+        logger.error(f"Intelligence report endpoint error: {e}")
+        import traceback
+        traceback.print_exc()
+        return _build_cors_response(make_response(
+            jsonify({'error': 'Internal error', 'details': str(e)}), 500))
+
+
+@app.route('/api/intelligence-reports', methods=['GET', 'OPTIONS'])
+@login_required
+def get_user_intelligence_reports():
+    """
+    Get intelligence report requests for the logged-in user.
+    
+    Query params:
+        limit: Max records to return (default 50)
+    
+    Returns:
+        Array of report request records
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        email = get_logged_in_email()
+        
+        if fetch_one is None:
+            return _build_cors_response(make_response(jsonify({'error': 'DB unavailable'}), 503))
+        
+        user_row = fetch_one('SELECT id FROM users WHERE email=%s', (email,))
+        if not user_row:
+            return _build_cors_response(make_response(jsonify({'error': 'User not found'}), 404))
+        user_id = user_row['id'] if isinstance(user_row, dict) else user_row[0]
+        
+        limit = min(int(request.args.get('limit', 50)), 100)
+        
+        from utils.db_utils import get_user_intelligence_reports
+        reports = get_user_intelligence_reports(user_id, limit=limit)
+        
+        return _build_cors_response(jsonify({
+            'ok': True,
+            'data': reports,
+            'count': len(reports)
+        }))
+        
+    except Exception as e:
+        logger.error(f'get_user_intelligence_reports error: {e}')
+        return _build_cors_response(make_response(jsonify({'error': 'Failed to get reports'}), 500))
+
+
 # ========== Phase 3: PDF Export History ==========
 
 @app.route('/api/export/history', methods=['GET'])

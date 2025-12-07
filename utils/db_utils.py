@@ -1404,3 +1404,138 @@ def get_alert_embedding(alert_uuid: str) -> Optional[List[float]]:
     except Exception as e:
         logger.error(f"Error retrieving embedding for alert {alert_uuid}: {e}")
         return None
+
+
+# =====================================================================
+# Intelligence Reports Functions
+# =====================================================================
+
+def init_intelligence_reports_table():
+    """Initialize the intelligence_reports table if it doesn't exist."""
+    try:
+        execute("""
+            CREATE TABLE IF NOT EXISTS intelligence_reports (
+                id SERIAL PRIMARY KEY,
+                user_id UUID,
+                email VARCHAR(255) NOT NULL,
+                report_type VARCHAR(100) NOT NULL,
+                subject TEXT NOT NULL,
+                timeline VARCHAR(50) NOT NULL,
+                context_description TEXT,
+                status VARCHAR(50) DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                completed_at TIMESTAMP,
+                notes TEXT
+            )
+        """)
+        # Indexes for quick filtering
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_intel_reports_user_status
+            ON intelligence_reports (user_id, status)
+        """)
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_intel_reports_created_at
+            ON intelligence_reports (created_at DESC)
+        """)
+        logger.info("✓ intelligence_reports table initialized")
+    except Exception as e:
+        logger.warning(f"Intelligence reports table already exists or init failed: {e}")
+
+
+def create_intelligence_report_request(
+    user_id: str,
+    email: str,
+    report_type: str,
+    subject: str,
+    timeline: str,
+    context_description: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a new intelligence report request.
+    
+    Args:
+        user_id: UUID of the requesting user
+        email: Email of the user
+        report_type: Type of report (one of: competitive, threat, cyber, regulatory, financial, custom)
+        subject: Report subject/target
+        timeline: Timeline/urgency (Standard, Expedited, Urgent)
+        context_description: Optional context/notes
+        
+    Returns:
+        Dictionary with created report info or error
+    """
+    try:
+        row = fetch_one("""
+            INSERT INTO intelligence_reports 
+            (user_id, email, report_type, subject, timeline, context_description, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+            RETURNING id
+        """, (user_id, email, report_type, subject, timeline, context_description))
+        report_id = row[0] if row else None
+        
+        logger.info(f"Created intelligence report {report_id} for {email}")
+        
+        return {
+            "id": report_id,
+            "status": "pending",
+            "created_at": datetime.utcnow().isoformat(),
+            "report_type": report_type,
+            "subject": subject,
+            "timeline": timeline
+        }
+    except Exception as e:
+        logger.error(f"Error creating intelligence report: {e}")
+        raise
+
+
+def get_user_intelligence_reports(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """Retrieve intelligence reports for a user."""
+    try:
+        results = fetch_all("""
+            SELECT id, report_type, subject, timeline, status, created_at, completed_at
+            FROM intelligence_reports
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (user_id, limit))
+        
+        return [
+            {
+                "id": row[0],
+                "report_type": row[1],
+                "subject": row[2],
+                "timeline": row[3],
+                "status": row[4],
+                "created_at": row[5].isoformat() if row[5] else None,
+                "completed_at": row[6].isoformat() if row[6] else None
+            }
+            for row in results
+        ] if results else []
+    except Exception as e:
+        logger.error(f"Error fetching user intelligence reports: {e}")
+        return []
+
+
+def update_intelligence_report_status(
+    report_id: int,
+    status: str,
+    notes: Optional[str] = None
+) -> bool:
+    """Update the status of an intelligence report."""
+    try:
+        completed_at = "NOW()" if status == "completed" else "NULL"
+        execute(f"""
+            UPDATE intelligence_reports
+            SET status = %s, 
+                notes = %s,
+                completed_at = CASE WHEN %s = 'completed' THEN NOW() ELSE completed_at END,
+                updated_at = NOW()
+            WHERE id = %s
+        """, (status, notes, status, report_id))
+        
+        logger.info(f"Updated intelligence report {report_id} status to {status}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating intelligence report status: {e}")
+        return False
