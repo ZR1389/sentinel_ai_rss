@@ -1728,3 +1728,89 @@ def update_report_pdf_url(report_id: str, pdf_url: str) -> bool:
     except Exception as e:
         logger.error(f"Error updating report pdf_url: {e}")
         return False
+
+
+def init_qualifications_table():
+    """Initialize qualifications table for security strategy request forms."""
+    try:
+        execute("""
+            CREATE TABLE IF NOT EXISTS qualifications (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                
+                full_name TEXT NOT NULL,
+                professional_email TEXT NOT NULL,
+                organization TEXT,
+                
+                advisory_type TEXT NOT NULL,
+                situation TEXT NOT NULL,
+                urgency_level TEXT NOT NULL,
+                budget_aware TEXT DEFAULT 'no',
+                
+                submitted_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+        
+        # Indexes for querying
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_email
+            ON qualifications (professional_email)
+        """)
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_type
+            ON qualifications (advisory_type)
+        """)
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_urgency
+            ON qualifications (urgency_level)
+        """)
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_created
+            ON qualifications (created_at DESC)
+        """)
+        
+        logger.info("✓ Qualifications table initialized")
+    except Exception as e:
+        logger.error(f"Error initializing qualifications table: {e}")
+
+
+def create_qualification(
+    full_name: str,
+    professional_email: str,
+    advisory_type: str,
+    situation: str,
+    urgency_level: str,
+    organization: Optional[str] = None,
+    budget_aware: str = "no",
+    submitted_at: Optional[datetime] = None
+) -> Optional[Dict[str, Any]]:
+    """Store a qualification/security strategy request form submission."""
+    try:
+        submitted_at = submitted_at or datetime.utcnow()
+        
+        row = fetch_one("""
+            INSERT INTO qualifications
+            (full_name, professional_email, organization, advisory_type, 
+             situation, urgency_level, budget_aware, submitted_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (full_name, professional_email, organization, advisory_type,
+              situation, urgency_level, budget_aware, submitted_at))
+        
+        if not row:
+            return None
+        
+        qual_id = str(row[0])
+        logger.info(f"Created qualification {qual_id} for {professional_email}: {advisory_type}")
+        
+        return {
+            "id": qual_id,
+            "full_name": full_name,
+            "professional_email": professional_email,
+            "advisory_type": advisory_type,
+            "created_at": row[1].isoformat() if row[1] else None
+        }
+    except Exception as e:
+        logger.error(f"Error creating qualification: {e}")
+        raise

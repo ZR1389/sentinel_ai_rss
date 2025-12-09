@@ -28,6 +28,7 @@ import os
 import logging
 import traceback
 import base64
+import html
 import signal
 import time
 from typing import Any, Dict, Optional, Callable
@@ -10870,6 +10871,182 @@ def admin_run_digest_now(schedule_id):
         import traceback
         traceback.print_exc()
         return _build_cors_response(make_response(jsonify({'error': 'Failed to run digest', 'details': str(e)}), 500))
+
+
+# ========== Qualification Form Endpoints (Security Strategy Requests) ==========
+
+@app.route('/api/email/qualifications', methods=['POST', 'OPTIONS'])
+def send_qualification_email():
+    """
+    Send email notification for qualification/security strategy request form.
+    
+    Request body:
+    {
+        "to": "info@zikarisk.com",
+        "subject": "[QUALIFICATION] Advisory Request from John Smith",
+        "body": "Plain text email body...",
+        "replyTo": "john@example.com"
+    }
+    
+    Returns: {"ok": true, "message": "Email sent"}
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        payload = _json_request()
+        to_addr = payload.get("to", "").strip()
+        subject = payload.get("subject", "").strip()
+        body = payload.get("body", "").strip()
+        reply_to = payload.get("replyTo", "").strip() or None
+        
+        # Validate required fields
+        if not to_addr:
+            return _build_cors_response(make_response(
+                jsonify({"error": "to is required"}), 400))
+        if not subject:
+            return _build_cors_response(make_response(
+                jsonify({"error": "subject is required"}), 400))
+        if not body:
+            return _build_cors_response(make_response(
+                jsonify({"error": "body is required"}), 400))
+        
+        # Send email via existing email dispatcher
+        from utils.email_dispatcher import send_email
+        
+        send_email(
+            user_email=reply_to or "noreply@zikarisk.com",
+            to_addr=to_addr,
+            subject=subject,
+            html_body=f"<pre>{html.escape(body)}</pre>",
+            from_addr="noreply@zikarisk.com",
+            reply_to=reply_to
+        )
+        
+        logger.info(f"Qualification email sent to {to_addr} from {reply_to}")
+        
+        return _build_cors_response(jsonify({
+            "ok": True,
+            "message": "Email sent"
+        }))
+        
+    except Exception as e:
+        logger.error(f"send_qualification_email error: {e}")
+        import traceback
+        traceback.print_exc()
+        return _build_cors_response(make_response(
+            jsonify({"error": "Failed to send email", "details": str(e)}), 500))
+
+
+@app.route('/api/qualifications', methods=['POST', 'OPTIONS'])
+def create_qualification():
+    """
+    Store a qualification/security strategy request form submission.
+    
+    Request body:
+    {
+        "fullName": "John Smith",
+        "professionalEmail": "john@example.com",
+        "organization": "Acme Corp",
+        "advisoryType": "hiring-provider|career-guidance|business-strategy|other",
+        "situation": "We need vetting services...",
+        "urgencyLevel": "informational|time-sensitive|critical",
+        "budgetAware": "yes|no",
+        "submittedAt": "2025-12-08T15:30:45.123Z"
+    }
+    
+    Returns: {"ok": true, "id": "qual-...", "message": "Stored successfully"}
+    """
+    if request.method == "OPTIONS":
+        return _build_cors_response(make_response("", 204))
+    
+    try:
+        payload = _json_request()
+        
+        full_name = (payload.get("fullName") or "").strip()
+        professional_email = (payload.get("professionalEmail") or "").strip().lower()
+        organization = (payload.get("organization") or "").strip() or None
+        advisory_type = (payload.get("advisoryType") or "").strip().lower()
+        situation = (payload.get("situation") or "").strip()
+        urgency_level = (payload.get("urgencyLevel") or "").strip().lower()
+        budget_aware = (payload.get("budgetAware") or "no").strip().lower()
+        submitted_at_str = payload.get("submittedAt")
+        
+        # Validate required fields
+        if not full_name or len(full_name) < 2:
+            return _build_cors_response(make_response(
+                jsonify({"error": "fullName is required (min 2 chars)"}), 400))
+        
+        if not professional_email or "@" not in professional_email:
+            return _build_cors_response(make_response(
+                jsonify({"error": "professionalEmail is required and must be valid"}), 400))
+        
+        valid_types = ["hiring-provider", "career-guidance", "business-strategy", "other"]
+        if advisory_type not in valid_types:
+            return _build_cors_response(make_response(
+                jsonify({"error": f"advisoryType must be one of: {', '.join(valid_types)}"}), 400))
+        
+        if not situation or len(situation) < 10:
+            return _build_cors_response(make_response(
+                jsonify({"error": "situation is required (min 10 chars)"}), 400))
+        
+        if len(situation) > 5000:
+            return _build_cors_response(make_response(
+                jsonify({"error": "situation too long (max 5000 chars)"}), 400))
+        
+        valid_urgencies = ["informational", "time-sensitive", "critical"]
+        if urgency_level not in valid_urgencies:
+            return _build_cors_response(make_response(
+                jsonify({"error": f"urgencyLevel must be one of: {', '.join(valid_urgencies)}"}), 400))
+        
+        if budget_aware not in ["yes", "no"]:
+            budget_aware = "no"
+        
+        # Parse submitted timestamp
+        submitted_at = None
+        if submitted_at_str:
+            try:
+                from dateutil import parser as date_parser
+                submitted_at = date_parser.isoparse(submitted_at_str)
+            except Exception:
+                submitted_at = datetime.utcnow()
+        else:
+            submitted_at = datetime.utcnow()
+        
+        # Initialize table and store
+        from utils.db_utils import init_qualifications_table, create_qualification as db_create_qual
+        
+        try:
+            init_qualifications_table()
+            result = db_create_qual(
+                full_name=full_name,
+                professional_email=professional_email,
+                organization=organization,
+                advisory_type=advisory_type,
+                situation=situation,
+                urgency_level=urgency_level,
+                budget_aware=budget_aware,
+                submitted_at=submitted_at
+            )
+            
+            logger.info(f"Qualification stored: {professional_email} ({advisory_type})")
+            
+            return _build_cors_response(jsonify({
+                "ok": True,
+                "id": result["id"],
+                "message": "Stored successfully"
+            }), 201)
+            
+        except Exception as e:
+            logger.error(f"create_qualification storage error: {e}")
+            raise
+        
+    except Exception as e:
+        logger.error(f"create_qualification error: {e}")
+        import traceback
+        traceback.print_exc()
+        return _build_cors_response(make_response(
+            jsonify({"error": "Failed to store qualification", "details": str(e)}), 500))
 
 
 # ========== End Phase 3 & 4 ==========
