@@ -289,9 +289,16 @@ def auth_status():
             all_limits = {"chat_messages_per_month": 3, "alerts_days": 7, "alerts_max_results": 30}
 
         return _build_cors_response(jsonify({
-            "email": email,
-            "plan": plan_name,
-            "email_verified": True,
+            "user": {
+                "email": email,
+                "plan": plan_name,
+                "email_verified": True,
+            },
+            "quota": {
+                "used": chat_used,
+                "limit": all_limits.get("chat_messages_per_month", 3),
+                "plan": plan_name,
+            },
             "usage": {
                 "chat_messages_used": chat_used,
                 "chat_messages_limit": all_limits.get("chat_messages_per_month", 3),
@@ -318,6 +325,10 @@ def auth_status():
                 "route_analysis": plan_features.get("route_analysis", False),
                 "briefing_packages": plan_features.get("briefing_packages", False),
             },
+            # Legacy fields for backwards compatibility
+            "email": email,
+            "plan": plan_name,
+            "email_verified": True,
         }))
     except Exception as e:
         logger.error(f"/auth/status error: {e}")
@@ -2328,13 +2339,19 @@ def auth_login():
         "ok": True,
         "access_token": access_token,
         "refresh_token": refresh_bundle,
-        "email_verified": bool(verified),
-        "plan": plan_name,
+        "user": {
+            "email": email,
+            "email_verified": bool(verified),
+            "plan": plan_name,
+        },
         "quota": {
             "used": usage_data["chat_messages_used"],
             "limit": usage_data["chat_messages_limit"],
             "plan": plan_name
-        }
+        },
+        # Legacy fields for backwards compatibility
+        "email_verified": bool(verified),
+        "plan": plan_name,
     }))
 
 @app.route("/auth/refresh", methods=["POST", "OPTIONS"])
@@ -2370,10 +2387,41 @@ def auth_refresh():
         logger.error("create_access_token failed: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Failed to issue access token"}), 500))
 
+    # Get usage data for quota object
+    usage_data = {"chat_messages_used": 0, "chat_messages_limit": 3}
+    try:
+        from utils.plan_utils import get_usage, get_plan_limits
+        u = get_usage(email)
+        if isinstance(u, dict):
+            usage_data["chat_messages_used"] = u.get("chat_messages_used", 0)
+        
+        # Determine limit based on plan
+        if plan_name == "PRO":
+            usage_data["chat_messages_limit"] = 1000
+        elif plan_name in ("VIP", "ENTERPRISE"):
+            usage_data["chat_messages_limit"] = 5000
+        else:
+            try:
+                limits = get_plan_limits(email) or {}
+                usage_data["chat_messages_limit"] = limits.get("chat_messages_per_month", 3)
+            except Exception:
+                usage_data["chat_messages_limit"] = 3
+    except Exception as e:
+        logger.warning("Failed to get usage in auth_refresh: %s", e)
+
     return _build_cors_response(jsonify({
         "ok": True,
         "access_token": access,
         "refresh_bundle": f"{new_rid}:{new_token}",
+        "user": {
+            "email": email,
+            "plan": plan_name,
+        },
+        "quota": {
+            "used": usage_data["chat_messages_used"],
+            "limit": usage_data["chat_messages_limit"],
+            "plan": plan_name,
+        },
     }))
 
 @app.route("/auth/verify/send", methods=["POST", "OPTIONS"])
