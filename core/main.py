@@ -3465,14 +3465,14 @@ def alerts_latest():
             logger.warning(f"Invalid lat/lon/radius params: {e}")
     
     if region:
-        # Keep original behavior: region param can match region OR city
-        where.append("(region = %s OR city = %s)")
+        # Case-insensitive match; keep original behavior where region can also match city
+        where.append("(LOWER(region) = LOWER(%s) OR LOWER(city) = LOWER(%s))")
         params.extend([region, region])
     if country:
-        where.append("country = %s")
+        where.append("LOWER(country) = LOWER(%s)")
         params.append(country)
     if city:
-        where.append("city = %s")
+        where.append("LOWER(city) = LOWER(%s)")
         params.append(city)
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
