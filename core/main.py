@@ -71,6 +71,7 @@ setup_logging("sentinel-api")
 logger = get_logger("sentinel.main")
 metrics = get_metrics_logger("sentinel.main")
 from utils.cache_utils import HybridCache
+from utils.geo_utils import add_lat_lon_aliases
 
 app = Flask(__name__)
 
@@ -3780,8 +3781,21 @@ def api_map_alerts():
         limit = int(request.args.get("limit", 5000))
     except Exception:
         limit = 5000
-    # Cap based on auth: 5000 public, 20000 authenticated
-    max_limit = 20000 if is_authenticated else 5000
+    
+    # Bounding box parameters (read early for limit calculation)
+    min_lat = request.args.get("min_lat")
+    min_lon = request.args.get("min_lon")
+    max_lat = request.args.get("max_lat")
+    max_lon = request.args.get("max_lon")
+    has_bbox = bool(min_lat and min_lon and max_lat and max_lon)
+    
+    # Cap based on auth and bbox: higher limits for authenticated bbox queries to prevent empty zoomed views
+    if is_authenticated and has_bbox:
+        max_limit = 1000  # Authenticated bbox queries get 1000 items
+    elif is_authenticated:
+        max_limit = 20000  # Authenticated non-bbox queries
+    else:
+        max_limit = 5000  # Public queries
     limit = max(1, min(limit, max_limit))
 
     sources_param = request.args.get("sources")  # e.g. "gdelt,rss,news"
@@ -3808,12 +3822,6 @@ def api_map_alerts():
     event_types = [e.strip() for e in event_type_param.split(",")] if event_type_param else []
     
     travel_only = str(request.args.get("travel", "0")).lower() in ("1", "true", "yes", "y")
-    
-    # Bounding box parameters
-    min_lat = request.args.get("min_lat")
-    min_lon = request.args.get("min_lon")
-    max_lat = request.args.get("max_lat")
-    max_lon = request.args.get("max_lon")
 
     # Cache lookup (keyed by path, auth bucket, and sorted query args)
     try:
@@ -3967,7 +3975,8 @@ def api_map_alerts():
           source_kind,
           source_tag,
           latitude,
-          longitude
+          longitude,
+          cluster_id
         FROM alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST
@@ -3976,12 +3985,13 @@ def api_map_alerts():
     params.append(limit)
 
     try:
+        import hashlib  # For incident_id generation
         rows = fetch_all(q, tuple(params))
 
         # Build GeoJSON features with consistent properties for maps
         features = []
         for row in (rows or []):
-            # rows are dicts via fetch_all
+            row = add_lat_lon_aliases(row)
             lat_val = row.get("latitude")
             lon_val = row.get("longitude")
             if lat_val is None or lon_val is None:
@@ -3989,6 +3999,19 @@ def api_map_alerts():
             properties = dict(row)
             properties.pop("latitude", None)
             properties.pop("longitude", None)
+            
+            # Generate stable incident_id for deduplication
+            cluster_id = properties.get("cluster_id")
+            if cluster_id:
+                properties["incident_id"] = str(cluster_id)
+            else:
+                # Deterministic hash from title + country + date
+                title_norm = (properties.get("title") or "").lower().strip()
+                country_norm = (properties.get("country") or "").lower().strip()
+                pub_date = properties.get("published")
+                date_str = pub_date.strftime("%Y-%m-%d") if hasattr(pub_date, 'strftime') else str(pub_date or "")[:10]
+                hash_input = f"{title_norm}|{country_norm}|{date_str}"
+                properties["incident_id"] = hashlib.md5(hash_input.encode('utf-8')).hexdigest()[:16]
             
             # Add frontend-expected fields
             properties["lat"] = float(lat_val)
@@ -4021,15 +4044,119 @@ def api_map_alerts():
                 "geometry": {"type": "Point", "coordinates": [float(lon_val), float(lat_val)]},
                 "properties": properties
             })
+        
+        # Step A: Debug logging when features is empty
+        debug_info = None
+        if not features:
+            logger.warning(f"[MAP_ALERTS] Zero features returned for bbox query (rows={len(rows or [])}). Checking location_method distribution...")
+            # Get count by location_method for debugging
+            debug_where = [w for w in where if "location_method" not in w]  # Remove TIER1 filter
+            debug_where_sql = f"WHERE {' AND '.join(debug_where)}" if debug_where else ""
+            debug_q = f"""
+                SELECT location_method, COUNT(*) as cnt
+                FROM alerts
+                {debug_where_sql}
+                GROUP BY location_method
+                ORDER BY cnt DESC
+                LIMIT 20
+            """
+            debug_params = [p for i, p in enumerate(params) if i > 0]  # Skip TIER1_METHODS array
+            try:
+                method_counts = fetch_all(debug_q, tuple(debug_params))
+                debug_info = {"location_methods": [dict(r) for r in (method_counts or [])]}
+                logger.info(f"[MAP_ALERTS] Location method distribution: {debug_info}")
+            except Exception as e:
+                logger.error(f"[MAP_ALERTS] Debug query failed: {e}")
+                debug_info = {"error": str(e)}
+            
+            # Step B: Soft fallback - retry with relaxed location_method filter
+            logger.info("[MAP_ALERTS] Retrying with relaxed location_method filter (NOT NULL instead of TIER1)...")
+            fallback_where = [w for w in where if "location_method" not in w]
+            fallback_where.append("location_method IS NOT NULL")
+            fallback_where_sql = f"WHERE {' AND '.join(fallback_where)}" if fallback_where else ""
+            fallback_q = f"""
+                SELECT
+                  uuid, published, source, title, link, region, country, city,
+                  category, subcategory, threat_level, threat_label, score, confidence,
+                  gpt_summary, summary, en_snippet, trend_direction, anomaly_flag,
+                  domains, tags, threat_score_components, source_kind, source_tag,
+                  latitude, longitude, cluster_id
+                FROM alerts
+                {fallback_where_sql}
+                ORDER BY published DESC NULLS LAST
+                LIMIT %s
+            """
+            fallback_params = [p for i, p in enumerate(params) if i > 0] + [limit]
+            try:
+                fallback_rows = fetch_all(fallback_q, tuple(fallback_params))
+                logger.info(f"[MAP_ALERTS] Fallback query returned {len(fallback_rows or [])} rows")
+                for row in (fallback_rows or []):
+                    row = add_lat_lon_aliases(row)
+                    lat_val = row.get("latitude")
+                    lon_val = row.get("longitude")
+                    if lat_val is None or lon_val is None:
+                        continue
+                    properties = dict(row)
+                    properties.pop("latitude", None)
+                    properties.pop("longitude", None)
+                    
+                    # Generate stable incident_id for deduplication
+                    cluster_id = properties.get("cluster_id")
+                    if cluster_id:
+                        properties["incident_id"] = str(cluster_id)
+                    else:
+                        title_norm = (properties.get("title") or "").lower().strip()
+                        country_norm = (properties.get("country") or "").lower().strip()
+                        pub_date = properties.get("published")
+                        date_str = pub_date.strftime("%Y-%m-%d") if hasattr(pub_date, 'strftime') else str(pub_date or "")[:10]
+                        hash_input = f"{title_norm}|{country_norm}|{date_str}"
+                        properties["incident_id"] = hashlib.md5(hash_input.encode('utf-8')).hexdigest()[:16]
+                    
+                    properties["lat"] = float(lat_val)
+                    properties["lon"] = float(lon_val)
+                    properties["display_summary"] = (
+                        properties.get("gpt_summary") or properties.get("summary") 
+                        or properties.get("en_snippet") or properties.get("title") 
+                        or "No description available"
+                    )
+                    severity = (properties.get("threat_label") or properties.get("threat_level") or "medium").lower()
+                    severity_colors = {"critical": "#DC2626", "high": "#EA580C", "medium": "#F59E0B", "low": "#10B981"}
+                    properties["risk_color"] = severity_colors.get(severity, severity_colors["medium"])
+                    properties["risk_radius"] = 0 if properties.get("city") else 200000
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [float(lon_val), float(lat_val)]},
+                        "properties": properties
+                    })
+                if features:
+                    logger.info(f"[MAP_ALERTS] Fallback successful: {len(features)} features added")
+                    if debug_info:
+                        debug_info["fallback_used"] = True
+                        debug_info["fallback_count"] = len(features)
+            except Exception as e:
+                logger.error(f"[MAP_ALERTS] Fallback query failed: {e}")
+                if debug_info:
+                    debug_info["fallback_error"] = str(e)
 
         payload = {
             "ok": True,
             "items": rows,
             "features": features,
-            "meta": {"days": days, "limit": limit, "sources": sources, "filters": {
-                "severity": severities, "category": categories, "event_type": event_types, "travel": travel_only
-            }}
+            "meta": {
+                "days": days, 
+                "limit": limit, 
+                "max_limit": max_limit,
+                "sources": sources, 
+                "filters": {
+                    "severity": severities, 
+                    "category": categories, 
+                    "event_type": event_types, 
+                    "travel": travel_only
+                }
+            }
         }
+        if debug_info:
+            payload["debug"] = debug_info
         try:
             if cache_ttl > 0:
                 _MAP_CACHE.set(cache_key, payload, cache_ttl)
@@ -7676,7 +7803,7 @@ def map_alerts_gated():
             return _build_cors_response(make_response(jsonify({'error': f'Plan {plan} allows up to {max_days} days','feature_locked': True,'required_plan': 'PRO' if plan == 'FREE' else ('BUSINESS' if plan == 'PRO' else 'ENTERPRISE')}), 403))
         q = """
             SELECT uuid, published, source, title, link, region, country, city,
-                   threat_level, score, confidence, lat, lon
+                   threat_level, score, confidence, latitude AS lat, longitude AS lon
             FROM alerts
             WHERE published >= NOW() - make_interval(days => %s)
             ORDER BY published DESC NULLS LAST
@@ -7685,7 +7812,7 @@ def map_alerts_gated():
         rows = fetch_all(q, (requested_days,)) or []
         features = []
         for r in rows:
-            d = r if isinstance(r, dict) else None
+            d = add_lat_lon_aliases(r) if isinstance(r, dict) else None
             lat_val = (d.get('lat') if d else (r[11] if len(r) > 11 else None))
             lon_val = (d.get('lon') if d else (r[12] if len(r) > 12 else None))
             if lat_val is None or lon_val is None:

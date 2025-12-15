@@ -5,7 +5,7 @@ Haversine distance, bounding boxes, coordinate validation.
 """
 
 import math
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
@@ -111,3 +111,19 @@ def normalize_longitude(lon: float) -> float:
     while lon < -180:
         lon += 360
     return lon
+
+
+def add_lat_lon_aliases(alert: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy with lat/lon and latitude/longitude harmonized."""
+    if alert is None:
+        return {}
+    res = dict(alert)
+    lat_val = res.get("latitude") if "latitude" in res else res.get("lat")
+    lon_val = res.get("longitude") if "longitude" in res else res.get("lon")
+    if lat_val is not None:
+        res.setdefault("latitude", lat_val)
+        res.setdefault("lat", lat_val)
+    if lon_val is not None:
+        res.setdefault("longitude", lon_val)
+        res.setdefault("lon", lon_val)
+    return res
