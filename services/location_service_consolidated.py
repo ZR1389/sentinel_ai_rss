@@ -343,6 +343,18 @@ def detect_location(text: str = "", title: str = "") -> LocationResult:
         
         if not combined_text:
             return LocationResult()
+
+        # Heuristic: elevate disruption/causal locations in clauses like
+        # "... as Portugal national strike disrupts ..." or "due to <GPE> protest".
+        causal_match = re.search(r"(?:as|due to|after)\s+([A-Z][A-Za-z\-\s]{2,})\s+(?:strike|protest|disruption|closure|unrest)", combined_text, re.IGNORECASE)
+        if causal_match:
+            place_token = causal_match.group(1).strip()
+            canonical_country = _get_canonical_country(place_token)
+            if canonical_country:
+                return LocationResult(country=canonical_country, location_method='causal_clause', location_confidence='medium')
+            city_country = _get_city_country(place_token)
+            if city_country:
+                return LocationResult(city=_titlecase(place_token), country=city_country, location_method='causal_clause', location_confidence='medium')
         
         # Try pattern-based extraction first (most reliable)
         result = _extract_with_patterns(combined_text)

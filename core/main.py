@@ -3683,7 +3683,8 @@ def alerts_public_latest():
           source_kind,
           source_tag,
           latitude,
-          longitude
+          longitude,
+          cluster_id
         FROM alerts
         {where_sql}
         ORDER BY published DESC NULLS LAST
@@ -3693,7 +3694,29 @@ def alerts_public_latest():
 
     try:
         rows = fetch_all(q, tuple(params))
-        return _build_cors_response(jsonify({"ok": True, "items": rows}))
+        # Enrich items with incident_id and score_100
+        import hashlib
+        items = []
+        for r in (rows or []):
+            d = dict(r)
+            cluster_id = d.get("cluster_id")
+            if cluster_id:
+                d["incident_id"] = str(cluster_id)
+            else:
+                title_norm = (d.get("title") or "").lower().strip()
+                country_norm = (d.get("country") or "").lower().strip()
+                pub_date = d.get("published")
+                date_str = pub_date.strftime("%Y-%m-%d") if hasattr(pub_date, 'strftime') else str(pub_date or "")[:10]
+                hash_input = f"{title_norm}|{country_norm}|{date_str}"
+                d["incident_id"] = hashlib.md5(hash_input.encode('utf-8')).hexdigest()[:16]
+            try:
+                sc = d.get("score")
+                sc_f = float(sc) if sc is not None else 0.0
+                d["score_100"] = max(0, min(100, int(round(sc_f*100)) if sc_f <= 1.5 else int(round(sc_f))))
+            except Exception:
+                d["score_100"] = 0
+            items.append(d)
+        return _build_cors_response(jsonify({"ok": True, "items": items}))
     except Exception as e:
         logger.error("alerts_public_latest error: %s", e)
         return _build_cors_response(make_response(jsonify({"error": "Query failed"}), 500))
@@ -4016,6 +4039,13 @@ def api_map_alerts():
             # Add frontend-expected fields
             properties["lat"] = float(lat_val)
             properties["lon"] = float(lon_val)
+            # Stable 0-100 scoring for selection
+            try:
+                sc = properties.get("score")
+                sc_f = float(sc) if sc is not None else 0.0
+                properties["score_100"] = max(0, min(100, int(round(sc_f*100)) if sc_f <= 1.5 else int(round(sc_f))))
+            except Exception:
+                properties["score_100"] = 0
             
             # Preferred display summary for popups (fallback chain: gpt_summary -> summary -> en_snippet -> title)
             properties["display_summary"] = (
@@ -4114,6 +4144,13 @@ def api_map_alerts():
                     
                     properties["lat"] = float(lat_val)
                     properties["lon"] = float(lon_val)
+                    # Stable 0-100 scoring for selection
+                    try:
+                        sc = properties.get("score")
+                        sc_f = float(sc) if sc is not None else 0.0
+                        properties["score_100"] = max(0, min(100, int(round(sc_f*100)) if sc_f <= 1.5 else int(round(sc_f))))
+                    except Exception:
+                        properties["score_100"] = 0
                     properties["display_summary"] = (
                         properties.get("gpt_summary") or properties.get("summary") 
                         or properties.get("en_snippet") or properties.get("title") 
@@ -4138,9 +4175,34 @@ def api_map_alerts():
                 if debug_info:
                     debug_info["fallback_error"] = str(e)
 
+        # Enrich items array with incident_id and score_100 for client lists (stable dedupe and selection)
+        items_enriched = []
+        try:
+            for r in (rows or []):
+                d_it = dict(r)
+                cluster_id = d_it.get("cluster_id")
+                if cluster_id:
+                    d_it["incident_id"] = str(cluster_id)
+                else:
+                    title_norm = (d_it.get("title") or "").lower().strip()
+                    country_norm = (d_it.get("country") or "").lower().strip()
+                    pub_date = d_it.get("published")
+                    date_str = pub_date.strftime("%Y-%m-%d") if hasattr(pub_date, 'strftime') else str(pub_date or "")[:10]
+                    hash_input = f"{title_norm}|{country_norm}|{date_str}"
+                    d_it["incident_id"] = hashlib.md5(hash_input.encode('utf-8')).hexdigest()[:16]
+                try:
+                    sc = d_it.get("score")
+                    sc_f = float(sc) if sc is not None else 0.0
+                    d_it["score_100"] = max(0, min(100, int(round(sc_f*100)) if sc_f <= 1.5 else int(round(sc_f))))
+                except Exception:
+                    d_it["score_100"] = 0
+                items_enriched.append(d_it)
+        except Exception:
+            items_enriched = rows or []
+
         payload = {
             "ok": True,
-            "items": rows,
+            "items": items_enriched,
             "features": features,
             "meta": {
                 "days": days, 
