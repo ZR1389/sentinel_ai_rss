@@ -483,7 +483,8 @@ GDELT_LLM_ENABLED = str(os.getenv("GDELT_LLM_ENABLED", "true")).lower() in ("1",
 GDELT_MAX_WORKERS = int(os.getenv("GDELT_MAX_WORKERS", "2"))  # Limit GDELT to 2 concurrent LLM calls (vs 5 for RSS)
 
 ENABLE_SEMANTIC_DEDUP = str(os.getenv("ENGINE_SEMANTIC_DEDUP", "true")).lower() in ("1","true","yes","y")
-SEMANTIC_DEDUP_THRESHOLD = float(os.getenv("SEMANTIC_DEDUP_THRESHOLD", "0.9"))
+SEMANTIC_DEDUP_THRESHOLD = float(os.getenv("SEMANTIC_DEDUP_THRESHOLD", "0.85"))  # More aggressive: 0.85 instead of 0.9
+BREAKING_NEWS_DEDUP_THRESHOLD = float(os.getenv("BREAKING_NEWS_DEDUP_THRESHOLD", "0.88"))  # Even more aggressive for recent alerts
 TEMPERATURE = float(os.getenv("THREAT_ENGINE_TEMPERATURE", "0.4"))
 XAI_MODEL = os.getenv("XAI_MODEL", "grok-3-mini")  # hint for your xai client; not enforced here
 
@@ -581,6 +582,7 @@ def deduplicate_alerts(
     """
     Deduplicate alerts using hash-based and vector-based similarity.
     Uses direct pgvector database queries for efficient semantic deduplication.
+    Enhanced with aggressive breaking news clustering to prevent flooding from same event.
     """
     if not alerts:
         return []
@@ -611,11 +613,25 @@ def deduplicate_alerts(
                 # Check vector DB for similarity using pgvector-compatible queries
                 if emb:
                     try:
+                        # Use more aggressive threshold for recent alerts (last 24h) to prevent breaking news floods
+                        from datetime import datetime, timedelta
+                        alert_pub = alert.get('published')
+                        is_recent = False
+                        if alert_pub:
+                            try:
+                                if isinstance(alert_pub, str):
+                                    alert_pub = datetime.fromisoformat(alert_pub.replace('Z', '+00:00'))
+                                is_recent = (datetime.utcnow() - alert_pub.replace(tzinfo=None)) < timedelta(hours=24)
+                            except Exception:
+                                pass
+                        
+                        effective_threshold = BREAKING_NEWS_DEDUP_THRESHOLD if is_recent else sim_threshold
+                        
                         # pgvector-compatible approach using REAL[] arrays
                         from utils.db_utils import fetch_one
                         row = fetch_one(
-                            "SELECT uuid, 1 - (embedding <=> %s::REAL[]) as similarity FROM alerts WHERE embedding IS NOT NULL AND 1 - (embedding <=> %s::REAL[]) > %s ORDER BY embedding <=> %s::REAL[] LIMIT 1",
-                            (emb, emb, sim_threshold, emb)
+                            "SELECT uuid, 1 - (embedding <=> %s::REAL[]) as similarity, published FROM alerts WHERE embedding IS NOT NULL AND 1 - (embedding <=> %s::REAL[]) > %s ORDER BY embedding <=> %s::REAL[] LIMIT 1",
+                            (emb, emb, effective_threshold, emb)
                         )
                         
                         if row and len(row) >= 2:
@@ -625,6 +641,8 @@ def deduplicate_alerts(
                                        alert_uuid=alert.get('uuid'),
                                        duplicate_uuid=duplicate_uuid,
                                        similarity=round(similarity, 3),
+                                       threshold=effective_threshold,
+                                       is_breaking_news=is_recent,
                                        method="pgvector")
                             continue  # Skip duplicate
                         

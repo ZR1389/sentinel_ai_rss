@@ -29,6 +29,8 @@ CITY_TO_COUNTRY = {
     "mumbai": "India",
     "moscow": "Russia",
     "sydney": "Australia",
+    "bondi": "Australia",
+    "bondi beach": "Australia",
     "rome": "Italy",
     "delhi": "India",
     "rio de janeiro": "Brazil",

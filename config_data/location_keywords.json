@@ -268,6 +268,18 @@
       "country": "australia",
       "region": "oceania"
     },
+    "bondi beach": {
+      "lat": -33.8908,
+      "lon": 151.2743,
+      "country": "australia",
+      "region": "oceania"
+    },
+    "bondi": {
+      "lat": -33.8915,
+      "lon": 151.2726,
+      "country": "australia",
+      "region": "oceania"
+    },
     "melbourne": {
       "lat": -37.8136,
       "lon": 144.9631,
