@@ -11185,12 +11185,12 @@ def create_qualification():
         "fullName": "John Smith",
         "professionalEmail": "john@example.com",
         "organization": "Acme Corp",
-        "serviceType": "vetting|compliance|training|other",
-        "advisoryType": "hiring-provider|career-guidance|business-strategy|other",
-        "source": "referral|website|linkedin|other",
+        "serviceType": "string",
+        "advisoryType": "string",
+        "source": "string",
         "situation": "We need vetting services...",
-        "urgencyLevel": "informational|time-sensitive|critical",
-        "budgetAware": "yes|no",
+        "urgencyLevel": "string",
+        "budgetAware": "string",
         "submittedAt": "2025-12-08T15:30:45.123Z"
     }
     
@@ -11202,30 +11202,40 @@ def create_qualification():
     try:
         payload = _json_request()
         
-        full_name = (payload.get("fullName") or "").strip()
-        professional_email = (payload.get("professionalEmail") or "").strip().lower()
-        organization = (payload.get("organization") or "").strip() or None
-        service_type = (payload.get("serviceType") or "").strip() or None
-        advisory_type = (payload.get("advisoryType") or "").strip().lower()
-        source = (payload.get("source") or "").strip() or None
+        # Normalization helper: trim, optional lower-case, max length, empty->None
+        def _clean(val: Any, lower: bool = True, max_len: int = 100):
+            if val is None:
+                return None
+            s = str(val).strip()
+            if lower:
+                s = s.lower()
+            if not s:
+                return None
+            return s[:max_len]
+
+        full_name = _clean(payload.get("fullName"), lower=False, max_len=200)
+        professional_email = _clean(payload.get("professionalEmail"), lower=True, max_len=254)
+        organization = _clean(payload.get("organization"), lower=False, max_len=200)
+        # Capture raw values for analytics (no breakage)
+        raw_service_type = (str(payload.get("serviceType")).strip()[:200]
+                            if payload.get("serviceType") is not None else None)
+        raw_advisory_type = (str(payload.get("advisoryType")).strip()[:200]
+                             if payload.get("advisoryType") is not None else None)
+
+        # Sanitize + normalize for storage
+        service_type = _clean(payload.get("serviceType"), lower=True, max_len=50)
+        advisory_type = _clean(payload.get("advisoryType"), lower=True, max_len=50) or "other"
+        source = _clean(payload.get("source"), lower=True, max_len=100)
         situation = (payload.get("situation") or "").strip()
-        urgency_level = (payload.get("urgencyLevel") or "").strip().lower()
-        budget_aware = (payload.get("budgetAware") or "no").strip().lower()
+        urgency_level = _clean(payload.get("urgencyLevel"), lower=True, max_len=50)
+        budget_aware = _clean(payload.get("budgetAware"), lower=True, max_len=20) or "no"
         submitted_at_str = payload.get("submittedAt")
         
         # Validate required fields
-        if not full_name or len(full_name) < 2:
-            return _build_cors_response(make_response(
-                jsonify({"error": "fullName is required (min 2 chars)"}), 400))
-        
+        # Minimal required validation
         if not professional_email or "@" not in professional_email:
             return _build_cors_response(make_response(
                 jsonify({"error": "professionalEmail is required and must be valid"}), 400))
-        
-        valid_types = ["hiring-provider", "career-guidance", "business-strategy", "other"]
-        if advisory_type not in valid_types:
-            return _build_cors_response(make_response(
-                jsonify({"error": f"advisoryType must be one of: {', '.join(valid_types)}"}), 400))
         
         if not situation or len(situation) < 10:
             return _build_cors_response(make_response(
@@ -11234,14 +11244,18 @@ def create_qualification():
         if len(situation) > 5000:
             return _build_cors_response(make_response(
                 jsonify({"error": "situation too long (max 5000 chars)"}), 400))
-        
+
+        # Keep urgency set validation (best-of-both)
         valid_urgencies = ["informational", "time-sensitive", "critical"]
-        if urgency_level not in valid_urgencies:
+        if urgency_level and urgency_level not in valid_urgencies:
             return _build_cors_response(make_response(
                 jsonify({"error": f"urgencyLevel must be one of: {', '.join(valid_urgencies)}"}), 400))
-        
+
+        # Normalize budgetAware to yes/no
         if budget_aware not in ["yes", "no"]:
             budget_aware = "no"
+
+        # All other fields: sanitized and normalized above
         
         # Parse submitted timestamp
         submitted_at = None
@@ -11269,7 +11283,9 @@ def create_qualification():
                 situation=situation,
                 urgency_level=urgency_level,
                 budget_aware=budget_aware,
-                submitted_at=submitted_at
+                submitted_at=submitted_at,
+                service_type_raw=raw_service_type,
+                advisory_type_raw=raw_advisory_type
             )
             
             logger.info(f"Qualification stored: {professional_email} ({advisory_type})")

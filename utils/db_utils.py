@@ -1737,12 +1737,14 @@ def init_qualifications_table():
             CREATE TABLE IF NOT EXISTS qualifications (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 
-                full_name TEXT NOT NULL,
+                full_name TEXT,
                 professional_email TEXT NOT NULL,
                 organization TEXT,
                 
                 service_type TEXT,
-                advisory_type TEXT NOT NULL,
+                service_type_raw TEXT,
+                advisory_type TEXT,
+                advisory_type_raw TEXT,
                 source TEXT,
                 situation TEXT NOT NULL,
                 urgency_level TEXT NOT NULL,
@@ -1753,6 +1755,36 @@ def init_qualifications_table():
                 updated_at TIMESTAMPTZ DEFAULT now()
             )
         """)
+
+        # Backfill/align columns for existing deployments
+        execute("""
+            ALTER TABLE qualifications
+            ADD COLUMN IF NOT EXISTS service_type TEXT
+        """)
+        execute("""
+            ALTER TABLE qualifications
+            ADD COLUMN IF NOT EXISTS service_type_raw TEXT
+        """)
+        execute("""
+            ALTER TABLE qualifications
+            ADD COLUMN IF NOT EXISTS advisory_type TEXT
+        """)
+        execute("""
+            ALTER TABLE qualifications
+            ADD COLUMN IF NOT EXISTS advisory_type_raw TEXT
+        """)
+        execute("""
+            ALTER TABLE qualifications
+            ADD COLUMN IF NOT EXISTS source TEXT
+        """)
+        # Make full_name optional to reduce friction
+        try:
+            execute("""
+                ALTER TABLE qualifications
+                ALTER COLUMN full_name DROP NOT NULL
+            """)
+        except Exception:
+            pass
         
         # Indexes for querying
         execute("""
@@ -1786,16 +1818,18 @@ def init_qualifications_table():
 
 
 def create_qualification(
-    full_name: str,
+    full_name: Optional[str],
     professional_email: str,
-    advisory_type: str,
+    advisory_type: Optional[str],
     situation: str,
     urgency_level: str,
     organization: Optional[str] = None,
     service_type: Optional[str] = None,
     source: Optional[str] = None,
     budget_aware: str = "no",
-    submitted_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None,
+    service_type_raw: Optional[str] = None,
+    advisory_type_raw: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Store a qualification/security strategy request form submission."""
     try:
@@ -1803,12 +1837,18 @@ def create_qualification(
         
         row = fetch_one("""
             INSERT INTO qualifications
-            (full_name, professional_email, organization, service_type, advisory_type, 
+            (full_name, professional_email, organization, 
+             service_type, service_type_raw,
+             advisory_type, advisory_type_raw,
              source, situation, urgency_level, budget_aware, submitted_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
-        """, (full_name, professional_email, organization, service_type, advisory_type,
-              source, situation, urgency_level, budget_aware, submitted_at))
+        """, (
+            full_name, professional_email, organization,
+            service_type, service_type_raw,
+            advisory_type, advisory_type_raw,
+            source, situation, urgency_level, budget_aware, submitted_at
+        ))
         
         if not row:
             return None
