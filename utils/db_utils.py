@@ -1741,7 +1741,9 @@ def init_qualifications_table():
                 professional_email TEXT NOT NULL,
                 organization TEXT,
                 
+                service_type TEXT,
                 advisory_type TEXT NOT NULL,
+                source TEXT,
                 situation TEXT NOT NULL,
                 urgency_level TEXT NOT NULL,
                 budget_aware TEXT DEFAULT 'no',
@@ -1766,6 +1768,14 @@ def init_qualifications_table():
             ON qualifications (urgency_level)
         """)
         execute("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_service_type
+            ON qualifications (service_type)
+        """)
+        execute("""
+            CREATE INDEX IF NOT EXISTS idx_qualifications_source
+            ON qualifications (source)
+        """)
+        execute("""
             CREATE INDEX IF NOT EXISTS idx_qualifications_created
             ON qualifications (created_at DESC)
         """)
@@ -1782,6 +1792,8 @@ def create_qualification(
     situation: str,
     urgency_level: str,
     organization: Optional[str] = None,
+    service_type: Optional[str] = None,
+    source: Optional[str] = None,
     budget_aware: str = "no",
     submitted_at: Optional[datetime] = None
 ) -> Optional[Dict[str, Any]]:
@@ -1791,12 +1803,12 @@ def create_qualification(
         
         row = fetch_one("""
             INSERT INTO qualifications
-            (full_name, professional_email, organization, advisory_type, 
-             situation, urgency_level, budget_aware, submitted_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (full_name, professional_email, organization, service_type, advisory_type, 
+             source, situation, urgency_level, budget_aware, submitted_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
-        """, (full_name, professional_email, organization, advisory_type,
-              situation, urgency_level, budget_aware, submitted_at))
+        """, (full_name, professional_email, organization, service_type, advisory_type,
+              source, situation, urgency_level, budget_aware, submitted_at))
         
         if not row:
             return None

@@ -11185,7 +11185,9 @@ def create_qualification():
         "fullName": "John Smith",
         "professionalEmail": "john@example.com",
         "organization": "Acme Corp",
+        "serviceType": "vetting|compliance|training|other",
         "advisoryType": "hiring-provider|career-guidance|business-strategy|other",
+        "source": "referral|website|linkedin|other",
         "situation": "We need vetting services...",
         "urgencyLevel": "informational|time-sensitive|critical",
         "budgetAware": "yes|no",
@@ -11203,7 +11205,9 @@ def create_qualification():
         full_name = (payload.get("fullName") or "").strip()
         professional_email = (payload.get("professionalEmail") or "").strip().lower()
         organization = (payload.get("organization") or "").strip() or None
+        service_type = (payload.get("serviceType") or "").strip() or None
         advisory_type = (payload.get("advisoryType") or "").strip().lower()
+        source = (payload.get("source") or "").strip() or None
         situation = (payload.get("situation") or "").strip()
         urgency_level = (payload.get("urgencyLevel") or "").strip().lower()
         budget_aware = (payload.get("budgetAware") or "no").strip().lower()
@@ -11259,7 +11263,9 @@ def create_qualification():
                 full_name=full_name,
                 professional_email=professional_email,
                 organization=organization,
+                service_type=service_type,
                 advisory_type=advisory_type,
+                source=source,
                 situation=situation,
                 urgency_level=urgency_level,
                 budget_aware=budget_aware,
