@@ -11224,7 +11224,7 @@ def create_qualification():
 
         # Sanitize + normalize for storage
         service_type = _clean(payload.get("serviceType"), lower=True, max_len=50)
-        advisory_type = _clean(payload.get("advisoryType"), lower=True, max_len=50) or "other"
+        advisory_type = _clean(payload.get("advisoryType"), lower=True, max_len=50)
         source = _clean(payload.get("source"), lower=True, max_len=100)
         situation = (payload.get("situation") or "").strip()
         urgency_level = _clean(payload.get("urgencyLevel"), lower=True, max_len=50)
@@ -11235,21 +11235,35 @@ def create_qualification():
         # Minimal required validation
         if not professional_email or "@" not in professional_email:
             return _build_cors_response(make_response(
-                jsonify({"error": "professionalEmail is required and must be valid"}), 400))
+                jsonify({"ok": False, "error": "professionalEmail is required and must be valid"}), 400))
         
         if not situation or len(situation) < 10:
             return _build_cors_response(make_response(
-                jsonify({"error": "situation is required (min 10 chars)"}), 400))
+                jsonify({"ok": False, "error": "situation is required (min 10 chars)"}), 400))
         
         if len(situation) > 5000:
             return _build_cors_response(make_response(
-                jsonify({"error": "situation too long (max 5000 chars)"}), 400))
+                jsonify({"ok": False, "error": "situation too long (max 5000 chars)"}), 400))
+
+        # Spam detection: reject obvious patterns (links-only, excessive repetition)
+        import re as _re
+        url_count = len(_re.findall(r'https?://', situation.lower()))
+        # Flag as spam if >2 URLs in situation (legitimate users rarely paste multiple links)
+        if url_count > 2:
+            return _build_cors_response(make_response(
+                jsonify({"ok": False, "error": "situation contains too many links (spam filter)"}), 400))
+        
+        # Reject if >50% repeated character patterns (e.g., "aaaa", "xxxx")
+        repeated = len(_re.findall(r'(.)\1{3,}', situation))
+        if repeated > (len(situation) / 50):  # Allow 1 repetition per 50 chars avg
+            return _build_cors_response(make_response(
+                jsonify({"ok": False, "error": "situation contains excessive character repetition (spam filter)"}), 400))
 
         # Keep urgency set validation (best-of-both)
         valid_urgencies = ["informational", "time-sensitive", "critical"]
         if urgency_level and urgency_level not in valid_urgencies:
             return _build_cors_response(make_response(
-                jsonify({"error": f"urgencyLevel must be one of: {', '.join(valid_urgencies)}"}), 400))
+                jsonify({"ok": False, "error": f"urgencyLevel must be one of: {', '.join(valid_urgencies)}"}), 400))
 
         # Normalize budgetAware to yes/no
         if budget_aware not in ["yes", "no"]:
@@ -11305,7 +11319,7 @@ def create_qualification():
         import traceback
         traceback.print_exc()
         return _build_cors_response(make_response(
-            jsonify({"error": "Failed to store qualification", "details": str(e)}), 500))
+            jsonify({"ok": False, "error": "Failed to store qualification", "details": str(e)}), 500))
 
 
 # ========== End Phase 3 & 4 ==========
